@@ -176,10 +176,14 @@ def build(wb, ctx):
     dn('年度', f'{SH_BASE}!$B$5')
     dn('年初日', f'{SH_BASE}!$B$7')
     dn('年末日', f'{SH_BASE}!$B$8')
-    dn('客户列表', f'OFFSET({SH_OV}!$B${OV_R0},0,0,MAX(1,COUNTA({SH_OV}!$B${OV_R0}:$B${OV_R1})),1)')
-    dn('商品列表', f'OFFSET({SH_BASE}!${G_NAME}${BASE_R0},0,0,MAX(1,COUNTA({SH_BASE}!${G_NAME}${BASE_R0}:${G_NAME}${BASE_R1})),1)')
-    dn('供应商列表', f'OFFSET({SH_BASE}!${S_NAME}${SUP_R0},0,0,MAX(1,COUNTA({SH_BASE}!${S_NAME}${SUP_R0}:${S_NAME}${SUP_R1})),1)')
-    dn('账户列表', f'OFFSET({SH_BASE}!${A_NAME}${ACC_R0},0,0,MAX(1,COUNTA({SH_BASE}!${A_NAME}${ACC_R0}:${A_NAME}${ACC_R1})),1)')
-    dn('收支项目列表', f'OFFSET({SH_BASE}!${C_NAME}${CAT_R0},0,0,MAX(1,COUNTA({SH_BASE}!${C_NAME}${CAT_R0}:${C_NAME}${CAT_R1})),1)')
-    dn('费用项目列表', f'OFFSET({SH_BASE}!${E_NAME}${EXP_R0},0,0,MAX(1,COUNTA({SH_BASE}!${E_NAME}${EXP_R0}:${E_NAME}${EXP_R1})),1)')
+    # 下拉清单的长度 = 到最后一个非空格为止（中间空了一格也不会把后面的截掉）
+    def lst(sh, col, r0, r1):
+        rng = f'{sh}!${col}${r0}:${col}${r1}'
+        return f'OFFSET({sh}!${col}${r0},0,0,MAX(1,IFERROR(LOOKUP(2,1/({rng}<>""),ROW({rng}))-{r0 - 1},1)),1)'
+    dn('客户列表', lst(SH_OV, 'B', OV_R0, OV_R1))
+    dn('商品列表', lst(SH_BASE, G_NAME, BASE_R0, BASE_R1))
+    dn('供应商列表', lst(SH_BASE, S_NAME, SUP_R0, SUP_R1))
+    dn('账户列表', lst(SH_BASE, A_NAME, ACC_R0, ACC_R1))
+    dn('收支项目列表', lst(SH_BASE, C_NAME, CAT_R0, CAT_R1))
+    dn('费用项目列表', lst(SH_BASE, E_NAME, EXP_R0, EXP_R1))
     return ws

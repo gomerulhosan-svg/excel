@@ -22,6 +22,10 @@ AUX_BS_S1 = AUX_BS_S0 + (SUP_R1 - SUP_R0)
 AUX_BS_TOT = 162                               # 每月报损总金额
 AUX_BS_TOTQ = 163                              # 每月报损总数量（原始数，瓶/罐）
 AUX_BS_UNM = 164                               # 每月没对上商品档案的报损金额
+AUX_BS_NOPRICE = 165                           # 每月「有数量没单价」的行数
+AUX_BS_NOCOMP = 166                            # 每月「有产品没填所属公司」的行数
+AUX_BS_NONNUM = 167                            # 每月数量/单价不是数字的格数
+AUX_BS_NOH = 168                               # 每月「数量、单价都有，金额格却没公式」的行数（中间插了行）
 BSX_NAME, BSX_PACK = 'AA', 'AB'
 BSX_AMT0 = CI('AC')          # 金额 12 列 AC..AN
 BSX_RAW0 = BSX_AMT0 + 12     # 原始数量 AO..AZ
@@ -65,29 +69,35 @@ def _copy_sheet(src_ws, dst_ws):
     dst_ws.page_setup.orientation = src_ws.page_setup.orientation
     dst_ws.page_setup.paperSize = src_ws.page_setup.paperSize
     for dv in src_ws.data_validations.dataValidation:
-        n = DataValidation(type=dv.type, formula1=dv.formula1, allow_blank=dv.allow_blank,
+        f1 = dv.formula1
+        if f1 and '青岛公司' in f1 and '东鹏公司' in f1:        # 所属公司：原来写死 4 家，改成跟【基础资料·供应商】走
+            f1 = '=供应商列表'
+        n = DataValidation(type=dv.type, formula1=f1, allow_blank=dv.allow_blank,
                            showErrorMessage=dv.showErrorMessage, errorStyle=dv.errorStyle)
         dst_ws.add_data_validation(n)
         n.add(str(dv.sqref))
 
 
 def _fix_month_sheet(ws, blocks, total_row, sheet_label):
-    """blocks: [(首行, 末行, 小计行)]；total_row: 总计行（=各小计相加）"""
+    """blocks: [(首行, 末行, 小计行)]；total_row: 总计行"""
+    hf = lambda r: f'=IF(AND(ISNUMBER(E{r}),ISNUMBER(G{r})),E{r}*G{r},"")'   # 数量或单价不是数字（如「2箱」）→ 空，不报错
     for (r0, r1, sub) in blocks:
         for r in range(r0, r1 + 1):
-            ws[f'H{r}'] = f'=IF(AND(E{r}<>"",G{r}<>""),E{r}*G{r},"")'
+            ws[f'H{r}'] = hf(r)
         ws[f'H{sub}'] = f'=SUM(H{r0}:H{r1})'
-    # 总计只加 B 列有公司名的明细行：小计行 B 列是空的，不会重复加，也不会漏掉哪一块
-    ws[f'H{total_row}'] = f'=SUMIF(B6:B{total_row - 1},"<>",H6:H{total_row - 1})'
-    ws['B2'].number_format = 'yyyy"年"m"月"'
-    # 有数量没单价：金额会悄悄变成 0，标红提醒
-    ws.conditional_formatting.add(f'E6:G{total_row - 1}',
-                                  FormulaRule(formula=['AND($C6<>"",$E6<>"",$G6="")'], fill=FILL_WARN))
-    # 总计行往下的空行：统一成 数量×单价
+    # 总计行往下一直到第 1000 行也铺上公式（表头写着数据行范围 A6:J1000，写在下面的也要算）
     for r in range(total_row + 1, BS_ROWS[1] + 1):
-        v = ws[f'H{r}'].value
-        if v is not None:
-            ws[f'H{r}'] = f'=IF(AND(E{r}<>"",G{r}<>""),E{r}*G{r},"")'
+        ws[f'H{r}'] = hf(r)
+    # 总计 = 所有「填了产品名称」的明细行：小计、总计行 C 列是空的，不会重复加；漏填所属公司的也不会掉
+    t = total_row
+    ws[f'H{t}'] = (f'=SUMIF(C{BS_ROWS[0]}:C{t - 1},"<>",H{BS_ROWS[0]}:H{t - 1})'
+                   f'+SUMIF(C{t + 1}:C{BS_ROWS[1]},"<>",H{t + 1}:H{BS_ROWS[1]})')
+    ws['B2'].number_format = 'yyyy"年"m"月"'
+    # 有数量没单价：金额会悄悄变成 0，标红提醒；没填所属公司的也标
+    ws.conditional_formatting.add(f'E{BS_ROWS[0]}:G{BS_ROWS[1]}',
+                                  FormulaRule(formula=[f'AND($C{BS_ROWS[0]}<>"",$E{BS_ROWS[0]}<>"",$G{BS_ROWS[0]}="")'], fill=FILL_WARN))
+    ws.conditional_formatting.add(f'B{BS_ROWS[0]}:B{BS_ROWS[1]}',
+                                  FormulaRule(formula=[f'AND($C{BS_ROWS[0]}<>"",$B{BS_ROWS[0]}="")'], fill=FILL_WARN))
 
 
 def build(wb, ctx, src2):
@@ -139,7 +149,8 @@ def _build_staging(wb, ctx):
         for m in range(1, 13):
             col = CL(g + m - 1)
             ws[f'{col}4'] = m
-            ws[f'{col}5'] = f'=IFERROR(INDEX({base}${M_SHEET}${BSM_R0}:${M_SHEET}${BSM_R1},{m})&"","")'
+            ws[f'{col}5'] = (f'=IFERROR(INDEX({base}${M_SHEET}${BSM_R0}:${M_SHEET}${BSM_R1},'
+                             f'MATCH({m},{base}${M_MONTH}${BSM_R0}:${M_MONTH}${BSM_R1},0))&"","")')
     ws[f'{BSX_NAME}5'] = '报损品名'
     ws[f'{BSX_PACK}5'] = '每件数量'
     ws[f'{BSX_SEL}5'] = '所选月份金额'
@@ -149,20 +160,24 @@ def _build_staging(wb, ctx):
     def ind(colref, col_letter):
         return f'INDIRECT("\'"&{colref}&"\'!{col_letter}{BS_ROWS[0]}:{col_letter}{BS_ROWS[1]}")'
 
+    def safe(expr):                 # 月表名写错 / 表里有怪值 → 当 0，由【数据校验】报出来，不让整本报表跟着报错
+        return f'IFERROR({expr},0)'
+
     sel = f'{SH_BSS}!$A$3'
     for i in range(BASE_R1 - BASE_R0 + 1):
         r = AUX_BS_P0 + i
         br = BASE_R0 + i
-        ws[f'{BSX_NAME}{r}'] = f'=IF({base}{G_BSNAME}{br}="","",{base}{G_BSNAME}{br}&"")'
-        ws[f'{BSX_PACK}{r}'] = f'=IF(N({base}{G_PACK}{br})<=0,1,{base}{G_PACK}{br})'
+        nm, pk = at(base_rng(G_BSNAME, BASE_R0, BASE_R1), i + 1), at(base_rng(G_PACK, BASE_R0, BASE_R1), i + 1)
+        ws[f'{BSX_NAME}{r}'] = f'=IF({nm}="","",{nm}&"")'
+        ws[f'{BSX_PACK}{r}'] = f'=IF(N({pk})<=0,1,{pk})'
         for m in range(1, 13):
             a, raw, box, pcs = (CL(BSX_AMT0 + m - 1), CL(BSX_RAW0 + m - 1), CL(BSX_BOX0 + m - 1), CL(BSX_PCS0 + m - 1))
             sh = f'{a}$5'
             skip = f'OR(${BSX_NAME}{r}="",{sh}="")'
-            ws[f'{a}{r}'] = f'=IF({skip},0,SUMIF({ind(sh, "C")},${BSX_NAME}{r},{ind(sh, "H")}))'
-            ws[f'{raw}{r}'] = f'=IF({skip},0,SUMIF({ind(sh, "C")},${BSX_NAME}{r},{ind(sh, "E")}))'
-            ws[f'{box}{r}'] = (f'=IF({skip},0,SUMIFS({ind(sh, "E")},{ind(sh, "C")},${BSX_NAME}{r},{ind(sh, "F")},"箱")'
-                               f'+SUMIFS({ind(sh, "E")},{ind(sh, "C")},${BSX_NAME}{r},{ind(sh, "F")},"件"))')
+            ws[f'{a}{r}'] = f'=IF({skip},0,' + safe(f'SUMIF({ind(sh, "C")},${BSX_NAME}{r},{ind(sh, "H")})') + ')'
+            ws[f'{raw}{r}'] = f'=IF({skip},0,' + safe(f'SUMIF({ind(sh, "C")},${BSX_NAME}{r},{ind(sh, "E")})') + ')'
+            ws[f'{box}{r}'] = (f'=IF({skip},0,' + safe(f'SUMIFS({ind(sh, "E")},{ind(sh, "C")},${BSX_NAME}{r},{ind(sh, "F")},"箱")'
+                               f'+SUMIFS({ind(sh, "E")},{ind(sh, "C")},${BSX_NAME}{r},{ind(sh, "F")},"件")') + ')')
             ws[f'{pcs}{r}'] = f'=({raw}{r}-{box}{r})/${BSX_PACK}{r}+{box}{r}'
         amt_rng = f'{bsx_amt(1)}{r}:{bsx_amt(12)}{r}'
         raw_rng = f'{CL(BSX_RAW0)}{r}:{CL(BSX_RAW0 + 11)}{r}'
@@ -175,22 +190,31 @@ def _build_staging(wb, ctx):
     for i in range(SUP_R1 - SUP_R0 + 1):
         r = AUX_BS_S0 + i
         sr = SUP_R0 + i
-        ws[f'{BSX_NAME}{r}'] = f'=IF({base}{S_NAME}{sr}="","",{base}{S_NAME}{sr}&"")'
+        nm = at(SUP_NAMES, i + 1)
+        ws[f'{BSX_NAME}{r}'] = f'=IF({nm}="","",{nm}&"")'
         for m in range(1, 13):
             a = bsx_amt(m)
-            ws[f'{a}{r}'] = (f'=IF(OR(${BSX_NAME}{r}="",{a}$5=""),0,SUMIF({ind(f"{a}$5", "B")},${BSX_NAME}{r},'
-                             f'{ind(f"{a}$5", "H")}))')
+            ws[f'{a}{r}'] = (f'=IF(OR(${BSX_NAME}{r}="",{a}$5=""),0,' +
+                             safe(f'SUMIF({ind(f"{a}$5", "B")},${BSX_NAME}{r},{ind(f"{a}$5", "H")})') + ')')
         mask = f'((${bsx_amt(1)}$4:${bsx_amt(12)}$4={sel})+({sel}="全年"))'
         ws[f'{BSX_SEL}{r}'] = f'=SUMPRODUCT({mask}*{bsx_amt(1)}{r}:{bsx_amt(12)}{r})'
     # 每月总计 / 没对上商品档案的
     ws[f'{BSX_NAME}{AUX_BS_TOT}'] = '每月报损总金额'
     ws[f'{BSX_NAME}{AUX_BS_TOTQ}'] = '每月报损总数量'
     ws[f'{BSX_NAME}{AUX_BS_UNM}'] = '没对上商品档案的金额'
+    ws[f'{BSX_NAME}{AUX_BS_NOPRICE}'] = '有数量没单价的行数'
+    ws[f'{BSX_NAME}{AUX_BS_NOCOMP}'] = '有产品没填所属公司的行数'
+    ws[f'{BSX_NAME}{AUX_BS_NONNUM}'] = '数量/单价不是数字的格数'
     for m in range(1, 13):
         a = bsx_amt(m)
-        ws[f'{a}{AUX_BS_TOT}'] = f'=IF({a}$5="",0,SUMIF({ind(f"{a}$5", "B")},"<>",{ind(f"{a}$5", "H")}))'
-        ws[f'{a}{AUX_BS_TOTQ}'] = f'=IF({a}$5="",0,SUMIF({ind(f"{a}$5", "B")},"<>",{ind(f"{a}$5", "E")}))'
+        sh = f'{a}$5'
+        ws[f'{a}{AUX_BS_TOT}'] = f'=IF({sh}="",0,' + safe(f'SUMIF({ind(sh, "C")},"<>",{ind(sh, "H")})') + ')'
+        ws[f'{a}{AUX_BS_TOTQ}'] = f'=IF({sh}="",0,' + safe(f'SUMIF({ind(sh, "C")},"<>",{ind(sh, "E")})') + ')'
         ws[f'{a}{AUX_BS_UNM}'] = f'={a}{AUX_BS_TOT}-SUM({a}{AUX_BS_P0}:{a}{AUX_BS_P1})'
+        ws[f'{a}{AUX_BS_NOPRICE}'] = f'=IF({sh}="",0,' + safe(f'COUNTIFS({ind(sh, "C")},"<>",{ind(sh, "E")},"<>",{ind(sh, "G")},"")') + ')'
+        ws[f'{a}{AUX_BS_NOCOMP}'] = f'=IF({sh}="",0,' + safe(f'COUNTIFS({ind(sh, "C")},"<>",{ind(sh, "B")},"")') + ')'
+        ws[f'{a}{AUX_BS_NONNUM}'] = f'=IF({sh}="",0,' + safe(f'SUMPRODUCT(ISTEXT({ind(sh, "E")})*1)+SUMPRODUCT(ISTEXT({ind(sh, "G")})*1)') + ')'
+        ws[f'{a}{AUX_BS_NOH}'] = f'=IF({sh}="",0,' + safe(f'COUNTIFS({ind(sh, "E")},"<>",{ind(sh, "G")},"<>",{ind(sh, "H")},"")') + ')'
     mask = f'((${bsx_amt(1)}$4:${bsx_amt(12)}$4={sel})+({sel}="全年"))'
     for rr in (AUX_BS_TOT, AUX_BS_TOTQ, AUX_BS_UNM):
         ws[f'{BSX_SEL}{rr}'] = f'=SUMPRODUCT({mask}*{bsx_amt(1)}{rr}:{bsx_amt(12)}{rr})'
@@ -213,24 +237,31 @@ def _build_summary(wb, ctx):
     ws['A3']._style = copy(ws['B3']._style)
     ws['A3'].fill = FILL_SEL
     ws['A3'] = '全年'
+    ws['A3'].number_format = '0"月";;;@'
     add_list_dv(ws, 'A3', '"全年,1,2,3,4,5,6,7,8,9,10,11,12"', '选「全年」或某个月')
     ws.column_dimensions['A'].width = max(ws.column_dimensions['A'].width or 8, 11)
     # KPI
     ws['B3'] = f'={aux}{BSX_SEL}{AUX_BS_TOT}'
     ws['C3'] = f'={aux}{BSX_SEL}{AUX_BS_TOTQ}'
     ws['D3'] = f'=COUNTIF({aux}{BSX_SEL}{AUX_BS_P0}:{BSX_SEL}{AUX_BS_P1},">0")'
-    ws['E3'] = f'=COUNTIF({aux}{BSX_SEL}{AUX_BS_S0}:{BSX_SEL}{AUX_BS_S1},">0")'
+    ws['E3'] = f'=COUNTIF({aux}{BSX_SEL}{AUX_BS_S0}:{BSX_SEL}{AUX_BS_S1},">0")+IF(ROUND(C12,2)>0,1,0)'
     ws['B3'].number_format = MONEY
-    ws['C3'].number_format = '#,##0.##'
-    # 分公司：第 7..12 行 = 供应商清单前 6 家
-    for i in range(6):
+    ws['C3'].number_format = '#,##0'
+    # 分公司：第 7..11 行 = 供应商清单前 5 家，第 12 行 = 其余/没填或没登记的公司（保证合计 = 总报损金额）
+    for i in range(5):
         r = 7 + i
         ws[f'A{r}'] = i + 1
-        ws[f'B{r}'] = f'=IF({SH_BASE}!{S_NAME}{SUP_R0 + i}="","",{SH_BASE}!{S_NAME}{SUP_R0 + i})'
+        ws[f'B{r}'] = f'=IF({at(SUP_NAMES, i + 1)}="","",{at(SUP_NAMES, i + 1)})'
         ws[f'C{r}'] = f'=IF(B{r}="","",{aux}{BSX_SEL}{AUX_BS_S0 + i})'
         ws[f'D{r}'] = f'=IF(OR(B{r}="",N($C$13)=0),"",C{r}/$C$13)'
         ws[f'C{r}'].number_format = MONEY
         ws[f'D{r}'].number_format = '0.0%'
+    ws['A12'] = 6
+    ws['B12'] = '其他/未登记公司'
+    ws['C12'] = '=B3-SUM(C7:C11)'
+    ws['C12'].number_format = MONEY
+    ws['D12'] = '=IF(N($C$13)=0,"",C12/$C$13)'
+    ws['D12'].number_format = '0.0%'
     ws['C13'] = '=SUM(C7:C12)'
     ws['D13'] = '=IF(N(C13)=0,"",SUM(D7:D12))'
     ws['D13'].number_format = '0.0%'

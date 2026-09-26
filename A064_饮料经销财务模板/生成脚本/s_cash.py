@@ -76,7 +76,7 @@ def build_cash(wb, ctx):
     hdr_fill = {K_IN: 'FFE2EFDA', K_OUT: 'FFFFF2CC', K_CUS: 'FFE4DFEC', K_SUP: 'FFE4DFEC', K_EXP: 'FFE4DFEC'}
     for col, t in hdr:
         put(ws, f'{col}{CASH_HDR}', t, F_HDR_D, fill(hdr_fill.get(col, 'FFDDEBF7')), align=ACW)
-    for col, t in [(K_CAT2, '实际项目'), (K_TO, '去向'), (K_CSEQ, '客户收款序'), (K_SSEQ, '供应商付款序'), (K_NET, '净额')]:
+    for col, t in [(K_CAT2, '实际项目'), (K_TO, '去向'), (K_CSEQ, '客户收款排序键'), (K_SSEQ, '供应商付款排序键'), (K_NET, '净额')]:
         put(ws, f'{col}{CASH_HDR}', t, F_NOTE, FILL_AUTO, align=ACW)
     ws.row_dimensions[CASH_HDR].height = 32
 
@@ -108,24 +108,31 @@ def build_cash(wb, ctx):
         put(ws, f'{K_NOTE}{r}', d.get('note'), F_TXT, None, align=AL)
         # 隐藏辅助列
         put(ws, f'{K_CAT2}{r}',
-            f'=IF({K_CAT}{r}<>"",{K_CAT}{r},IF({emp},"",IF({K_CUS}{r}<>"",IF(N({K_IN}{r})>0,"客户回款","客户退款"),'
-            f'IF({K_SUP}{r}<>"",IF(N({K_OUT}{r})>0,"供应商付款","供应商退款"),IF({K_EXP}{r}<>"","费用支出","")))))',
+            f'=IF({K_CAT}{r}<>"",{K_CAT}{r},IF({emp},"",IF({K_CUS}{r}<>"",IF(N({K_IN}{r})>0,"客户回款",""),'
+            f'IF({K_SUP}{r}<>"",IF(N({K_OUT}{r})>0,"供应商付款",""),IF({K_EXP}{r}<>"","费用支出","")))))',
             F_NOTE, border=False)
         put(ws, f'{K_TO}{r}',
-            f'=IF({K_CAT2}{r}="","",IFERROR(INDEX({SH_BASE}!${C_TO}${CAT_R0}:${C_TO}${CAT_R1},'
-            f'MATCH({K_CAT2}{r},{SH_BASE}!${C_NAME}${CAT_R0}:${C_NAME}${CAT_R1},0)),"未知"))', F_NOTE, border=False)
-        put(ws, f'{K_CSEQ}{r}', f'=IF({K_TO}{r}="{TO_AR}",COUNTIF({K_TO}${CASH_R0}:{K_TO}{r},"{TO_AR}"),"")', F_NOTE, border=False)
-        put(ws, f'{K_SSEQ}{r}', f'=IF({K_TO}{r}="{TO_AP}",COUNTIF({K_TO}${CASH_R0}:{K_TO}{r},"{TO_AP}"),"")', F_NOTE, border=False)
+            f'=IF({K_CAT2}{r}="","",IF({K_CAT}{r}="",IF({K_CUS}{r}<>"","{TO_AR}",IF({K_SUP}{r}<>"","{TO_AP}","{TO_EXP}")),'
+            f'IFERROR(IF(INDEX({SH_BASE}!${C_TO}${CAT_R0}:${C_TO}${CAT_R1},'
+            f'MATCH({K_CAT2}{r},{SH_BASE}!${C_NAME}${CAT_R0}:${C_NAME}${CAT_R1},0))&""="","未知",'
+            f'INDEX({SH_BASE}!${C_TO}${CAT_R0}:${C_TO}${CAT_R1},'
+            f'MATCH({K_CAT2}{r},{SH_BASE}!${C_NAME}${CAT_R0}:${C_NAME}${CAT_R1},0))),"未知")))', F_NOTE, border=False)
+        skey = f'IF(ISNUMBER({K_DATE}{r}),{K_DATE}{r},1000000)+ROW()/100000'   # 按日期排，日期不对的排最后
+        put(ws, f'{K_CSEQ}{r}', f'=IF({K_TO}{r}="{TO_AR}",{skey},"")', F_NOTE, border=False)
+        put(ws, f'{K_SSEQ}{r}', f'=IF({K_TO}{r}="{TO_AP}",{skey},"")', F_NOTE, border=False)
         put(ws, f'{K_NET}{r}', f'=N({K_IN}{r})-N({K_OUT}{r})', F_NOTE, border=False)
         # 校验
         dir_ = _cat_lookup(f'{K_CAT2}{r}', C_DIR)
         chk = (f'=IF(AND({emp},{K_DATE}{r}="",{K_ACC}{r}="",{K_CAT}{r}="",{K_CUS}{r}="",{K_SUP}{r}="",{K_EXP}{r}=""),"",'
                f'IF({emp},"✗ 没填金额",'
+               f'IF(OR(AND({K_IN}{r}<>"",NOT(ISNUMBER({K_IN}{r}))),AND({K_OUT}{r}<>"",NOT(ISNUMBER({K_OUT}{r})))),"✗ 金额不是数字（可能是粘贴来的文本）",'
                f'IF(AND(N({K_IN}{r})<>0,N({K_OUT}{r})<>0),"✗ 收入、支出只能填一边",'
                f'IF(NOT(ISNUMBER({K_DATE}{r})),"✗ 日期不是真日期（要像 2026/9/25 这样填）",'
-               f'IF(OR({K_DATE}{r}<年初日,{K_DATE}{r}>年末日),"✗ 日期不在本会计年度",'
+               f'IF(OR({K_DATE}{r}<年初日,{K_DATE}{r}>=年末日+1),"✗ 日期不在本会计年度",'
                f'IF({K_ACC}{r}="","✗ 没选账户",'
                f'IF(COUNTIF({acc_names},{K_ACC}{r})=0,"✗ 账户不在基础资料里",'
+               f'IF(AND({K_CAT}{r}="",{K_CUS}{r}<>"",N({K_OUT}{r})>0),"✗ 付给客户的钱：收支项目选「客户退款」还是「费用支出」？",'
+               f'IF(AND({K_CAT}{r}="",{K_SUP}{r}<>"",N({K_IN}{r})>0),"✗ 厂家给的钱：收支项目选「厂家返利」还是「供应商退款」？",'
                f'IF({K_CAT2}{r}="","✗ 没选收支项目",'
                f'IF({K_TO}{r}="未知","✗ 收支项目不在基础资料里",'
                f'IF(AND({K_TO}{r}="{TO_AR}",{K_CUS}{r}=""),"✗ 这笔要选客户",'
@@ -136,7 +143,7 @@ def build_cash(wb, ctx):
                f'IF(AND({K_EXP}{r}<>"",COUNTIF({EXP_NAMES},{K_EXP}{r})=0),"✗ 费用项目不在基础资料里",'
                f'IF(AND({dir_}="收",N({K_OUT}{r})<>0),"✗ 这类是收款，金额填到收入列",'
                f'IF(AND({dir_}="支",N({K_IN}{r})<>0),"✗ 这类是付款，金额填到支出列",'
-               f'IF(N({K_ABAL}{r})<0,"⚠ 账户余额成负数了，核对一下","√"))))))))))))))))))')
+               f'IF(N({K_ABAL}{r})<0,"⚠ 账户余额成负数了，核对一下","√")))))))))))))))))))))')
         put(ws, f'{K_CHK}{r}', chk, F_AUTO, FILL_AUTO, align=AL)
 
     # 条件格式：校验列 ✗ 红、⚠ 橙
@@ -148,6 +155,7 @@ def build_cash(wb, ctx):
                                                        font=Font(name=YH, sz=10, bold=True, color='FF00B050')))
 
     # 下拉
+    add_date_dv(ws, f'{K_DATE}{CASH_R0}:{K_DATE}{CASH_R1}')
     add_list_dv(ws, f'{K_ACC}{CASH_R0}:{K_ACC}{CASH_R1}', '=账户列表', '收/付款走的是哪个账户')
     add_list_dv(ws, f'{K_CAT}{CASH_R0}:{K_CAT}{CASH_R1}', '=收支项目列表', '选了客户/供应商/费用项目的可以不选，会自动认')
     add_list_dv(ws, f'{K_CUS}{CASH_R0}:{K_CUS}{CASH_R1}', '=客户列表', '收客户的钱选客户——自动冲减他的未付货款')
@@ -155,7 +163,7 @@ def build_cash(wb, ctx):
     add_list_dv(ws, f'{K_EXP}{CASH_R0}:{K_EXP}{CASH_R1}', '=费用项目列表', '花钱的选费用项目——自动进利润表')
 
     widths(ws, {K_SEQ: 6, K_DATE: 11.5, K_ACC: 11, K_CAT: 11, K_MEMO: 24, K_IN: 13, K_OUT: 13,
-                K_ABAL: 15, K_TBAL: 15, K_CUS: 17, K_SUP: 14, K_EXP: 12, K_NOTE: 17, K_CHK: 26,
+                K_ABAL: 15, K_TBAL: 15, K_CUS: 17, K_SUP: 14, K_EXP: 15, K_NOTE: 17, K_CHK: 26,
                 K_CAT2: 10, K_TO: 8, K_CSEQ: 6, K_SSEQ: 6, K_NET: 10})
     for col in (K_CAT2, K_TO, K_CSEQ, K_SSEQ, K_NET):
         ws.column_dimensions[col].hidden = True
@@ -175,9 +183,8 @@ def build_rp(wb, ctx):
             cell.value = None
     if ws.auto_filter.ref:
         ws.auto_filter.ref = None
-    ws['A2'].value = ('💡 不用再手工登记了：在【资金台帐】记收款并选上客户，这里自动逐笔列出，'
-                      '总览汇总的「已付款金额」、对账单一起跟着变。付厂家的钱列在右边。')
     ws['A1'].value = '收付款明细台账（自动从资金台帐提取）'
+    ws['A2'].value = '💡 不用手工登记：资金台帐里选了客户的收款自动列在这里（按日期排）'
     hdr_style_src = ws['A3']
     # 右边供应商块
     ws.merge_cells('I1:N1')
@@ -187,13 +194,15 @@ def build_rp(wb, ctx):
     header(ws, RP_HDR, [('I', '序号'), ('J', '日期'), ('K', '供应商'), ('L', '付款金额(元)'),
                         ('M', '付款方式'), ('N', '摘要')], C_BUY, height=37)
     put(ws, f'G{RP_HDR}', '行号', F_NOTE, FILL_AUTO, align=AC)
+    put(ws, 'G1', f'=COUNT({SH_CASH}!${K_CSEQ}${CASH_R0}:${K_CSEQ}${CASH_R1})', F_NOTE, border=False)
+    put(ws, 'O1', f'=COUNT({SH_CASH}!${K_SSEQ}${CASH_R0}:${K_SSEQ}${CASH_R1})', F_NOTE, border=False)
     put(ws, f'O{RP_HDR}', '行号', F_NOTE, FILL_AUTO, align=AC)
 
     idx = lambda col: f'{SH_CASH}!${col}${CASH_R0}:${col}${CASH_R1}'
     for r in range(RP_R0, RP_R1 + 1):
         k = r - RP_R0 + 1
         g = f'$G{r}'
-        put(ws, f'G{r}', f'=IFERROR(MATCH({k},{idx(K_CSEQ)},0),"")', F_NOTE, border=False)
+        put(ws, f'G{r}', f'=IF({k}>$G$1,"",IFERROR(MATCH(SMALL({idx(K_CSEQ)},{k}),{idx(K_CSEQ)},0),""))', F_NOTE, border=False)
         put(ws, f'A{r}', f'=IF({g}="","",{k})', F_TXT, align=AC)
         put(ws, f'B{r}', f'=IF({g}="","",INDEX({idx(K_DATE)},{g}))', F_TXT, fmt=DATE, align=AC)
         put(ws, f'C{r}', f'=IF({g}="","",INDEX({idx(K_CUS)},{g}))', F_TXT, align=AC)
@@ -203,7 +212,7 @@ def build_rp(wb, ctx):
             F_TXT, align=AL)
         if r <= RP_SR1:
             o = f'$O{r}'
-            put(ws, f'O{r}', f'=IFERROR(MATCH({k},{idx(K_SSEQ)},0),"")', F_NOTE, border=False)
+            put(ws, f'O{r}', f'=IF({k}>$O$1,"",IFERROR(MATCH(SMALL({idx(K_SSEQ)},{k}),{idx(K_SSEQ)},0),""))', F_NOTE, border=False)
             put(ws, f'I{r}', f'=IF({o}="","",{k})', F_TXT, align=AC)
             put(ws, f'J{r}', f'=IF({o}="","",INDEX({idx(K_DATE)},{o}))', F_TXT, fmt=DATE, align=AC)
             put(ws, f'K{r}', f'=IF({o}="","",INDEX({idx(K_SUP)},{o}))', F_TXT, align=AC)

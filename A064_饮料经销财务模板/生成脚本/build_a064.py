@@ -22,11 +22,12 @@ sys.path.insert(0, HERE)
 from common import *
 import fixes
 import data_prep
-import s_base, s_cash, s_orig, s_baosun, s_reports, s_stmt, s_check
+import s_base, s_cash, s_orig, s_baosun, s_reports, s_stmt, s_check, s_fee
 
 ROOT = os.path.dirname(HERE)
 SRC1 = os.path.join(ROOT, '参考', '原表1_存条出库库存总览.xlsx')
 SRC2 = os.path.join(ROOT, '参考', '原表2_过期报损统计.xlsx')
+SRC3 = os.path.join(ROOT, '参考', '原表3_费用报销明细（补充）.xlsx')
 OUT = os.path.join(ROOT, 'A064_饮料经销财务模板.xlsx')
 
 
@@ -69,6 +70,32 @@ def prepare(s1, s2):
     return ctx
 
 
+# 按位置（INDEX(区域,k)）取数的辅助公式：用户在明细表/基础资料里删行后区域变短，
+# 最后几个位置会越界成 #REF!——一个错值会把 SMALL() 整列带崩，所以统一包一层 IFERROR（给对类型的默认值）
+SAFE_COLS = {
+    SH_AUX: {'A': '""', 'D': '""', 'E': '""', 'F': '""', 'H': '""', 'J': '""', 'K': '""',
+             'N': '0', 'O': '0', 'P': '0', 'Q': '0', 'R': '0', 'S': '""', 'AA': '""', 'AB': '1'},
+    SH_COST: {'B': '""', 'C': '""', 'D': '""', 'E': '""', 'F': '0', 'G': '0'},
+    SH_STK: {'C': '""'},
+    SH_EXP: {'B': '""', 'C': '""'},
+    SH_RPS: {'B': '""', 'C': '""', 'K': '""', 'L': '""'},
+    SH_BSS: {'B': '""'},
+}
+
+
+def wrap_iferror(wb):
+    n = 0
+    for sh, cols in SAFE_COLS.items():
+        ws = wb[sh]
+        for col, dflt in cols.items():
+            for (c,) in ws.iter_rows(min_col=CI(col), max_col=CI(col)):
+                v = c.value
+                if isinstance(v, str) and v.startswith('=') and 'INDEX(' in v and not v.startswith('=IFERROR(IF('):
+                    c.value = f'=IFERROR({v[1:]},{dflt})'
+                    n += 1
+    return n
+
+
 def main(out_path=OUT):
     s1 = data_prep.Src1(SRC1)
     s2 = data_prep.Src2(SRC2)
@@ -89,6 +116,9 @@ def main(out_path=OUT):
     s_base.build(wb, ctx)
     s_cash.build_cash(wb, ctx)
     s_orig.build_buy(wb, ctx)
+    src3 = openpyxl.load_workbook(SRC3)
+    s_fee.build_fee(wb, ctx, src3, changes)
+    s_fee.build_qr(wb, ctx, src3)
     s_orig.fix_out(wb, ctx, changes)
     s_orig.fix_cun(wb, ctx, changes)
     s_orig.fix_ov(wb, ctx)
@@ -100,6 +130,7 @@ def main(out_path=OUT):
     s_reports.build_cost(wb, ctx)
     s_reports.build_stock(wb, ctx)
     s_reports.build_exp(wb, ctx)
+    s_reports.build_aux_fee(wb, ctx)
     s_reports.build_pl(wb, ctx)
     s_reports.build_bal(wb, ctx)
     s_reports.build_aux_balances(wb, ctx)
@@ -110,6 +141,7 @@ def main(out_path=OUT):
     s_check.build_aux_check(wb, ctx)
     s_check.build_check(wb, ctx)
     s_check.build_home(wb, ctx)
+    n_safe = wrap_iferror(wb)
 
     # 表的顺序、隐藏辅助表、打开时落在首页
     order = [wb[n] for n in SHEET_ORDER]

@@ -14,6 +14,8 @@ SH_HOME = '首页'
 SH_BASE = '基础资料'
 SH_CASH = '资金台帐'
 SH_BUY  = '采购进货'
+SH_FEE  = '全量费用明细总表'  # 你后来补的费用报销明细（原格式搬进来，当费用录入表）
+SH_QR   = '收款码到账对账'    # 同一个文件里的 Sheet1：收款码收款 vs 农业银行到账，差额是手续费
 SH_OV   = '总览汇总'      # 原表
 SH_OUT  = '出库明细'      # 原表
 SH_RP   = '收付款明细'    # 原表（改成从资金台帐自动提取）
@@ -36,7 +38,7 @@ SH_BAL  = '资产负债表'
 SH_CHK  = '数据校验'
 SH_AUX  = '_辅助'
 
-SHEET_ORDER = [SH_HOME, SH_BASE, SH_CASH, SH_BUY, SH_OV, SH_OUT, SH_RP, SH_CUN, SH_INV,
+SHEET_ORDER = [SH_HOME, SH_BASE, SH_CASH, SH_BUY, SH_FEE, SH_QR, SH_OV, SH_OUT, SH_RP, SH_CUN, SH_INV,
                SH_Q, SH_RPS, SH_CST, SH_SST, SH_STK, SH_COST, SH_BSS, SH_BS6, SH_BS7,
                SH_BS8, SH_BS9, SH_EXP, SH_PL, SH_BAL, SH_CHK, SH_AUX]
 
@@ -88,7 +90,8 @@ TO_DRAW  = '提取'       # 股东提取：所有者权益
 TO_LOAN  = '借款'       # 借入 / 归还：短期借款
 TO_XFER  = '转账'       # 账户之间互转：不影响报表，收支要成对
 TO_OTH   = '其他往来'   # 押金等：其他应收 / 其他应付
-TO_ALL = [TO_AR, TO_AP, TO_EXP, TO_REB, TO_OI, TO_INV, TO_DRAW, TO_LOAN, TO_XFER, TO_OTH]
+TO_REIMB = '报销'       # 付【全量费用明细总表】里登记过的费用：冲减应付费用（费用已经在明细表里进了利润表）
+TO_ALL = [TO_AR, TO_AP, TO_EXP, TO_REB, TO_OI, TO_INV, TO_DRAW, TO_LOAN, TO_XFER, TO_OTH, TO_REIMB]
 
 # 费用「利润表归类」
 EC_TAX, EC_SELL, EC_ADMIN, EC_FIN, EC_NOI, EC_IT = '税金及附加', '销售费用', '管理费用', '财务费用', '营业外支出', '所得税费用'
@@ -113,6 +116,14 @@ BUY_R0, BUY_R1 = 4, 1503         # 1500 行
 
 def buy(col):
     return f"{SH_BUY}!${col}${BUY_R0}:${col}${BUY_R1}"
+
+# ─────────────────────────── 全量费用明细总表（补充的原表） ───────────────────────────
+FEE_HDR = 1
+FEE_R0, FEE_R1 = 2, 2001         # 2000 行（原来 367 行）
+(F_SEQ, F_DATE, F_CAT, F_DETAIL, F_WHO, F_AMT, F_ACC, F_NOTE) = 'A B C D E F G H'.split()
+
+def fee(col):
+    return f"{SH_FEE}!${col}${FEE_R0}:${col}${FEE_R1}"
 
 # ─────────────────────────── 出库明细（原表） ───────────────────────────
 OUT_HDR = 3
@@ -152,9 +163,9 @@ RP_SR1 = 503                     # 供应商付款 500 行（I:N，O 隐藏存�
 COST_R0, COST_R1 = 8, 107        # 与商品档案一一对应（基础资料 5..104 → 8..107）
 COST_TOT = 108
 COST_FIX = 7                     # A..G 固定列：序号 商品 报损品名 每件数量 参考进价 期初数量 期初金额
-COST_FIELDS = ['采购数量', '采购金额', '可用数量', '可用金额', '平均单价', '出库数量',
+COST_FIELDS = ['采购数量', '采购金额', '可用数量', '可用金额', '平均单价', '出库数量', '出库金额',
                '出库成本', '报损数量', '报损金额', '结存数量', '结存金额', '估算成本']
-COST_W = len(COST_FIELDS)        # 每个月 12 列
+COST_W = len(COST_FIELDS)        # 每个月 13 列
 
 def cost_col(m, field):
     """第 m 月（1..12）某字段所在列字母"""
@@ -222,10 +233,21 @@ AR_ = Alignment(horizontal='right', vertical='center')
 
 MONEY = '\\¥#,##0.00'                      # 原表用的格式
 MONEY2 = '#,##0.00;[Red]-#,##0.00;"-"'     # 报表用：负数红、零显示 -
-QTY   = '#,##0.##;[Red]-#,##0.##;"-"'
+QTY   = '[=0]"-";General'                  # 数量：整数不带小数点，半件照样显示 17.5，零显示 -
 PRICE = '#,##0.00##'
 DATE  = 'yyyy/mm/dd'
 PCT   = '0.0%;[Red]-0.0%;"-"'
+
+
+def at(rng, k):
+    """按位置取第 k 格：INDEX(区域,k)。辅助公式一律按位置取，用户在明细表里插行/删行也不会串位或变 #REF!"""
+    return f'INDEX({rng},{k})'
+
+
+def upto(rng, k):
+    """区域开头到第 k 格：$C$4:INDEX($C$4:$C$1003,k)（累计 COUNTIFS 用）"""
+    first = rng.split(':')[0]
+    return f'{first}:INDEX({rng},{k})'
 
 
 def put(ws, coord, value=None, font=None, fill_=None, fmt=None, align=None, border=True):
@@ -245,8 +267,13 @@ def put(ws, coord, value=None, font=None, fill_=None, fmt=None, align=None, bord
     return c
 
 
-def title(ws, text, last_col, color, tip=None, h1=33, h2=24):
-    """第 1 行标题带 + 第 2 行 💡 提示（和原表一个样）"""
+def title(ws, text, last_col, color, tip=None, h1=33, h2=None):
+    """第 1 行标题带 + 第 2 行 💡 提示（和原表一个样）；提示长就把第 2 行加高，免得被截掉"""
+    if h2 is None:
+        width = sum((ws.column_dimensions[CL(i)].width or 9) for i in range(1, CI(last_col) + 1))
+        per_line = max(20, int(width / 1.9))          # 一行大约能放多少个汉字（10 号雅黑）
+        lines = -(-len(tip or '') // per_line)
+        h2 = max(24, 16 * lines + 6)
     ws.merge_cells(f'A1:{last_col}1')
     put(ws, 'A1', text, F_TITLE, fill(color), align=AC, border=False)
     ws.row_dimensions[1].height = h1
@@ -266,6 +293,16 @@ def header(ws, row, cols_texts, color, font=F_HDR, height=37):
 def widths(ws, mapping):
     for col, w in mapping.items():
         ws.column_dimensions[col].width = w
+
+
+def add_date_dv(ws, sqref):
+    """日期列：不在本会计年度就弹提醒（只提醒不拦，跨年补录也能记）"""
+    dv = DataValidation(type='date', operator='between', formula1='年初日', formula2='年末日', allow_blank=True,
+                        showErrorMessage=True, errorStyle='warning')
+    dv.errorTitle, dv.error = '日期不对', '日期不在本会计年度，或者不是真日期（要像 2026/9/25 这样录）'
+    ws.add_data_validation(dv)
+    dv.add(sqref)
+    return dv
 
 
 def add_list_dv(ws, sqref, formula, prompt=None, allow_blank=True, stop=True):

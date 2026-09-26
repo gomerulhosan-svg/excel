@@ -97,6 +97,8 @@ def main(lo_path):
 
     print('【4】按月销售收入（利润表）')
     pl = wv[SH_PL]
+    plrow = {str(pl[f'A{r}'].value).strip(): r for r in range(6, 40) if pl[f'A{r}'].value}
+    R_REV, R_LOSS, R_NP = plrow['主营业务收入（出库领用）'], plrow['商品报损损失'], plrow['五、净利润']
     by_m = defaultdict(float)
     for r in outs:
         d = out_date[r['row']]
@@ -104,8 +106,8 @@ def main(lo_path):
             by_m[d.month] += amt(r)
     for m in range(1, 13):
         col = CL(4 + m)
-        if by_m[m] or num(pl[f'{col}7'].value):
-            ok(f'{m} 月主营业务收入', pl[f'{col}7'].value, by_m[m])
+        if by_m[m] or num(pl[f'{col}{R_REV}'].value):
+            ok(f'{m} 月主营业务收入', pl[f'{col}{R_REV}'].value, by_m[m])
 
     print('【5】报损')
     s2 = openpyxl.load_workbook(SRC2, data_only=False)
@@ -124,16 +126,20 @@ def main(lo_path):
                 g = ws.cell(r, 7).value
                 if isinstance(e, (int, float)) and isinstance(g, (int, float)):
                     s += e * g
+                elif e not in (None, '') and g in (None, ''):
+                    pass                     # 有数量没单价：金额按 0（【数据校验】会提示）
         total += s
-        ok(f'{m} 月报损（{sh}）', num(pl[f'{CL(4 + m)}18'].value), s)
+        ok(f'{m} 月报损（{sh}）', num(pl[f'{CL(4 + m)}{R_LOSS}'].value), s)
     ok('报损汇总一览 全年总金额', wv[SH_BSS]['B3'].value, total)
 
     print('【6】资产负债表平衡 & 报错')
     bal = wv[SH_BAL]
-    ok('资产总计 − 负债和所有者权益合计', round(num(bal['C16'].value) - num(bal['H16'].value), 2), 0)
+    rA = next(r for r in range(6, 40) if bal[f'A{r}'].value == '资产总计')
+    rN = next(r for r in range(6, 40) if str(bal[f'F{r}'].value).startswith('加：本年利润'))
+    ok('资产总计 − 负债和所有者权益合计', round(num(bal[f'C{rA}'].value) - num(bal[f'H{rA}'].value), 2), 0)
     ok('本年利润（资产负债表）= 利润表本年累计净利润（同一月份时）',
-       bal['H14'].value if bal['B3'].value == pl['B3'].value else None,
-       pl['D24'].value if bal['B3'].value == pl['B3'].value else None)
+       bal[f'H{rN}'].value if bal['B3'].value == pl['B3'].value else None,
+       pl[f'D{R_NP}'].value if bal['B3'].value == pl['B3'].value else None)
     errs = 0
     for ws in wv.worksheets:
         for row in ws.iter_rows():

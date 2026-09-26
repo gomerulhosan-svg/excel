@@ -52,29 +52,31 @@ def build_aux_stmt(wb, ctx):
     put(ws, 'F3', '客户对账单排序键', F_NOTE, border=False)
     put(ws, 'H3', '供应商对账单排序键', F_NOTE, border=False)
     C, S = SH_CST, SH_SST
-    rng = lambda sh, d: f'ISNUMBER({d}),{d}>={sh}!$G$4,{d}<={sh}!$I$4'
-    for i in range(INV_R0, INV_R1 + 1):
-        r = 4 + (i - INV_R0)
-        ws[f'{AUX_CST_INV}{r}'] = (f'=IF(AND({SH_INV}!B{i}<>"",{SH_INV}!B{i}={C}!$B$4),'
-                                   f'COUNTIF({SH_INV}!$B${INV_R0}:B{i},{C}!$B$4),"")')
-    for k in range(N_OUT):
-        r, s = AUX_C0 + k, OUT_R0 + k
-        d = f'{SH_OUT}!B{s}'
-        ws[f'F{r}'] = f'=IF(AND({SH_OUT}!C{s}<>"",{SH_OUT}!C{s}={C}!$B$4,{rng(C, d)}),{d}+ROW()/100000,"")'
-    for k in range(N_CASH):
-        r, s = AUX_C0 + N_OUT + k, CASH_R0 + k
-        d = f'{SH_CASH}!{K_DATE}{s}'
-        ws[f'F{r}'] = (f'=IF(AND({SH_CASH}!{K_CUS}{s}<>"",{SH_CASH}!{K_CUS}{s}={C}!$B$4,{SH_CASH}!{K_TO}{s}="{TO_AR}",'
-                       f'{rng(C, d)}),{d}+ROW()/100000,"")')
-    for k in range(N_BUY):
-        r, s = AUX_S0 + k, BUY_R0 + k
-        d = f'{SH_BUY}!{B_DATE}{s}'
-        ws[f'H{r}'] = f'=IF(AND({SH_BUY}!{B_SUP}{s}<>"",{SH_BUY}!{B_SUP}{s}={S}!$B$4,{rng(S, d)}),{d}+ROW()/100000,"")'
-    for k in range(N_CASH):
-        r, s = AUX_S0 + N_BUY + k, CASH_R0 + k
-        d = f'{SH_CASH}!{K_DATE}{s}'
-        ws[f'H{r}'] = (f'=IF(AND({SH_CASH}!{K_SUP}{s}<>"",{SH_CASH}!{K_SUP}{s}={S}!$B$4,{SH_CASH}!{K_TO}{s}="{TO_AP}",'
-                       f'{rng(S, d)}),{d}+ROW()/100000,"")')
+    rng = lambda sh, d: f'ISNUMBER({d}),{d}>={sh}!$G$4,{d}<{sh}!$I$4+1'
+    # 全部按位置取（INDEX(区域,k)）：明细表插行/删行不会串位
+    IB = f'{SH_INV}!$B${INV_R0}:$B${INV_R1}'
+    for k in range(1, INV_R1 - INV_R0 + 2):
+        r = 3 + k
+        b = at(IB, k)
+        ws[f'{AUX_CST_INV}{r}'] = f'=IF(AND({b}<>"",{b}={C}!$B$4,N({C}!$K$12)>0),COUNTIF({upto(IB, k)},{C}!$B$4),"")'
+    for k in range(1, N_OUT + 1):
+        r = AUX_C0 + k - 1
+        cus, d = at(out(O_CUS), k), at(out(O_DATE), k)
+        ws[f'F{r}'] = f'=IF(AND({cus}<>"",{cus}={C}!$B$4,{rng(C, d)}),{d}+ROW()/100000,"")'
+    for k in range(1, N_CASH + 1):
+        r = AUX_C0 + N_OUT + k - 1
+        cus, to, d = at(cash(K_CUS), k), at(cash(K_TO), k), at(cash(K_DATE), k)
+        ws[f'F{r}'] = f'=IF(AND({cus}<>"",{cus}={C}!$B$4,{to}="{TO_AR}",{rng(C, d)}),{d}+ROW()/100000,"")'
+    for k in range(1, N_BUY + 1):
+        r = AUX_S0 + k - 1
+        sup, d = at(buy(B_SUP), k), at(buy(B_DATE), k)
+        ws[f'H{r}'] = f'=IF(AND({sup}<>"",{sup}={S}!$B$4,{rng(S, d)}),{d}+ROW()/100000,"")'
+    for k in range(1, N_CASH + 1):
+        r = AUX_S0 + N_BUY + k - 1
+        sup, to, d = at(cash(K_SUP), k), at(cash(K_TO), k), at(cash(K_DATE), k)
+        ws[f'H{r}'] = f'=IF(AND({sup}<>"",{sup}={S}!$B$4,{to}="{TO_AP}",{rng(S, d)}),{d}+ROW()/100000,"")'
+    put(ws, 'F2', f'=COUNT(F{AUX_C0}:F{AUX_C1})', F_NOTE, border=False)       # 本张客户对账单的往来笔数
+    put(ws, 'H2', f'=COUNT(H{AUX_S0}:H{AUX_S1})', F_NOTE, border=False)
 
 
 # ───────────────────────── 客户对账单 ─────────────────────────
@@ -96,12 +98,12 @@ def build_cst(wb, ctx):
         put(ws, f'{CL(i + 1)}8', t, F_HDR, fill('FF70AD47'), align=ACW)
     ws.row_dimensions[8].height = 30
     vals = [f'={opening}',
-            f'=SUMIFS({out(O_AMT)},{out(O_CUS)},{sel},{out(O_DATE)},">="&{d0},{out(O_DATE)},"<="&{d1})',
-            f'=SUMIFS({cash(K_NET)},{cash(K_CUS)},{sel},{cash(K_TO)},"{TO_AR}",{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<="&{d1})',
+            f'=SUMIFS({out(O_AMT)},{out(O_CUS)},{sel},{out(O_DATE)},">="&{d0},{out(O_DATE)},"<"&({d1}+1))',
+            f'=SUMIFS({cash(K_NET)},{cash(K_CUS)},{sel},{cash(K_TO)},"{TO_AR}",{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<"&({d1}+1))',
             '=A9+B9-C9',
             '=IF(ROUND(D9,2)=0,"已结清",IF(D9>0,"有欠款","预存款"))',
-            f'=SUMIF({SH_INV}!$B${INV_R0}:$B${INV_R1},{sel},{SH_INV}!$I${INV_R0}:$I${INV_R1})',
-            f'=SUMIF({SH_INV}!$B${INV_R0}:$B${INV_R1},{sel},{SH_INV}!$J${INV_R0}:$J${INV_R1})']
+            f'=IF(N($K$12)>0,SUMIF({SH_INV}!$B${INV_R0}:$B${INV_R1},{sel},{SH_INV}!$I${INV_R0}:$I${INV_R1}),"无存条")',
+            f'=IF(N($K$12)>0,SUMIF({SH_INV}!$B${INV_R0}:$B${INV_R1},{sel},{SH_INV}!$J${INV_R0}:$J${INV_R1}),"")']
     for i, v in enumerate(vals):
         put(ws, f'{CL(i + 1)}9', v, Font(name=YH, sz=11, bold=True), FILL_OK,
             QTY if i == 5 else (None if i == 4 else MONEY2), AC)
@@ -126,7 +128,9 @@ def build_cst(wb, ctx):
         for j, sc in enumerate(src_cols):
             put(ws, f'{CL(j + 1)}{r}', f'=IF($K{r}="","",INDEX({SH_INV}!${sc}${INV_R0}:${sc}${INV_R1},$K{r}))', F_TXT,
                 fmt=None if j == 0 else (MONEY2 if j in (2, 4, 6) else QTY), align=AC)
-    put(ws, 'A35', f'=IF(COUNT({aux_rng})>20,"⚠ 这个客户的存条商品超过 20 种，只列了前 20 种，完整的看【客户查询】","")',
+    put(ws, 'K12', f'=SUMIF({SH_INV}!$B${INV_R0}:$B${INV_R1},{sel},{SH_INV}!$D${INV_R0}:$D${INV_R1})', F_NOTE, border=False)
+    put(ws, 'A35', (f'=IF(N($K$12)<=0,"这个客户没有存条，都是直接领货，这一块不适用",'
+                    f'IF(COUNT({aux_rng})>20,"⚠ 这个客户的存条商品超过 20 种，只列了前 20 种，完整的看【客户查询】",""))'),
         F_RED, align=AL, border=False)
     ws.merge_cells('A35:J35')
 
@@ -151,14 +155,14 @@ def build_cst(wb, ctx):
         K = f'$K{r}'
         isout = f'{K}<={N_OUT}'
         ci = f'{K}-{N_OUT}'
-        put(ws, f'K{r}', f'=IFERROR(MATCH(SMALL({keys},{k}),{keys},0),"")', F_NOTE, border=False)
+        put(ws, f'K{r}', f'=IF({k}>{SH_AUX}!$F$2,"",IFERROR(MATCH(SMALL({keys},{k}),{keys},0),""))', F_NOTE, border=False)
         put(ws, f'A{r}', f'=IF({K}="","",{k})', F_TXT, align=AC)
         put(ws, f'B{r}', f'=IF({K}="","",IF({isout},INDEX({o("B")},{K}),INDEX({c(K_DATE)},{ci})))', F_TXT, fmt=DATE, align=AC)
         put(ws, f'C{r}', (f'=IF({K}="","",IF({isout},"出库领用",IF(INDEX({c(K_NET)},{ci})>=0,"收款","退款")'
                           f'&"（"&INDEX({c(K_ACC)},{ci})&"）"))'), F_TXT, align=AC)
         put(ws, f'D{r}', f'=IF({K}="","",IF({isout},INDEX({o("D")},{K})&"",""))', F_TXT, align=AC)
         put(ws, f'E{r}', f'=IF({K}="","",IF({isout},INDEX({o("E")},{K}),""))', F_TXT, fmt=QTY, align=AC)
-        put(ws, f'F{r}', f'=IF({K}="","",IF({isout},INDEX({o("F")},{K}),""))', F_TXT, fmt=PRICE, align=AC)
+        put(ws, f'F{r}', f'=IF({K}="","",IF({isout},IF(INDEX({o("F")},{K})="","",INDEX({o("F")},{K})),""))', F_TXT, fmt=PRICE, align=AC)
         put(ws, f'G{r}', f'=IF({K}="","",IF({isout},N(INDEX({o("G")},{K})),""))', F_TXT, fmt=MONEY2, align=AR_)
         put(ws, f'H{r}', f'=IF({K}="","",IF({isout},"",INDEX({c(K_NET)},{ci})))', F_TXT, fmt=MONEY2, align=AR_)
         put(ws, f'I{r}', f'=IF({K}="","",I{r - 1}+N(G{r})-N(H{r}))', F_TXTB, fmt=MONEY2, align=AR_)
@@ -205,13 +209,13 @@ def build_sst(wb, ctx):
         put(ws, f'{CL(i + 1)}8', t, F_HDR, fill('FF7030A0'), align=ACW)
     ws.row_dimensions[8].height = 30
     vals = [f'={opening}',
-            f'=SUMIFS({buy(B_AMT)},{buy(B_SUP)},{sel},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<="&{d1})',
-            f'=-SUMIFS({cash(K_NET)},{cash(K_SUP)},{sel},{cash(K_TO)},"{TO_AP}",{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<="&{d1})',
+            f'=SUMIFS({buy(B_AMT)},{buy(B_SUP)},{sel},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<"&({d1}+1))',
+            f'=-SUMIFS({cash(K_NET)},{cash(K_SUP)},{sel},{cash(K_TO)},"{TO_AP}",{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<"&({d1}+1))',
             '=A9+B9-C9',
             '=IF(ROUND(D9,2)=0,"已结清",IF(D9>0,"我方欠款","我方预付"))',
-            f'=SUMIFS({buy(B_QTY)},{buy(B_SUP)},{sel},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<="&{d1})'
-            f'+SUMIFS({buy(B_GIFT)},{buy(B_SUP)},{sel},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<="&{d1})',
-            f'=SUMIFS({cash(K_NET)},{cash(K_SUP)},{sel},{cash(K_TO)},"{TO_REB}",{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<="&{d1})']
+            f'=SUMIFS({buy(B_QTY)},{buy(B_SUP)},{sel},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<"&({d1}+1))'
+            f'+SUMIFS({buy(B_GIFT)},{buy(B_SUP)},{sel},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<"&({d1}+1))',
+            f'=SUMIFS({cash(K_NET)},{cash(K_SUP)},{sel},{cash(K_TO)},"{TO_REB}",{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<"&({d1}+1))']
     for i, v in enumerate(vals):
         put(ws, f'{CL(i + 1)}9', v, Font(name=YH, sz=11, bold=True), fill('FFE4DFEC'),
             QTY if i == 5 else (None if i == 4 else MONEY2), AC)
@@ -242,14 +246,14 @@ def build_sst(wb, ctx):
         K = f'$K{r}'
         isb = f'{K}<={N_BUY}'
         ci = f'{K}-{N_BUY}'
-        put(ws, f'K{r}', f'=IFERROR(MATCH(SMALL({keys},{k}),{keys},0),"")', F_NOTE, border=False)
+        put(ws, f'K{r}', f'=IF({k}>{SH_AUX}!$H$2,"",IFERROR(MATCH(SMALL({keys},{k}),{keys},0),""))', F_NOTE, border=False)
         put(ws, f'A{r}', f'=IF({K}="","",{k})', F_TXT, align=AC)
         put(ws, f'B{r}', f'=IF({K}="","",IF({isb},INDEX({b(B_DATE)},{K}),INDEX({c(K_DATE)},{ci})))', F_TXT, fmt=DATE, align=AC)
         put(ws, f'C{r}', (f'=IF({K}="","",IF({isb},IF(N(INDEX({b(B_QTY)},{K}))<0,"退货","进货"),'
                           f'IF(INDEX({c(K_NET)},{ci})<=0,"付款","退款")&"（"&INDEX({c(K_ACC)},{ci})&"）"))'), F_TXT, align=AC)
         put(ws, f'D{r}', f'=IF({K}="","",IF({isb},INDEX({b(B_GOODS)},{K})&"",""))', F_TXT, align=AC)
         put(ws, f'E{r}', f'=IF({K}="","",IF({isb},N(INDEX({b(B_QTY)},{K}))+N(INDEX({b(B_GIFT)},{K})),""))', F_TXT, fmt=QTY, align=AC)
-        put(ws, f'F{r}', f'=IF({K}="","",IF({isb},INDEX({b(B_PRICE)},{K}),""))', F_TXT, fmt=PRICE, align=AC)
+        put(ws, f'F{r}', f'=IF({K}="","",IF({isb},IF(INDEX({b(B_PRICE)},{K})="","",INDEX({b(B_PRICE)},{K})),""))', F_TXT, fmt=PRICE, align=AC)
         put(ws, f'G{r}', f'=IF({K}="","",IF({isb},N(INDEX({b(B_AMT)},{K})),""))', F_TXT, fmt=MONEY2, align=AR_)
         put(ws, f'H{r}', f'=IF({K}="","",IF({isb},"",-INDEX({c(K_NET)},{ci})))', F_TXT, fmt=MONEY2, align=AR_)
         put(ws, f'I{r}', f'=IF({K}="","",I{r - 1}+N(G{r})-N(H{r}))', F_TXTB, fmt=MONEY2, align=AR_)
@@ -281,13 +285,13 @@ def build_sst(wb, ctx):
         rr = 15 + i
         g = f'{SH_BASE}!${G_NAME}${BASE_R0 + i}'
         put(ws, f'M{rr}', (f'=IF({g}="","",IF(SUMIFS({buy(B_QTY)},{buy(B_SUP)},{sel},{buy(B_GOODS)},{g},{buy(B_DATE)},">="&{d0},'
-                           f'{buy(B_DATE)},"<="&{d1})+SUMIFS({buy(B_GIFT)},{buy(B_SUP)},{sel},{buy(B_GOODS)},{g},{buy(B_DATE)},">="&{d0},'
-                           f'{buy(B_DATE)},"<="&{d1})<>0,{i + 1},""))'), F_NOTE, border=False)
+                           f'{buy(B_DATE)},"<"&({d1}+1))+SUMIFS({buy(B_GIFT)},{buy(B_SUP)},{sel},{buy(B_GOODS)},{g},{buy(B_DATE)},">="&{d0},'
+                           f'{buy(B_DATE)},"<"&({d1}+1))<>0,{i + 1},""))'), F_NOTE, border=False)
     for k in range(1, 21):
         r = 14 + k
         L = f'$L{r}'
         g = f'INDEX({gnames},{L})'
-        cond = f'{buy(B_SUP)},{sel},{buy(B_GOODS)},{g},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<="&{d1}'
+        cond = f'{buy(B_SUP)},{sel},{buy(B_GOODS)},{g},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<"&({d1}+1)'
         put(ws, f'A{r}', f'=IF({L}="","",{g})', F_TXT, align=AC)
         put(ws, f'B{r}', f'=IF({L}="","",SUMIFS({buy(B_QTY)},{cond}))', F_TXT, fmt=QTY, align=AC)
         put(ws, f'C{r}', f'=IF({L}="","",SUMIFS({buy(B_GIFT)},{cond}))', F_TXT, fmt=QTY, align=AC)
@@ -320,8 +324,8 @@ def build_rps(wb, ctx):
           '💡 全自动：上面是本年度逐月的收付款（从【资金台帐】按收支项目分类汇总）；下面按客户、按供应商汇总「起止日期」内的往来，'
           '期末欠款＝期初＋本期领用/进货－本期收/付款。要看某一家的逐笔明细，去【客户对账单】【供应商对账单】。')
     # 按月
-    _section(ws, 5, '📅 按月收付款汇总（本年度，不含内部转账）', C_CASH, c1='N')
-    heads = ['月份', '客户回款', '付供应商货款', '费用支出', '厂家返利', '其他收入', '股东投入', '股东提取',
+    _section(ws, 5, '📅 按月收付款汇总（本年度，不含内部转账）', C_CASH, c1='O')
+    heads = ['月份', '客户回款', '付供应商货款', '费用支出', '报销付款', '厂家返利', '其他收入', '股东投入', '股东提取',
              '借款净额\n(借入－归还)', '其他往来净额\n(收－付)', '收入合计', '支出合计', '本月净额', '月末资金余额']
     for i, t in enumerate(heads):
         put(ws, f'{CL(i + 1)}6', t, F_HDR, fill(C_CASH), align=ACW)
@@ -332,25 +336,21 @@ def build_rps(wb, ctx):
         mc = f'{cash(K_DATE)},">="&DATE(年度,{m},1),{cash(K_DATE)},"<"&DATE(年度,{m}+1,1)'
         s = lambda to, sign='': f'={sign}SUMIFS({cash(K_NET)},{cash(K_TO)},"{to}",{mc})'
         put(ws, f'A{r}', m, F_TXTB, FILL_SUBH, '0"月"', AC)
-        put(ws, f'B{r}', s(TO_AR), F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'C{r}', s(TO_AP, '-'), F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'D{r}', s(TO_EXP, '-'), F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'E{r}', s(TO_REB), F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'F{r}', s(TO_OI), F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'G{r}', s(TO_INV), F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'H{r}', s(TO_DRAW, '-'), F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'I{r}', s(TO_LOAN), F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'J{r}', s(TO_OTH), F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'K{r}', f'=SUMIFS({cash(K_IN)},{mc},{cash(K_TO)},"<>{TO_XFER}")', F_TXTB, fmt=MONEY2, align=AR_)
-        put(ws, f'L{r}', f'=SUMIFS({cash(K_OUT)},{mc},{cash(K_TO)},"<>{TO_XFER}")', F_TXTB, fmt=MONEY2, align=AR_)
-        put(ws, f'M{r}', f'=K{r}-L{r}', F_TXTB, fmt=MONEY2, align=AR_)
-        put(ws, f'N{r}', f'={acc0}+SUMIFS({cash(K_NET)},{cash(K_DATE)},">="&年初日,{cash(K_DATE)},"<"&DATE(年度,{m}+1,1))',
+        cols = [(TO_AR, ''), (TO_AP, '-'), (TO_EXP, '-'), (TO_REIMB, '-'), (TO_REB, ''), (TO_OI, ''), (TO_INV, ''),
+                (TO_DRAW, '-'), (TO_LOAN, ''), (TO_OTH, '')]
+        for j, (to, sign) in enumerate(cols):
+            put(ws, f'{CL(2 + j)}{r}', s(to, sign), F_TXT, fmt=MONEY2, align=AR_)
+        ci, co, cn, cb = CL(2 + len(cols)), CL(3 + len(cols)), CL(4 + len(cols)), CL(5 + len(cols))
+        put(ws, f'{ci}{r}', f'=SUMIFS({cash(K_IN)},{mc},{cash(K_TO)},"<>{TO_XFER}")', F_TXTB, fmt=MONEY2, align=AR_)
+        put(ws, f'{co}{r}', f'=SUMIFS({cash(K_OUT)},{mc},{cash(K_TO)},"<>{TO_XFER}")', F_TXTB, fmt=MONEY2, align=AR_)
+        put(ws, f'{cn}{r}', f'={ci}{r}-{co}{r}', F_TXTB, fmt=MONEY2, align=AR_)
+        put(ws, f'{cb}{r}', f'={acc0}+SUMIFS({cash(K_NET)},{cash(K_DATE)},">="&年初日,{cash(K_DATE)},"<"&DATE(年度,{m}+1,1))',
             F_TXTB, fmt=MONEY2, align=AR_)
     r = RPS_M0 + 12
     put(ws, f'A{r}', '合计', F_TXTB, FILL_TOT, align=AC)
-    for col in 'BCDEFGHIJKLM':
+    for col in 'BCDEFGHIJKLMN':
         put(ws, f'{col}{r}', f'=SUM({col}{RPS_M0}:{col}{RPS_M0 + 11})', F_TXTB, FILL_TOT, MONEY2, AR_)
-    put(ws, f'N{r}', f'=N{RPS_M0 + 11}', F_TXTB, FILL_TOT, MONEY2, AR_)
+    put(ws, f'O{r}', f'=O{RPS_M0 + 11}', F_TXTB, FILL_TOT, MONEY2, AR_)
 
     # 起止日期
     put(ws, 'A21', '起始日期：', F_KPI_L, align=AR_, border=False)
@@ -371,17 +371,18 @@ def build_rps(wb, ctx):
         vr = OV_R0 + i
         b = f'$B{r}'
         put(ws, f'A{r}', f'=IF(B{r}="","",{i + 1})', F_AUTO, align=AC)
-        put(ws, f'B{r}', f'=IF({SH_OV}!B{vr}="","",{SH_OV}!B{vr})', F_TXT, align=AC)
-        put(ws, f'C{r}', (f'=IF({b}="","",N({SH_OV}!K{vr})+SUMIFS({out(O_AMT)},{out(O_CUS)},{b},{out(O_DATE)},">="&年初日,{out(O_DATE)},"<"&{d0})'
+        put(ws, f'B{r}', f'=IF({at(CUS_NAMES, i + 1)}="","",{at(CUS_NAMES, i + 1)})', F_TXT, align=AC)
+        put(ws, f'C{r}', (f'=IF({b}="","",N({at(CUS_OPEN, i + 1)})+SUMIFS({out(O_AMT)},{out(O_CUS)},{b},{out(O_DATE)},">="&年初日,{out(O_DATE)},"<"&{d0})'
                           f'-SUMIFS({cash(K_NET)},{cash(K_CUS)},{b},{cash(K_TO)},"{TO_AR}",{cash(K_DATE)},">="&年初日,{cash(K_DATE)},"<"&{d0}))'),
             F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'D{r}', f'=IF({b}="","",SUMIFS({out(O_AMT)},{out(O_CUS)},{b},{out(O_DATE)},">="&{d0},{out(O_DATE)},"<="&{d1}))',
+        put(ws, f'D{r}', f'=IF({b}="","",SUMIFS({out(O_AMT)},{out(O_CUS)},{b},{out(O_DATE)},">="&{d0},{out(O_DATE)},"<"&({d1}+1)))',
             F_TXT, fmt=MONEY2, align=AR_)
         put(ws, f'E{r}', (f'=IF({b}="","",SUMIFS({cash(K_NET)},{cash(K_CUS)},{b},{cash(K_TO)},"{TO_AR}",'
-                          f'{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<="&{d1}))'), F_TXT, fmt=MONEY2, align=AR_)
+                          f'{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<"&({d1}+1)))'), F_TXT, fmt=MONEY2, align=AR_)
         put(ws, f'F{r}', f'=IF({b}="","",C{r}+D{r}-E{r})', F_TXTB, fmt=MONEY2, align=AR_)
         put(ws, f'G{r}', f'=IF({b}="","",IF(ROUND(F{r},2)=0,"已结清",IF(F{r}>0,"有欠款","预存款")))', F_TXT, align=AC)
-        put(ws, f'H{r}', f'=IF({b}="","",_xlfn.MAXIFS({cash(K_DATE)},{cash(K_CUS)},{b},{cash(K_TO)},"{TO_AR}"))', F_TXT,
+        put(ws, f'H{r}', (f'=IF({b}="","",IFERROR(_xlfn.AGGREGATE(14,6,{cash(K_DATE)}/(({cash(K_CUS)}={b})*({cash(K_TO)}="{TO_AR}")'
+                          f'*({cash(K_NET)}>0)*({cash(K_DATE)}<{d1}+1)),1),0))'), F_TXT,
             fmt='yyyy/mm/dd;;', align=AC)
     r = RPS_CUS1 + 1
     put(ws, f'B{r}', '合计', F_TXTB, FILL_TOT, align=AC)
@@ -401,17 +402,18 @@ def build_rps(wb, ctx):
         sr = SUP_R0 + i
         k = f'$K{r}'
         put(ws, f'J{r}', f'=IF(K{r}="","",{i + 1})', F_AUTO, align=AC)
-        put(ws, f'K{r}', f'=IF({SH_BASE}!{S_NAME}{sr}="","",{SH_BASE}!{S_NAME}{sr})', F_TXT, align=AC)
-        put(ws, f'L{r}', (f'=IF({k}="","",N({SH_BASE}!{S_AP0}{sr})+SUMIFS({buy(B_AMT)},{buy(B_SUP)},{k},{buy(B_DATE)},">="&年初日,{buy(B_DATE)},"<"&{d0})'
+        put(ws, f'K{r}', f'=IF({at(SUP_NAMES, i + 1)}="","",{at(SUP_NAMES, i + 1)})', F_TXT, align=AC)
+        put(ws, f'L{r}', (f'=IF({k}="","",N({at(base_rng(S_AP0, SUP_R0, SUP_R1), i + 1)})+SUMIFS({buy(B_AMT)},{buy(B_SUP)},{k},{buy(B_DATE)},">="&年初日,{buy(B_DATE)},"<"&{d0})'
                           f'+SUMIFS({cash(K_NET)},{cash(K_SUP)},{k},{cash(K_TO)},"{TO_AP}",{cash(K_DATE)},">="&年初日,{cash(K_DATE)},"<"&{d0}))'),
             F_TXT, fmt=MONEY2, align=AR_)
-        put(ws, f'M{r}', f'=IF({k}="","",SUMIFS({buy(B_AMT)},{buy(B_SUP)},{k},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<="&{d1}))',
+        put(ws, f'M{r}', f'=IF({k}="","",SUMIFS({buy(B_AMT)},{buy(B_SUP)},{k},{buy(B_DATE)},">="&{d0},{buy(B_DATE)},"<"&({d1}+1)))',
             F_TXT, fmt=MONEY2, align=AR_)
         put(ws, f'N{r}', (f'=IF({k}="","",-SUMIFS({cash(K_NET)},{cash(K_SUP)},{k},{cash(K_TO)},"{TO_AP}",'
-                          f'{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<="&{d1}))'), F_TXT, fmt=MONEY2, align=AR_)
+                          f'{cash(K_DATE)},">="&{d0},{cash(K_DATE)},"<"&({d1}+1)))'), F_TXT, fmt=MONEY2, align=AR_)
         put(ws, f'O{r}', f'=IF({k}="","",L{r}+M{r}-N{r})', F_TXTB, fmt=MONEY2, align=AR_)
         put(ws, f'P{r}', f'=IF({k}="","",IF(ROUND(O{r},2)=0,"已结清",IF(O{r}>0,"我方欠款","我方预付")))', F_TXT, align=AC)
-        put(ws, f'Q{r}', f'=IF({k}="","",_xlfn.MAXIFS({cash(K_DATE)},{cash(K_SUP)},{k},{cash(K_TO)},"{TO_AP}"))', F_TXT,
+        put(ws, f'Q{r}', (f'=IF({k}="","",IFERROR(_xlfn.AGGREGATE(14,6,{cash(K_DATE)}/(({cash(K_SUP)}={k})*({cash(K_TO)}="{TO_AP}")'
+                          f'*({cash(K_NET)}<0)*({cash(K_DATE)}<{d1}+1)),1),0))'), F_TXT,
             fmt='yyyy/mm/dd;;', align=AC)
     r = RPS_SUP1 + 1
     put(ws, f'K{r}', '合计', F_TXTB, FILL_TOT, align=AC)

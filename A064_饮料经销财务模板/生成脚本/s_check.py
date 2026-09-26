@@ -5,22 +5,36 @@ from openpyxl.styles import Font
 
 from common import *
 from s_reports import PL, BAL, STK_R0, STK_R1, STK_TOT, PL_MCOL
-from s_baosun import AUX_BS_UNM, bsx_amt
+from s_baosun import AUX_BS_UNM, AUX_BS_NOPRICE, AUX_BS_NOCOMP, AUX_BS_NONNUM, AUX_BS_NOH, bsx_amt
 
 AUX_CHK_OUT = 'N'     # _辅助 N 列：出库明细每行 金额≠数量×单价 标 1
 AUX_CHK_CUN = 'O'     # _辅助 O 列：存条明细
+AUX_PX_OUT = 'P'      # _辅助 P 列：出库明细每行 单价离参考售价 3 倍以上 标 1
+AUX_PX_CUN = 'Q'      # _辅助 Q 列：存条明细
 
 
 def build_aux_check(wb, ctx):
     ws = wb[SH_AUX]
     put(ws, f'{AUX_CHK_OUT}3', '出库:金额≠数量×单价', F_NOTE, border=False)
     put(ws, f'{AUX_CHK_CUN}3', '存条:金额≠数量×单价', F_NOTE, border=False)
-    for s in range(OUT_R0, OUT_R1 + 1):
-        ws[f'{AUX_CHK_OUT}{s}'] = (f'=IF(AND(ISNUMBER({SH_OUT}!G{s}),ISNUMBER({SH_OUT}!E{s}),ISNUMBER({SH_OUT}!F{s})),'
-                                   f'IF(ABS({SH_OUT}!G{s}-{SH_OUT}!E{s}*{SH_OUT}!F{s})>0.005,1,0),0)')
-    for s in range(CUN_R0, CUN_R1 + 1):
-        ws[f'{AUX_CHK_CUN}{s}'] = (f'=IF(AND(ISNUMBER({SH_CUN}!G{s}),ISNUMBER({SH_CUN}!E{s}),ISNUMBER({SH_CUN}!F{s})),'
-                                   f'IF(ABS({SH_CUN}!G{s}-{SH_CUN}!E{s}*{SH_CUN}!F{s})>0.005,1,0),0)')
+    # 全部按位置取（INDEX）：明细表插行/删行不会串位
+    for sh, col, r0, r1 in ((SH_OUT, AUX_CHK_OUT, OUT_R0, OUT_R1), (SH_CUN, AUX_CHK_CUN, CUN_R0, CUN_R1)):
+        for s in range(r0, r1 + 1):
+            k = s - r0 + 1
+            E, F, G = (at(f'{sh}!${c}${r0}:${c}${r1}', k) for c in 'EFG')
+            ws[f'{col}{s}'] = f'=IF(AND(ISNUMBER({G}),ISNUMBER({E}),ISNUMBER({F})),IF(ABS({G}-{E}*{F})>0.005,1,0),0)'
+    # 单价和商品档案「参考售价」差 3 倍以上：多半是把金额填进了单价（如出库明细第 318 行 1488）
+    put(ws, f'{AUX_PX_OUT}3', '出库:单价离谱', F_NOTE, border=False)
+    put(ws, f'{AUX_PX_CUN}3', '存条:单价离谱', F_NOTE, border=False)
+    for sh, col, r0, r1 in ((SH_OUT, AUX_PX_OUT, OUT_R0, OUT_R1), (SH_CUN, AUX_PX_CUN, CUN_R0, CUN_R1)):
+        for s in range(r0, r1 + 1):
+            k = s - r0 + 1
+            F, D = at(f'{sh}!$F${r0}:$F${r1}', k), at(f'{sh}!$D${r0}:$D${r1}', k)
+            ref = (f'IFERROR(INDEX({SH_BASE}!${G_PRICE}${BASE_R0}:${G_PRICE}${BASE_R1},'
+                   f'MATCH({D},{SH_BASE}!${G_NAME}${BASE_R0}:${G_NAME}${BASE_R1},0))*1,0)')
+            ws[f'{col}{s}'] = f'=IF(AND(ISNUMBER({F}),N({F})>0,{ref}>0),IF(OR({F}>3*{ref},{F}<{ref}/3),1,0),0)'
+    for sh, col, r0, r1 in ((SH_OUT, AUX_PX_OUT, OUT_R0, OUT_R1), (SH_CUN, AUX_PX_CUN, CUN_R0, CUN_R1)):
+        wb[sh].conditional_formatting.add(f'F{r0}:F{r1}', FormulaRule(formula=[f'{SH_AUX}!${col}{r0}=1'], fill=FILL_WARN))
 
 
 def build_check(wb, ctx):
@@ -47,17 +61,24 @@ def build_check(wb, ctx):
          '去【基础资料·商品档案】加上，或改成档案里的写法', SH_OUT),
         ('存条明细：商品不在商品档案里', f'=SUMPRODUCT(({ud}<>"")*(COUNTIF({GOODS_NAMES},{ud})=0))', 'E', '同上', SH_CUN),
         ('出库明细：日期不是真日期或不在本年度',
-         f'=COUNTIF({oc},"?*")-COUNTIFS({oc},"?*",{ob},">="&年初日,{ob},"<="&年末日)', 'E', '日期要像 2026/9/25 这样录', SH_OUT),
+         f'=COUNTIF({oc},"?*")-COUNTIFS({oc},"?*",{ob},">="&年初日,{ob},"<"&(年末日+1))', 'E', '日期要像 2026/9/25 这样录', SH_OUT),
         ('存条明细：日期不是真日期或不在本年度',
-         f'=COUNTIF({uc},"?*")-COUNTIFS({uc},"?*",{ub},">="&年初日,{ub},"<="&年末日)', 'E', '同上', SH_CUN),
+         f'=COUNTIF({uc},"?*")-COUNTIFS({uc},"?*",{ub},">="&年初日,{ub},"<"&(年末日+1))', 'E', '同上', SH_CUN),
         ('出库明细：金额≠数量×单价（金额被手工改过）', f'=SUM({SH_AUX}!{AUX_CHK_OUT}{OUT_R0}:{AUX_CHK_OUT}{OUT_R1})', 'W',
          '金额列本来是公式，被手填了数；确认一下是不是故意的', SH_OUT),
         ('存条明细：金额≠数量×单价（金额被手工改过）', f'=SUM({SH_AUX}!{AUX_CHK_CUN}{CUN_R0}:{AUX_CHK_CUN}{CUN_R1})', 'W', '同上', SH_CUN),
+        ('出库明细：数量或单价不是数字（可能是粘贴来的文本）',
+         f'=SUMPRODUCT(ISTEXT({out(O_QTY)})*1)+SUMPRODUCT(ISTEXT({out(O_PRICE)})*1)', 'E', '把这些格子改成数字（重新输入一遍）', SH_OUT),
+        ('存条明细：数量或单价不是数字', f'=SUMPRODUCT(ISTEXT({cun(U_QTY)})*1)+SUMPRODUCT(ISTEXT({cun(U_PRICE)})*1)', 'E', '同上', SH_CUN),
+        ('出库明细：单价和参考售价差 3 倍以上（多半录错，单价格子标红了）',
+         f'=SUM({SH_AUX}!{AUX_PX_OUT}{OUT_R0}:{AUX_PX_OUT}{OUT_R1})', 'W',
+         '比如把一行的金额填进了单价；核对后改正（参考售价在基础资料商品档案）', SH_OUT),
+        ('存条明细：单价和参考售价差 3 倍以上', f'=SUM({SH_AUX}!{AUX_PX_CUN}{CUN_R0}:{AUX_PX_CUN}{CUN_R1})', 'W', '同上', SH_CUN),
         ('出库明细：有数量没单价的行（赠品）', f'=COUNTIFS({oc},"?*",{out(O_QTY)},"<>",{out(O_PRICE)},"")', 'W',
          '赠品这样录没问题：收入为 0，成本照算', SH_OUT),
         ('采购进货：校验列打 ✗ 的行', f'=COUNTIF({buy(B_CHK)},"✗*")', 'E', '按校验列提示改', SH_BUY),
         ('公司库存：结存为负的商品', f'=COUNTIF({stk("Q")},"✗*")', 'E', '进货没录全：把进货单补进【采购进货】，或在商品档案填期初库存', SH_STK),
-        ('公司库存：有出库却没有进价的商品', f'=COUNTIF({stk("Q")},"*没有进价*")', 'W',
+        ('公司库存：有出库却没有进价的商品（成本按 0 算，利润虚高）', f'=COUNTIF({stk("Q")},"*没有进价*")', 'E',
          '在【基础资料·商品档案】填「参考进价」，不然这些商品成本按 0 算、毛利虚高', SH_STK),
         ('公司库存：仓库的货不够兑现客户存条', f'=COUNTIF({stk("Q")},"*不够兑现*")', 'W', '该进货了（或进货没录）', SH_STK),
         ('总览汇总：客户名字重复', f'=SUMPRODUCT(({cusn}<>"")*(COUNTIF({cusn},{cusn})>1))', 'E',
@@ -70,14 +91,53 @@ def build_check(wb, ctx):
          f'=ROUND(SUM({out(O_AMT)})-{SH_OV}!D{OV_TOT},2)', 'E', '有出库的客户没在总览汇总登记', SH_OV),
         ('商品库存合计 ≠ 存条明细合计（有行没填客户或商品）',
          f'=ROUND(SUM({cun(U_AMT)})-{SH_INV}!F{INV_TOT},2)', 'E', '存条明细里有行没填客户或商品', SH_CUN),
-        ('资产负债表：不平的金额', f'={SH_BAL}!C18', 'E', '看资产负债表附注', SH_BAL),
-        ('资金台帐：内部转账没配对（转出≠转入）', f'={SH_BAL}!C28', 'E', '内部转账要记一出一进两行', SH_CASH),
-        ('资金台帐：没分类的收支净额', f'={SH_BAL}!C27', 'E', '在资金台帐里选上收支项目', SH_CASH),
-        ('报损表里没对上商品档案的报损金额（全年）',
+        ('资产负债表：不平的金额', f'={SH_BAL}!C{BAL["diff"]}', 'E', '看资产负债表附注', SH_BAL),
+        ('资金台帐：内部转账没配对（转出≠转入）', f'={SH_BAL}!C{BAL["n_xfer"]}', 'E', '内部转账要记一出一进两行', SH_CASH),
+        ('资金台帐：没分类的收支净额', f'={SH_BAL}!C{BAL["n_unk"]}', 'E', '在资金台帐里选上收支项目', SH_CASH),
+        ('全量费用明细总表：日期不是真日期或不在本年度',
+         f'=COUNTIF({fee(F_CAT)},"?*")-COUNTIFS({fee(F_CAT)},"?*",{fee(F_DATE)},">="&年初日,{fee(F_DATE)},"<"&(年末日+1))', 'E',
+         '看这张表的校验列', SH_FEE),
+        ('全量费用明细总表：支出类别不在基础资料·费用项目里',
+         f'=SUMPRODUCT(({fee(F_CAT)}<>"")*(COUNTIF({EXP_NAMES},{fee(F_CAT)})=0))', 'E',
+         '去【基础资料·费用项目】加上这个类别（不然算进管理费用）', SH_FEE),
+        ('全量费用明细总表：金额不是数字', f'=SUMPRODUCT(ISTEXT({fee(F_AMT)})*1)', 'E', '重新输入成数字', SH_FEE),
+        ('全量费用明细总表：有记录没填支出金额的行', f'=COUNTIFS({fee(F_CAT)},"?*",{fee(F_AMT)},"")', 'W',
+         '补上金额，这些费用才进利润表', SH_FEE),
+        ('报损表：有数量没单价的行（金额算成了 0）',
+         f'=SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NOPRICE}:{bsx_amt(12)}{AUX_BS_NOPRICE})', 'W', '补上单价；那一行的数量/单价格子标红了', SH_BSS),
+        ('报损表：填了产品没填所属公司的行', f'=SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NOCOMP}:{bsx_amt(12)}{AUX_BS_NOCOMP})', 'W',
+         '补上所属公司（金额照算，只是分公司汇总里归到「其他/未登记公司」）', SH_BSS),
+        ('报损表：数量或单价不是数字的格子（如「2箱」）', f'=SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NONNUM}:{bsx_amt(12)}{AUX_BS_NONNUM})', 'E',
+         '数量、单价只填数字；单位写在「单位」列', SH_BSS),
+        ('报损表里没对上（或重复对上）商品档案的报损金额（全年）',
          f'=ROUND(SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_UNM}:{bsx_amt(12)}{AUX_BS_UNM}),2)', 'W',
          '在商品档案「报损表品名」填上报损表里的写法（不影响利润，只影响库存按商品拆分）', SH_BASE),
         ('报损月表清单：填了但找不到的表名', f'=COUNTIF({SH_BASE}!{M_NOTE}{BSM_R0}:{M_NOTE}{BSM_R1},"✗*")', 'E',
          '表名要和工作表标签一字不差', SH_BASE),
+        ('基础资料：收支项目的「去向」没填或不认识', (f'=SUMPRODUCT(({CAT_NAMES}<>"")*ISNA(MATCH({base_rng(C_TO, CAT_R0, CAT_R1)},'
+                                                  f'{{"' + '","'.join(TO_ALL) + '"},0)))'), 'E', '去向只能从下拉里选', SH_BASE),
+        ('基础资料：费用项目的「利润表归类」没填或不认识', (f'=SUMPRODUCT(({EXP_NAMES}<>"")*ISNA(MATCH({base_rng(E_CLASS, EXP_R0, EXP_R1)},'
+                                                    f'{{"' + '","'.join(EC_ALL) + '"},0)))'), 'E', '归类只能从下拉里选（不认识的会算进管理费用）', SH_BASE),
+        ('基础资料：收支项目 / 费用项目 / 报损表品名 有重名',
+         (f'=SUMPRODUCT(({CAT_NAMES}<>"")*(COUNTIF({CAT_NAMES},{CAT_NAMES})>1))'
+          f'+SUMPRODUCT(({EXP_NAMES}<>"")*(COUNTIF({EXP_NAMES},{EXP_NAMES})>1))'
+          f'+SUMPRODUCT(({base_rng(G_BSNAME, BASE_R0, BASE_R1)}<>"")*(COUNTIF({base_rng(G_BSNAME, BASE_R0, BASE_R1)},{base_rng(G_BSNAME, BASE_R0, BASE_R1)})>1))'),
+         'E', '同一个名字只能出现一次，不然会算两遍', SH_BASE),
+        ('有金额却没有公式的行（插行插出来的，这一行不进报表）',
+         (f'=SUMPRODUCT((({cash(K_IN)}<>"")+({cash(K_OUT)}<>"")>0)*({cash(K_NET)}=""))'
+          f'+COUNTIFS({out(O_QTY)},"<>",{out(O_PRICE)},"<>",{out(O_AMT)},"")'
+          f'+COUNTIFS({cun(U_QTY)},"<>",{cun(U_PRICE)},"<>",{cun(U_AMT)},"")'
+          f'+COUNTIFS({buy(B_QTY)},"<>",{buy(B_PRICE)},"<>",{buy(B_AMT)},"")'
+          f'+COUNTIFS({CUS_NAMES},"?*",{SH_OV}!$D${OV_R0}:$D${OV_R1},"")'
+          f'+SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NOH}:{bsx_amt(12)}{AUX_BS_NOH})'), 'E',
+         '别在表中间插行：新记录往最下面的空行填；已经插了的，把上一行的公式往下拖一格', SH_CASH),
+        ('容量快满了（商品库存组合、收付款明细）',
+         (f'=MAX(0,{SH_AUX}!$A$2-{INV_R1 - INV_R0 + 1})+MAX(0,COUNTIF({cash(K_TO)},"{TO_AR}")-{RP_R1 - RP_R0 + 1})'
+          f'+MAX(0,COUNTIF({cash(K_TO)},"{TO_AP}")-{RP_SR1 - RP_R0 + 1})'), 'E',
+         '超出的部分列不出来——跟我说一声，把容量加大', SH_INV),
+        ('商品档案：填了报损表品名却没填每件瓶数（报损会按 1 瓶＝1 件扣库存）',
+         f'=SUMPRODUCT(({base_rng(G_BSNAME, BASE_R0, BASE_R1)}<>"")*({base_rng(G_PACK, BASE_R0, BASE_R1)}=""))', 'W',
+         '在商品档案「每件瓶数」填上（农夫12.9L水之类没写规格的）', SH_BASE),
         ('资金账户：当前余额为负的账户', f'=COUNTIF({SH_BASE}!{A_BALNOW}{ACC_R0}:{A_BALNOW}{ACC_R1},"<0")', 'W',
          '年初余额没填，或漏记了收入', SH_BASE),
     ]
@@ -119,7 +179,7 @@ def build_home(wb, ctx):
         fill('FFC00000'), align=AC, border=False)
     ws.row_dimensions[1].height = 44
     ws.merge_cells('A2:H2')
-    put(ws, 'A2', '💡 日常只录四张表：资金台帐（收钱付钱）、出库明细（送货）、存条明细（客户存条）、采购进货（进货）；报损照原来每月一张。'
+    put(ws, 'A2', '💡 日常录五张表：资金台帐（收钱付钱）、出库明细（送货）、存条明细（客户存条）、采购进货（进货）、全量费用明细总表（费用）；报损照原来每月一张。'
                   '其余全部自动：总览、库存、收付款明细、对账单、利润表、资产负债表。淡黄/白格子手填，灰格子别动。',
         F_TIP, FILL_TIP, align=ALW, border=False)
     ws.row_dimensions[2].height = 36
@@ -158,6 +218,8 @@ def build_home(wb, ctx):
         (SH_OUT, '（原表）客户领货/送货', '★ 每次送货记一行'),
         (SH_CUN, '（原表）客户存条（预付的货）', '★ 客户存条时记，一个商品一行'),
         (SH_BUY, '（新）从厂家进货', '★ 每张进货单记，厂家搭赠填赠品数量'),
+        (SH_FEE, '（你补充的表）费用报销明细，原格式', '★ 照原来一笔一行记费用；付出去/报销时在资金台帐记「报销付款」'),
+        (SH_QR, '（你补充的表）收款码到账对账', '每月手续费合计记到资金台帐（费用支出·手续费）'),
         (SH_BS9, '（原表）每月过期报损', '★ 每月一张，照原来的填；新月份复制上月的表，并在基础资料登记表名'),
         (SH_BASE, '商品、供应商、资金账户、收支项目、费用项目', '新商品/新账户先在这里加；商品的参考进价要填'),
         (SH_OV, '（原表）客户存条&货款总览——客户名单也在这', '新客户在 B 列加；已付款自动从资金台帐取'),
