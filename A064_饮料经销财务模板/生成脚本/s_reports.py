@@ -204,8 +204,8 @@ def build_exp(wb, ctx):
     ws = wb.create_sheet(SH_EXP)
     ws.sheet_properties.tabColor = C_RPT[2:]
     title(ws, '费用汇总（按费用项目 × 月份 · 自动）', 'Q', C_RPT,
-          '💡 费用来自两处：【全量费用明细总表】（按支出类别）＋【资金台帐】里直接记的「费用支出」（按费用项目），按月汇总；'
-          '底下按利润表归类小计，直接进利润表；再往下是按报销人汇总。没对上费用项目的单列一行，并入管理费用。')
+          '💡 全部直接从【资金台帐】的「费用支出」统计（按费用项目、按日期归月）；底下按利润表归类小计，直接进利润表；'
+          '再往下是按报销人汇总。没选或没对上费用项目的单列一行，并入管理费用。')
     hdr = ['序号', '费用项目', '利润表归类'] + [f'{m}月' for m in range(1, 13)] + ['全年合计', '占比']
     for i, t in enumerate(hdr):
         put(ws, f'{CL(i + 1)}{EXP_HDR}', t, F_HDR, fill(C_RPT), align=ACW)
@@ -214,12 +214,10 @@ def build_exp(wb, ctx):
         ws[f'{EXP_MCOL[m]}3'] = m
     ws.row_dimensions[3].hidden = True
 
-    def exp_sum(m, item=None):
-        c_extra = f',{cash(K_EXP)},{item}' if item else ''
-        f_extra = f',{fee(F_CAT)},{item}' if item else ''
+    def exp_sum(m, item=None, who=None):
+        c_extra = (f',{cash(K_EXP)},{item}' if item else '') + (f',{cash(K_WHO)},{who}' if who else '')
         return (f'-SUMIFS({cash(K_NET)},{cash(K_TO)},"{TO_EXP}"{c_extra},'
-                f'{cash(K_DATE)},">="&DATE(年度,{m},1),{cash(K_DATE)},"<"&DATE(年度,{m}+1,1))'
-                f'+SUMIFS({fee(F_AMT)}{f_extra},{fee(F_DATE)},">="&DATE(年度,{m},1),{fee(F_DATE)},"<"&DATE(年度,{m}+1,1))')
+                f'{cash(K_DATE)},">="&DATE(年度,{m},1),{cash(K_DATE)},"<"&DATE(年度,{m}+1,1))')
 
     for i in range(EXP_ROW1 - EXP_ROW0 + 1):
         r = EXP_ROW0 + i
@@ -255,36 +253,43 @@ def build_exp(wb, ctx):
                 f = f'=SUMIF($C${EXP_ROW0}:$C${EXP_ROW1},"{cls}",{c}${EXP_ROW0}:{c}${EXP_ROW1})'
             put(ws, f'{c}{rr}', f, F_TXT, FILL_SUBH, MONEY2, AR_)
         put(ws, f'P{rr}', f'=SUM(D{rr}:O{rr})', F_TXTB, FILL_SUBH, MONEY2, AR_)
-    # ── 按报销人（全量费用明细总表 E 列，名字自动列出）──
+    # ── 按报销人（资金台帐「报销人」列，名字自动列出）──
     r0 = EXP_WHO_HDR
-    put(ws, f'B{r0 - 1}', '按报销人（来自【全量费用明细总表】）', F_SEC, border=False)
+    put(ws, f'B{r0 - 1}', '按报销人（资金台帐里填了报销人的费用）', F_SEC, border=False)
     for i, t in enumerate(['序号', '报销人', ''] + [f'{m}月' for m in range(1, 13)] + ['全年合计', '占比']):
         put(ws, f'{CL(i + 1)}{r0}', t, F_HDR, fill(C_RPT), align=ACW)
-    who_tot = f'SUMIFS({fee(F_AMT)},{fee(F_DATE)},">="&年初日,{fee(F_DATE)},"<"&(年末日+1))'
+    who_tot = f'$P${EXP_TOTAL}'
     for k in range(1, EXP_WHO_N + 1):
         r = r0 + k
         put(ws, f'A{r}', f'=IF(B{r}="","",{k})', F_AUTO, align=AC)
-        put(ws, f'B{r}', f'=IFERROR(INDEX({fee(F_WHO)},SMALL({SH_AUX}!$S$4:$S${FEE_R1 + 2},{k})-3)&"","")', F_TXT, align=AC)
+        put(ws, f'B{r}', f'=IFERROR(INDEX({cash(K_WHO)},SMALL({SH_AUX}!$S$4:$S${CASH_R1 - CASH_R0 + 4},{k})-3)&"","")', F_TXT, align=AC)
         put(ws, f'C{r}', None)
         for m in range(1, 13):
-            put(ws, f'{EXP_MCOL[m]}{r}', (f'=IF($B{r}="","",SUMIFS({fee(F_AMT)},{fee(F_WHO)},$B{r},{fee(F_DATE)},">="&DATE(年度,{m},1),'
-                                          f'{fee(F_DATE)},"<"&DATE(年度,{m}+1,1)))'), F_TXT, fmt=MONEY2, align=AR_)
+            put(ws, f'{EXP_MCOL[m]}{r}', f'=IF($B{r}="","",{exp_sum(m, who=f"$B{r}")})', F_TXT, fmt=MONEY2, align=AR_)
         put(ws, f'P{r}', f'=IF(B{r}="","",SUM(D{r}:O{r}))', F_TXTB, fmt=MONEY2, align=AR_)
         put(ws, f'Q{r}', f'=IF(OR(B{r}="",N({who_tot})=0),"",P{r}/{who_tot})', F_AUTO, fmt=PCT, align=AR_)
+    r = r0 + EXP_WHO_N + 1
+    put(ws, f'B{r}', '没填报销人的', F_RED, align=AC)
+    put(ws, f'C{r}', None)
+    for m in range(1, 13):
+        c = EXP_MCOL[m]
+        put(ws, f'{c}{r}', f'={c}{EXP_TOTAL}-SUM({c}{r0 + 1}:{c}{r0 + EXP_WHO_N})', F_TXT, fmt=MONEY2, align=AR_)
+    put(ws, f'P{r}', f'=SUM(D{r}:O{r})', F_TXTB, fmt=MONEY2, align=AR_)
+    put(ws, f'Q{r}', f'=IF(N({who_tot})=0,"",P{r}/{who_tot})', F_AUTO, fmt=PCT, align=AR_)
     widths(ws, {'A': 5, 'B': 16, 'C': 11, **{EXP_MCOL[m]: 10.5 for m in range(1, 13)}, 'P': 12, 'Q': 7})
     ws.freeze_panes = f'D{EXP_ROW0}'
     return ws
 
 
 def build_aux_fee(wb, ctx):
-    """_辅助 S 列：全量费用明细总表每一行，报销人第一次出现时记下行号（给费用汇总按报销人自动列名字）"""
+    """_辅助 S 列：资金台帐第 k 行是费用、且报销人第一次出现时，记下行号（给费用汇总按报销人自动列名字）"""
     ws = wb[SH_AUX]
     put(ws, 'S3', '报销人首次出现', F_NOTE, border=False)
-    for s in range(FEE_R0, FEE_R1 + 1):
-        r = s + 2
-        k = s - FEE_R0 + 1
-        e = at(fee(F_WHO), k)
-        ws[f'S{r}'] = f'=IF({e}="","",IF(COUNTIF({upto(fee(F_WHO), k)},{e})>1,"",ROW()))'
+    for k in range(1, CASH_R1 - CASH_R0 + 2):
+        r = k + 3
+        e, t = at(cash(K_WHO), k), at(cash(K_TO), k)
+        ws[f'S{r}'] = (f'=IF(OR({e}="",{t}<>"{TO_EXP}"),"",IF(COUNTIFS({upto(cash(K_WHO), k)},{e},'
+                       f'{upto(cash(K_TO), k)},"{TO_EXP}")>1,"",ROW()))')
 
 
 # ───────────────────────── 利润表 ─────────────────────────
@@ -445,15 +450,14 @@ def build_bal(wb, ctx):
     sup_bal = f'{SH_AUX}!$K${SUP_R0}:$K${SUP_R1}'
 
     # 行号布局：负债权益 6..17，资产合计对齐到 17
-    L = ['ap', 'adv', 'loan', 'feepay', 'oap', 'ltot', 'eq0', 'inj', 'draw', 'np', 'etot', 'letot']
+    L = ['ap', 'adv', 'loan', 'oap', 'ltot', 'eq0', 'inj', 'draw', 'np', 'etot', 'letot']
     for i, k in enumerate(L):
         BAL[k] = 6 + i
     TOT = BAL['letot']                 # 17
     BAL['atot'] = TOT
     DIFF = TOT + 2                     # 19 平衡检查
-    OTHR = TOT + 4                     # 21 其他往来净额（辅助）
-    FEER = TOT + 5                     # 22 应付费用净额（辅助）
-    N0 = TOT + 7                       # 24 附注标题
+    OTHR = TOT + 4                     # 其他往来净额（辅助）
+    N0 = TOT + 6                       # 附注标题
     BAL['diff'] = DIFF
     note_keys = ['cus_net', 'cus_res', 'sup_net', 'sup_res', 'unk', 'xfer', 'bs_unm', 'buy_unm']
     note_rows = {k: N0 + 1 + i for i, k in enumerate(note_keys)}
@@ -466,7 +470,7 @@ def build_bal(wb, ctx):
         ('cash', '货币资金', f'={acc0}+SUMIFS({cash(K_NET)},{rng()})', f'={acc0}'),
         ('ar', '应收账款', f'=SUMIF({cus_bal},">0")+MAX(0,{NR("cus_res")})', f'=SUMIF({CUS_OPEN},">0")'),
         ('prepay', '预付账款', f'=-SUMIF({sup_bal},"<0")+MAX(0,-{NR("sup_res")})', f'=-SUMIF({base_rng(S_AP0, SUP_R0, SUP_R1)},"<0")'),
-        ('oar', '其他应收款', f'=MAX(0,$C${OTHR})+MAX(0,-$C${FEER})', f'=MAX(0,{P_OTH0})'),
+        ('oar', '其他应收款', f'=MAX(0,$C${OTHR})', f'=MAX(0,{P_OTH0})'),
         ('inv', '存货', f'={cost_at("结存金额", COST_TOT, M)}-{NR("bs_unm")}+{NR("buy_unm")}',
          f'=SUM({base_rng(G_A0, BASE_R0, BASE_R1)})'),
     ]
@@ -486,7 +490,6 @@ def build_bal(wb, ctx):
         'ap': ('应付账款', f'=SUMIF({sup_bal},">0")+MAX(0,{NR("sup_res")})', f'=SUMIF({base_rng(S_AP0, SUP_R0, SUP_R1)},">0")'),
         'adv': ('预收账款（客户存条/预存款）', f'=-SUMIF({cus_bal},"<0")+MAX(0,-{NR("cus_res")})', f'=-SUMIF({CUS_OPEN},"<0")'),
         'loan': ('短期借款', f'={P_LOAN0}+{s_to(TO_LOAN)}', f'={P_LOAN0}'),
-        'feepay': ('应付费用（费用明细里还没付的）', f'=MAX(0,$C${FEER})', '=0'),
         'oap': ('其他应付款', f'=MAX(0,-$C${OTHR})', f'=MAX(0,-{P_OTH0})'),
         'ltot': ('负债合计', f'=SUM(H{BAL["ap"]}:H{BAL["oap"]})', f'=SUM(I{BAL["ap"]}:I{BAL["oap"]})'),
         'eq0': ('年初净资产（期初权益）', f'={I("eq0")}', f'=D{TOT}-{I("ltot")}'),
@@ -520,10 +523,6 @@ def build_bal(wb, ctx):
     # 其他往来净额（正=别人欠我，负=我欠别人）：年初 + 其他往来 + 没分类的 + 没配对的内部转账
     put(ws, f'A{OTHR}', '其他往来净额（辅助：正数进其他应收，负数进其他应付）', F_NOTE, align=AL)
     put(ws, f'C{OTHR}', f'={P_OTH0}-{s_to(TO_OTH)}-{NR("unk")}-{NR("xfer")}', F_NOTE, fmt=MONEY2, align=AR_)
-    # 应付费用净额 = 费用明细登记的 − 资金台帐「报销付款」付掉的
-    put(ws, f'A{FEER}', '应付费用净额（辅助：费用明细登记的－资金台帐报销付款）', F_NOTE, align=AL)
-    put(ws, f'C{FEER}', (f'=SUMIFS({fee(F_AMT)},{fee(F_DATE)},">="&年初日,{fee(F_DATE)},"<"&({D}+1))+{s_to(TO_REIMB)}'),
-        F_NOTE, fmt=MONEY2, align=AR_)
 
     # 附注
     put(ws, f'A{N0}', '附注（不为 0 的要去查）', F_SEC, border=False)

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""【基础资料】：参数 / 商品档案 / 供应商 / 资金账户 / 收支项目 / 费用项目 / 报损月表清单，
+"""【基础资料】：参数 / 商品档案 / 供应商 / 资金账户 / 收支项目 / 费用项目，
 外加整本册子要用的定义名称（年度、各下拉清单）。"""
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.formatting.rule import FormulaRule
@@ -16,7 +16,7 @@ def _block_title(ws, c0, c1, text, color):
 def build(wb, ctx):
     ws = wb.create_sheet(SH_BASE)
     ws.sheet_properties.tabColor = C_BASE[2:]
-    title(ws, '基础资料（参数 · 商品 · 供应商 · 资金账户 · 收支项目 · 费用项目 · 报损月表）', 'AO', C_BASE,
+    title(ws, '基础资料（参数 · 商品 · 供应商 · 资金账户 · 收支项目 · 费用项目）', E_NOTE, C_BASE,
           '💡 淡黄格子手填，灰格子自动。这里的清单就是各录入表的下拉内容——清单里没有的先在这里加一行，再去录。'
           '客户名单还在【总览汇总】B 列（跟原来一样，新客户在那里加）。不要插入或删除行，直接往下面的空行里填。')
     ws.row_dimensions[3].height = 24
@@ -145,29 +145,12 @@ def build(wb, ctx):
         put(ws, f'{E_NOTE}{r}', e[2] or None, F_NOTE, FILL_IN, align=ALW)
     add_list_dv(ws, f'{E_CLASS}{EXP_R0}:{E_CLASS}{EXP_R1}', '"' + ','.join(EC_ALL) + '"')
 
-    # ── 报损月表清单 AM:AO ──
-    _block_title(ws, M_MONTH, M_NOTE, '报损月表清单（几月的报损记在哪张表）', 'FF833C0C')
-    header(ws, 4, [(M_MONTH, '月份'), (M_SHEET, '报损表名'), (M_NOTE, '说明')], 'FF833C0C', height=34)
-    bsm = ctx['baosun_months']      # {月份: 表名}
-    for m in range(1, 13):
-        r = BSM_R0 + m - 1
-        put(ws, f'{M_MONTH}{r}', m, F_TXTB, FILL_AUTO, '0"月"', AC)
-        put(ws, f'{M_SHEET}{r}', bsm.get(m), F_IN, FILL_IN, align=AC)
-        put(ws, f'{M_NOTE}{r}',
-            f'=IF({M_SHEET}{r}="","（这个月没有报损表）",IF(ISREF(INDIRECT("\'"&{M_SHEET}{r}&"\'!A1")),"√ 找到这张表","✗ 没有叫这个名字的表"))',
-            F_NOTE, FILL_AUTO, align=AL)
-    put(ws, f'{M_MONTH}{BSM_R1 + 2}',
-        '新的一个月：右键上个月的报损表→移动或复制→建立副本，改成「2026年10月报损」这样的表名，清掉数量，再回这里填上表名。',
-        F_NOTE, align=ALW, border=False)
-    ws.merge_cells(f'{M_MONTH}{BSM_R1 + 2}:{M_NOTE}{BSM_R1 + 4}')
-
     widths(ws, {'A': 22, 'B': 30, 'C': 2, G_SEQ: 5, G_NAME: 16, G_SUP: 13, G_BSNAME: 18, G_SPEC: 7,
                 G_PACK: 6, G_COST: 10, G_PRICE: 10, G_Q0: 9, G_P0: 9, G_A0: 11, 'O': 2,
                 S_SEQ: 5, S_NAME: 16, S_AP0: 15, S_CONTACT: 15, S_NOTE: 16, 'U': 2,
                 A_SEQ: 5, A_NAME: 14, A_BAL0: 14, A_BALNOW: 15, A_NOTE: 16, 'AA': 2,
                 C_SEQ: 5, C_NAME: 12, C_DIR: 6, C_TO: 9, C_NOTE: 40, 'AG': 2,
-                E_SEQ: 5, E_NAME: 13, E_CLASS: 11, E_NOTE: 28, 'AL': 2,
-                M_MONTH: 7, M_SHEET: 17, M_NOTE: 22})
+                E_SEQ: 5, E_NAME: 13, E_CLASS: 11, E_NOTE: 28})
     ws.freeze_panes = 'A5'
 
     # ── 定义名称 ──
@@ -186,4 +169,5 @@ def build(wb, ctx):
     dn('账户列表', lst(SH_BASE, A_NAME, ACC_R0, ACC_R1))
     dn('收支项目列表', lst(SH_BASE, C_NAME, CAT_R0, CAT_R1))
     dn('费用项目列表', lst(SH_BASE, E_NAME, EXP_R0, EXP_R1))
+    dn('报损品名列表', lst(SH_BASE, G_BSNAME, BASE_R0, BASE_R1))
     return ws

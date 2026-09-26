@@ -118,6 +118,22 @@ class Src2:
         self.wb = openpyxl.load_workbook(path)
         self.wv = openpyxl.load_workbook(path, data_only=True)
 
+    def baosun_rows(self):
+        """三张月表里「填了产品、也填了数量」的行，按月份、原顺序排；小计/总计行和没填数量的空模板行不要。
+        数量格里的 =2+20+41 这种累加公式原样保留。"""
+        res = []
+        for sh, m in fixes.BAOSUN_SRC.items():
+            ws = self.wb[sh]
+            for r in range(6, ws.max_row + 1):
+                name, qty = _s(ws.cell(r, 3).value), ws.cell(r, 5).value
+                if not name or qty in (None, ''):
+                    continue
+                res.append(dict(month=m, src=f'{sh}!{r}', company=_s(ws.cell(r, 2).value) or None, name=name,
+                                spec=_s(ws.cell(r, 4).value) or None, qty=qty, unit=_s(ws.cell(r, 6).value) or None,
+                                price=ws.cell(r, 7).value, why=_s(ws.cell(r, 9).value) or None,
+                                note=_s(ws.cell(r, 10).value) or None))
+        return res
+
     def products(self):
         """所有报损月表里出现过的 (所属公司, 产品名称, 规格, 单价)，按首次出现排序"""
         seen, res = set(), []
@@ -130,6 +146,25 @@ class Src2:
                 seen.add(name)
                 res.append(dict(company=comp, name=name, spec=_s(ws.cell(r, 4).value),
                                 price=ws.cell(r, 7).value, unit=_s(ws.cell(r, 6).value)))
+        return res
+
+
+class Src3:
+    """补充的费用报销明细：全量费用明细总表（序号/日期/支出类别/支出明细/报销人/支出金额/账户/备注）"""
+
+    def __init__(self, path):
+        self.path = path
+        self.wb = openpyxl.load_workbook(path)
+
+    def fee_rows(self):
+        ws = self.wb['全量费用明细总表']
+        res = []
+        for r in range(2, ws.max_row + 1):
+            v = [ws.cell(r, c).value for c in range(1, 9)]
+            if all(_s(x) in ('', None) for x in v[1:]):
+                continue
+            res.append(dict(row=r, raw_date=v[1], date=parse_date(v[1]), cat=_s(v[2]) or None, detail=_s(v[3]) or None,
+                            who=_s(v[4]) or None, amount=v[5], acc=_s(v[6]) or None, note=_s(v[7]) or None))
         return res
 
 

@@ -53,7 +53,9 @@ def build_check(wb, ctx):
     checks = [
         # (检查项, 公式, 级别 'E' 错 / 'W' 提醒, 怎么处理, 去哪)
         ('资金台帐：校验列打 ✗ 的行', f'=COUNTIF({cash(K_CHK)},"✗*")', 'E', '筛选校验列，按提示改', SH_CASH),
-        ('资金台帐：账户余额变成负数的行', f'=COUNTIF({cash(K_CHK)},"⚠*")', 'W', '多半是漏记了一笔收入，或账户选错', SH_CASH),
+        ('资金台帐：账户余额变成负数的行', f'=COUNTIF({cash(K_CHK)},"⚠ 账户余额*")', 'W', '多半是漏记了一笔收入，或账户选错', SH_CASH),
+        ('资金台帐：没填金额的行（多是搬进来的费用明细）', f'=COUNTIF({cash(K_CHK)},"⚠ 没填金额*")', 'W',
+         '把金额填进「支出金额」，这些费用才进费用汇总和利润表；没付的钱等付了再填', SH_CASH),
         ('出库明细：客户不在总览汇总名单里', f'=SUMPRODUCT(({oc}<>"")*(COUNTIF({cusn},{oc})=0))', 'E',
          '去【总览汇总】B 列加上这个客户，或者把名字改成名单里的写法', SH_OUT),
         ('存条明细：客户不在总览汇总名单里', f'=SUMPRODUCT(({uc}<>"")*(COUNTIF({cusn},{uc})=0))', 'E', '同上', SH_CUN),
@@ -94,26 +96,17 @@ def build_check(wb, ctx):
         ('资产负债表：不平的金额', f'={SH_BAL}!C{BAL["diff"]}', 'E', '看资产负债表附注', SH_BAL),
         ('资金台帐：内部转账没配对（转出≠转入）', f'={SH_BAL}!C{BAL["n_xfer"]}', 'E', '内部转账要记一出一进两行', SH_CASH),
         ('资金台帐：没分类的收支净额', f'={SH_BAL}!C{BAL["n_unk"]}', 'E', '在资金台帐里选上收支项目', SH_CASH),
-        ('全量费用明细总表：日期不是真日期或不在本年度',
-         f'=COUNTIF({fee(F_CAT)},"?*")-COUNTIFS({fee(F_CAT)},"?*",{fee(F_DATE)},">="&年初日,{fee(F_DATE)},"<"&(年末日+1))', 'E',
-         '看这张表的校验列', SH_FEE),
-        ('全量费用明细总表：支出类别不在基础资料·费用项目里',
-         f'=SUMPRODUCT(({fee(F_CAT)}<>"")*(COUNTIF({EXP_NAMES},{fee(F_CAT)})=0))', 'E',
-         '去【基础资料·费用项目】加上这个类别（不然算进管理费用）', SH_FEE),
-        ('全量费用明细总表：金额不是数字', f'=SUMPRODUCT(ISTEXT({fee(F_AMT)})*1)', 'E', '重新输入成数字', SH_FEE),
-        ('全量费用明细总表：有记录没填支出金额的行', f'=COUNTIFS({fee(F_CAT)},"?*",{fee(F_AMT)},"")', 'W',
-         '补上金额，这些费用才进利润表', SH_FEE),
+        ('报损明细台账：校验列打 ✗ 的行（没填月份、数量不是数字等）', f'=COUNTIF({bsl(L_CHK)},"✗*")', 'E',
+         '筛选校验列，按提示改（没填月份的报损哪个月都不算）', SH_BSL),
         ('报损表：有数量没单价的行（金额算成了 0）',
-         f'=SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NOPRICE}:{bsx_amt(12)}{AUX_BS_NOPRICE})', 'W', '补上单价；那一行的数量/单价格子标红了', SH_BSS),
+         f'=SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NOPRICE}:{bsx_amt(12)}{AUX_BS_NOPRICE})', 'W', '补上单价；那一行的单价格子标红了', SH_BSL),
         ('报损表：填了产品没填所属公司的行', f'=SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NOCOMP}:{bsx_amt(12)}{AUX_BS_NOCOMP})', 'W',
-         '补上所属公司（金额照算，只是分公司汇总里归到「其他/未登记公司」）', SH_BSS),
+         '补上所属公司（金额照算，只是分公司汇总里归到「其他/未登记公司」）', SH_BSL),
         ('报损表：数量或单价不是数字的格子（如「2箱」）', f'=SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NONNUM}:{bsx_amt(12)}{AUX_BS_NONNUM})', 'E',
-         '数量、单价只填数字；单位写在「单位」列', SH_BSS),
+         '数量、单价只填数字；单位写在「单位」列', SH_BSL),
         ('报损表里没对上（或重复对上）商品档案的报损金额（全年）',
          f'=ROUND(SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_UNM}:{bsx_amt(12)}{AUX_BS_UNM}),2)', 'W',
          '在商品档案「报损表品名」填上报损表里的写法（不影响利润，只影响库存按商品拆分）', SH_BASE),
-        ('报损月表清单：填了但找不到的表名', f'=COUNTIF({SH_BASE}!{M_NOTE}{BSM_R0}:{M_NOTE}{BSM_R1},"✗*")', 'E',
-         '表名要和工作表标签一字不差', SH_BASE),
         ('基础资料：收支项目的「去向」没填或不认识', (f'=SUMPRODUCT(({CAT_NAMES}<>"")*ISNA(MATCH({base_rng(C_TO, CAT_R0, CAT_R1)},'
                                                   f'{{"' + '","'.join(TO_ALL) + '"},0)))'), 'E', '去向只能从下拉里选', SH_BASE),
         ('基础资料：费用项目的「利润表归类」没填或不认识', (f'=SUMPRODUCT(({EXP_NAMES}<>"")*ISNA(MATCH({base_rng(E_CLASS, EXP_R0, EXP_R1)},'
@@ -131,9 +124,10 @@ def build_check(wb, ctx):
           f'+COUNTIFS({CUS_NAMES},"?*",{SH_OV}!$D${OV_R0}:$D${OV_R1},"")'
           f'+SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NOH}:{bsx_amt(12)}{AUX_BS_NOH})'), 'E',
          '别在表中间插行：新记录往最下面的空行填；已经插了的，把上一行的公式往下拖一格', SH_CASH),
-        ('容量快满了（商品库存组合、收付款明细）',
+        ('容量快满了（商品库存组合、收付款明细、费用明细）',
          (f'=MAX(0,{SH_AUX}!$A$2-{INV_R1 - INV_R0 + 1})+MAX(0,COUNTIF({cash(K_TO)},"{TO_AR}")-{RP_R1 - RP_R0 + 1})'
-          f'+MAX(0,COUNTIF({cash(K_TO)},"{TO_AP}")-{RP_SR1 - RP_R0 + 1})'), 'E',
+          f'+MAX(0,COUNTIF({cash(K_TO)},"{TO_AP}")-{RP_SR1 - RP_R0 + 1})'
+          f'+MAX(0,COUNT({cash(K_ESEQ)})-{FEE_R1 - FEE_R0 + 1})'), 'E',
          '超出的部分列不出来——跟我说一声，把容量加大', SH_INV),
         ('商品档案：填了报损表品名却没填每件瓶数（报损会按 1 瓶＝1 件扣库存）',
          f'=SUMPRODUCT(({base_rng(G_BSNAME, BASE_R0, BASE_R1)}<>"")*({base_rng(G_PACK, BASE_R0, BASE_R1)}=""))', 'W',
@@ -150,7 +144,7 @@ def build_check(wb, ctx):
         put(ws, f'D{r}', f'=IF(ROUND(N(C{r}),2)=0,"√","{bad}")', F_TXTB, align=AC)
         put(ws, f'E{r}', how, F_NOTE, align=ALW)
         c = put(ws, f'F{r}', f'→ {where}', Font(name=YH, sz=10, color='FF0563C1', underline='single'), align=AL)
-        c.hyperlink = f"#'{where}'!A1"
+        link(c, where)
         ws.row_dimensions[r].height = 30
     last = 5 + len(checks) - 1
     ws.conditional_formatting.add(f'D5:D{last}', FormulaRule(formula=['LEFT($D5,1)="✗"'], fill=FILL_WARN,
@@ -179,8 +173,9 @@ def build_home(wb, ctx):
         fill('FFC00000'), align=AC, border=False)
     ws.row_dimensions[1].height = 44
     ws.merge_cells('A2:H2')
-    put(ws, 'A2', '💡 日常录五张表：资金台帐（收钱付钱）、出库明细（送货）、存条明细（客户存条）、采购进货（进货）、全量费用明细总表（费用）；报损照原来每月一张。'
-                  '其余全部自动：总览、库存、收付款明细、对账单、利润表、资产负债表。淡黄/白格子手填，灰格子别动。',
+    put(ws, 'A2', '💡 日常录五张表：资金台帐（收钱付钱，费用也在这里记、填报销人）、出库明细（送货）、存条明细（客户存条）、'
+                  '采购进货（进货）、报损明细台账（一年一张，填月份）。其余全部自动：总览、库存、收付款明细、费用明细、收款码对账、'
+                  '对账单、利润表、资产负债表。白格子手填，灰格子是公式别动。点下面的表名直接跳过去。',
         F_TIP, FILL_TIP, align=ALW, border=False)
     ws.row_dimensions[2].height = 36
 
@@ -203,6 +198,7 @@ def build_home(wb, ctx):
         put(ws, f'{col}6', f, Font(name=YH, sz=14, bold=True, color='FFC00000' if i < 7 else 'FF1F4E79'),
             fill('FFF2F2F2'), MONEY2 if i < 7 else '0"项"', AC)
         ws.column_dimensions[col].width = 17
+    widths(ws, {'A': 21, 'C': 13, 'D': 20, 'F': 21, 'H': 13})     # 照你上一版里拉过的列宽
     ws.row_dimensions[6].height = 32
     put(ws, 'A7', '「欠厂家货款」按资产负债表选定月份月底算；其余是全年/当前数。', F_NOTE, border=False)
     ws.merge_cells('A7:H7')
@@ -214,18 +210,19 @@ def build_home(wb, ctx):
     ws.merge_cells('B10:C10')
     ws.merge_cells('D10:H10')
     nav = [
-        (SH_CASH, '收支混合录入，逐笔出账户余额和总余额', '★ 每收/付一笔钱记一行；收客户的选客户，付厂家的选供应商，花钱的选费用项目'),
+        (SH_CASH, '收支混合录入（费用报销也在这），逐笔出账户余额和总余额',
+         '★ 每收/付一笔钱记一行；收客户的选客户，付厂家的选供应商，花钱的选费用项目、填报销人'),
         (SH_OUT, '（原表）客户领货/送货', '★ 每次送货记一行'),
         (SH_CUN, '（原表）客户存条（预付的货）', '★ 客户存条时记，一个商品一行'),
         (SH_BUY, '（新）从厂家进货', '★ 每张进货单记，厂家搭赠填赠品数量'),
-        (SH_FEE, '（你补充的表）费用报销明细，原格式', '★ 照原来一笔一行记费用；付出去/报销时在资金台帐记「报销付款」'),
-        (SH_QR, '（你补充的表）收款码到账对账', '每月手续费合计记到资金台帐（费用支出·手续费）'),
-        (SH_BS9, '（原表）每月过期报损', '★ 每月一张，照原来的填；新月份复制上月的表，并在基础资料登记表名'),
-        (SH_BASE, '商品、供应商、资金账户、收支项目、费用项目', '新商品/新账户先在这里加；商品的参考进价要填'),
+        (SH_BSL, '（原表）过期报损明细，一年一张', '★ 每条报损记一行、填月份；按月看点「月份」表头筛选'),
+        (SH_BASE, '商品、供应商、资金账户、收支项目、费用项目', '新商品/新账户/新费用项目先在这里加；商品的参考进价要填'),
         (SH_OV, '（原表）客户存条&货款总览——客户名单也在这', '新客户在 B 列加；已付款自动从资金台帐取'),
         (SH_INV, '（原表）每个客户每个商品的存条库存', '全自动'),
         (SH_RP, '（原表）收付款明细', '全自动，从资金台帐提取'),
         (SH_Q, '（原表）客户快速查询', '选客户看'),
+        (SH_FEE, '（你补充的表）费用明细，列跟原来一样', '全自动，从资金台帐的费用支出列出；可按月份/类别/报销人筛选'),
+        (SH_QR, '（你补充的表）收款码到账对账', '全自动，选月份看；差额就是手续费'),
         (SH_RPS, '按月收付、按客户/供应商汇总', '全自动'),
         (SH_CST, '给客户的对账单（可打印签字）', '选客户、起止日期'),
         (SH_SST, '和厂家的对账单', '选供应商、起止日期'),
@@ -239,7 +236,7 @@ def build_home(wb, ctx):
     for i, (sh, what, todo) in enumerate(nav):
         r = 11 + i
         c = put(ws, f'A{r}', sh, Font(name=YH, sz=11, bold=True, color='FF0563C1', underline='single'), align=AC)
-        c.hyperlink = f"#'{sh}'!A1"
+        link(c, sh)
         ws.merge_cells(f'B{r}:C{r}')
         put(ws, f'B{r}', what, F_TXT, align=ALW)
         put(ws, f'C{r}', None)
@@ -255,15 +252,16 @@ def build_home(wb, ctx):
         '客户领货 → 出库明细 → 总览汇总「已领用」、商品库存、利润表「主营业务收入」、公司库存「出库」',
         '从厂家进货 → 采购进货 → 公司库存、成本计算（加权平均进价）、供应商对账单「进货」',
         '付厂家货款 → 资金台帐（选供应商）→ 供应商对账单「付款」、资产负债表「应付账款」',
-        '各项开支 → 资金台帐（选费用项目）→ 费用汇总 → 利润表',
-        '过期报损 → 各月报损表 → 报损汇总一览、利润表「商品报损损失」、公司库存「报损」',
+        '各项开支、报销 → 资金台帐（选费用项目、填报销人）→ 全量费用明细总表、费用汇总 → 利润表',
+        '收款码到账 → 资金台帐（内部转账一出一进＋手续费）→ 收款码到账对账',
+        '过期报损 → 报损明细台账（填月份）→ 报损汇总一览、利润表「商品报损损失」、公司库存「报损」',
     ]
     for i, t in enumerate(flow):
         ws.merge_cells(f'A{r + 1 + i}:H{r + 1 + i}')
         put(ws, f'A{r + 1 + i}', f'{i + 1}. {t}', F_TXT, align=AL, border=False)
     r = r + len(flow) + 2
     put(ws, f'A{r}', '颜色', F_SEC, border=False)
-    legend = [(FILL_IN, '淡黄：手填的格子'), (FILL_AUTO, '淡灰：公式自动算，别改'), (FILL_SEL, '亮黄：查询/报表的选择格'),
+    legend = [(FILL_IN, '淡黄：基础资料里手填的'), (FILL_AUTO, '淡灰：公式自动算，别改'), (FILL_SEL, '亮黄：查询/报表的选择格'),
               (FILL_WARN, '淡红：校验发现的问题')]
     for i, (fl, t) in enumerate(legend):
         put(ws, f'{CL(i * 2 + 1)}{r + 1}', None, fill_=fl)

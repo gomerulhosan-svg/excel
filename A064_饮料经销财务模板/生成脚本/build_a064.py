@@ -2,12 +2,12 @@
 """A064 饮料经销财务模板 · 生成脚本
 
 跑法：python3 build_a064.py [输出路径]
-输入：../参考/原表1_存条出库库存总览.xlsx、../参考/原表2_过期报损统计.xlsx
+输入：../参考/原表1_存条出库库存总览.xlsx、../参考/原表2_过期报损统计.xlsx、../参考/原表3_费用报销明细（补充）.xlsx
 输出：../A064_饮料经销财务模板.xlsx
 
-做法：以原表 1 为底（出库/存条/总览/商品库存/收付款明细/客户查询 的格式原样保留），
-把原表 2 的四张报损表连格式搬进来，再加上新表。全部公式都是 Excel 2010 起就有的函数
-（外加 MAXIFS，WPS 和 Excel 2019+ 都认），不用 FILTER/UNIQUE/XLOOKUP 这类动态数组。
+做法：以原表 1 为底（出库/存条/总览/商品库存/收付款明细/客户查询 的结构保留，颜色格式统一成 A064 的样子），
+原表 2 的报损合成一年一张明细台账，原表 3 的费用明细搬进资金台帐，再加上新表。
+全部公式都是 Excel 2010 起就有的函数，不用 FILTER/UNIQUE/XLOOKUP 这类动态数组。
 """
 import json
 import os
@@ -31,7 +31,7 @@ SRC3 = os.path.join(ROOT, '参考', '原表3_费用报销明细（补充）.xlsx
 OUT = os.path.join(ROOT, 'A064_饮料经销财务模板.xlsx')
 
 
-def prepare(s1, s2):
+def prepare(s1, s2, s3):
     ctx = {'year': fixes.BOOK_YEAR, 'kpi_month': 9,
            'cus_merge': dict(fixes.CUSTOMER_MERGE), 'goods_merge': dict(fixes.GOODS_MERGE)}
     ctx['customers'] = data_prep.build_customer_master(s1)
@@ -51,18 +51,33 @@ def prepare(s1, s2):
     ctx['accounts'] = fixes.ACCOUNTS
     ctx['categories'] = fixes.CATEGORIES
     ctx['expense_items'] = fixes.EXPENSE_ITEMS
-    ctx['baosun_months'] = fixes.BAOSUN_MONTHS
-    # 资金台帐：原收付款明细的 117 笔客户收款，按日期排好搬进来
+    ctx['baosun_rows'] = s2.baosun_rows()
+    # 资金台帐：原收付款明细的 117 笔客户收款 + 补充的费用明细 367 笔，按日期排好搬进来（同一天先收款后费用）
     recs = s1.receipts()
     rows = []
     for k, x in enumerate(recs):
         d = x['date']
-        rows.append(dict(_k=(d or dt.date(2100, 1, 1), k), _src=x['row'], _raw=x['raw_date'],
+        rows.append(dict(_k=(d or dt.date(2100, 1, 1), 0, k), _src=f'收付款明细!{x["row"]}', _raw=x['raw_date'],
                          date=dt.datetime(d.year, d.month, d.day) if d else x['raw_date'],
                          account=x['method'], category='客户回款',
                          memo=x['note'] or '收货款', **{'in': x['amount']}, customer=x['customer']))
+    acc_names = {a['name'] for a in fixes.ACCOUNTS}
+    for k, x in enumerate(s3.fee_rows()):
+        d = x['date']
+        acc, note = x['acc'], x['note']
+        if acc and acc not in acc_names:          # 拼多多 / 淘宝 / 未付：不是资金账户，账户留空，原文字进备注
+            extra = fixes.FEE_ACC_NOTE.get(acc, f'原账户写「{acc}」')
+            note = f'{note}；{extra}' if note else extra
+            acc = None
+        amt = x['amount'] if isinstance(x['amount'], (int, float)) else None
+        rows.append(dict(_k=(d or dt.date(2100, 1, 1), 1, k), _src=f'全量费用明细总表!{x["row"]}', _raw=x['raw_date'],
+                         date=dt.datetime(d.year, d.month, d.day) if d else x['raw_date'],
+                         account=acc, category='费用支出', memo=x['detail'], out=amt,
+                         expense=x['cat'], who=x['who'], note=note))
     rows.sort(key=lambda t: t['_k'])
     ctx['cash_rows'] = rows
+    ctx['n_receipts'] = len(recs)
+    ctx['n_fee_rows'] = len(rows) - len(recs)
     ctx['out_last'] = max(r['row'] for r in s1.outbound())
     ctx['cun_last'] = max(r['row'] for r in s1.deposits())
     ctx['default_客户列表'] = ctx['customers'][0][0]
@@ -99,7 +114,8 @@ def wrap_iferror(wb):
 def main(out_path=OUT):
     s1 = data_prep.Src1(SRC1)
     s2 = data_prep.Src2(SRC2)
-    ctx = prepare(s1, s2)
+    s3 = data_prep.Src3(SRC3)
+    ctx = prepare(s1, s2, s3)
 
     wb = openpyxl.load_workbook(SRC1)
     del wb['Sheet1']                         # 原表只有一格草稿 =4200+1000+…，没被任何地方引用
@@ -116,9 +132,8 @@ def main(out_path=OUT):
     s_base.build(wb, ctx)
     s_cash.build_cash(wb, ctx)
     s_orig.build_buy(wb, ctx)
-    src3 = openpyxl.load_workbook(SRC3)
-    s_fee.build_fee(wb, ctx, src3, changes)
-    s_fee.build_qr(wb, ctx, src3)
+    s_fee.build_fee(wb, ctx)
+    s_fee.build_qr(wb, ctx)
     s_orig.fix_out(wb, ctx, changes)
     s_orig.fix_cun(wb, ctx, changes)
     s_orig.fix_ov(wb, ctx)
@@ -157,12 +172,14 @@ def main(out_path=OUT):
 
     log = {'changes': changes, 'goods_extra': ctx['goods_extra'],
            'customers': [(n, d, src) for n, d, src in ctx['customers']],
-           'cash_rows': [(r['_src'], str(r['_raw']), str(r['date']), r['customer'], r['in']) for r in ctx['cash_rows']]}
+           'cash_rows': [(r['_src'], str(r['_raw']), str(r['date']), r.get('customer'), r.get('in'), r.get('expense'))
+                         for r in ctx['cash_rows']]}
     with open(os.path.join(HERE, '_build_log.json'), 'w', encoding='utf-8') as f:
         json.dump(log, f, ensure_ascii=False, indent=1, default=str)
     print(f'✓ 生成 {out_path}')
     print(f'  客户 {len(ctx["customers"])} 个，商品 {len(ctx["goods"])} 个（明细里补进来的：{ctx["goods_extra"]}），'
-          f'资金台帐搬入 {len(ctx["cash_rows"])} 笔，名称规范化 {len(changes)} 处')
+          f'资金台帐搬入 {len(ctx["cash_rows"])} 笔（收款 {ctx["n_receipts"]}、费用 {ctx["n_fee_rows"]}），'
+          f'报损 {len(ctx["baosun_rows"])} 行，名称规范化 {len(changes)} 处')
 
 
 if __name__ == '__main__':

@@ -324,8 +324,8 @@ def build_rps(wb, ctx):
           '💡 全自动：上面是本年度逐月的收付款（从【资金台帐】按收支项目分类汇总）；下面按客户、按供应商汇总「起止日期」内的往来，'
           '期末欠款＝期初＋本期领用/进货－本期收/付款。要看某一家的逐笔明细，去【客户对账单】【供应商对账单】。')
     # 按月
-    _section(ws, 5, '📅 按月收付款汇总（本年度，不含内部转账）', C_CASH, c1='O')
-    heads = ['月份', '客户回款', '付供应商货款', '费用支出', '报销付款', '厂家返利', '其他收入', '股东投入', '股东提取',
+    _section(ws, 5, '📅 按月收付款汇总（本年度，不含内部转账）', C_CASH, c1='N')
+    heads = ['月份', '客户回款', '付供应商货款', '费用支出', '厂家返利', '其他收入', '股东投入', '股东提取',
              '借款净额\n(借入－归还)', '其他往来净额\n(收－付)', '收入合计', '支出合计', '本月净额', '月末资金余额']
     for i, t in enumerate(heads):
         put(ws, f'{CL(i + 1)}6', t, F_HDR, fill(C_CASH), align=ACW)
@@ -336,7 +336,7 @@ def build_rps(wb, ctx):
         mc = f'{cash(K_DATE)},">="&DATE(年度,{m},1),{cash(K_DATE)},"<"&DATE(年度,{m}+1,1)'
         s = lambda to, sign='': f'={sign}SUMIFS({cash(K_NET)},{cash(K_TO)},"{to}",{mc})'
         put(ws, f'A{r}', m, F_TXTB, FILL_SUBH, '0"月"', AC)
-        cols = [(TO_AR, ''), (TO_AP, '-'), (TO_EXP, '-'), (TO_REIMB, '-'), (TO_REB, ''), (TO_OI, ''), (TO_INV, ''),
+        cols = [(TO_AR, ''), (TO_AP, '-'), (TO_EXP, '-'), (TO_REB, ''), (TO_OI, ''), (TO_INV, ''),
                 (TO_DRAW, '-'), (TO_LOAN, ''), (TO_OTH, '')]
         for j, (to, sign) in enumerate(cols):
             put(ws, f'{CL(2 + j)}{r}', s(to, sign), F_TXT, fmt=MONEY2, align=AR_)
@@ -348,9 +348,9 @@ def build_rps(wb, ctx):
             F_TXTB, fmt=MONEY2, align=AR_)
     r = RPS_M0 + 12
     put(ws, f'A{r}', '合计', F_TXTB, FILL_TOT, align=AC)
-    for col in 'BCDEFGHIJKLMN':
+    for col in 'BCDEFGHIJKLM':
         put(ws, f'{col}{r}', f'=SUM({col}{RPS_M0}:{col}{RPS_M0 + 11})', F_TXTB, FILL_TOT, MONEY2, AR_)
-    put(ws, f'O{r}', f'=O{RPS_M0 + 11}', F_TXTB, FILL_TOT, MONEY2, AR_)
+    put(ws, f'N{r}', f'=N{RPS_M0 + 11}', F_TXTB, FILL_TOT, MONEY2, AR_)
 
     # 起止日期
     put(ws, 'A21', '起始日期：', F_KPI_L, align=AR_, border=False)

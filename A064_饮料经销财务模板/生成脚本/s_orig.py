@@ -20,15 +20,24 @@ def _copy_row_style(ws, src_row, dst_row, c0=1, c1=8):
 
 
 # ───────────────────────── 出库明细 / 存条明细 ─────────────────────────
-def _fix_ledger(ws, r0, r1, last_data, ctx, changes, sheet):
-    """补客户/商品名规范化、金额公式铺满、下拉、筛选"""
-    tmpl = last_data
+def _retitle(ws, text, last_col, color, tip, h2=None):
+    """第 1 行标题带 + 第 2 行提示，统一成 A064 新表的样子（原来各张表颜色、字号、底色都不一样）"""
+    for mr in list(ws.merged_cells.ranges):
+        if mr.min_row <= 2:
+            ws.unmerge_cells(str(mr))
+    for r in (1, 2):
+        for c in range(1, CI(last_col) + 1):
+            ws.cell(r, c).value = None if (r, c) != (1, 1) else ws.cell(r, c).value
+    title(ws, text, last_col, color, tip, h2=h2)
+    ws.sheet_properties.tabColor = color[2:]
+
+
+def _fix_ledger(ws, r0, r1, ctx, changes, sheet, color, heads, title_text, tip):
+    """名称规范化、金额公式铺满、序号改公式、下拉、筛选；颜色格式统一：白底细框，公式列灰底"""
+    widths(ws, {'A': 7, 'B': 12, 'C': 22, 'D': 14, 'E': 12, 'F': 12, 'G': 15, 'H': 22})
+    _retitle(ws, title_text, 'H', color, tip)
+    header(ws, 3, list(zip('ABCDEFGH', heads)), color, height=34)
     for r in range(r0, r1 + 1):
-        if r > last_data:
-            _copy_row_style(ws, tmpl, r, 1, 8)
-            for c in range(1, 9):
-                ws.cell(r, c).value = None
-                ws.cell(r, c).font = Font(name=YH, sz=10, color='FF000000')
         # 名称规范化（fixes.py 里写明的）
         for col, mp, kind in [('C', ctx['cus_merge'], '客户'), ('D', ctx['goods_merge'], '商品')]:
             v = ws[f'{col}{r}'].value
@@ -38,11 +47,13 @@ def _fix_ledger(ws, r0, r1, last_data, ctx, changes, sheet):
                 if new != v:
                     changes.append((sheet, f'{col}{r}', kind, v, new))
                     ws[f'{col}{r}'].value = new
+        # 序号：原来手打的（你上一版把重号、跳号重新排成了 1、2、3…），现在改成公式，插行删行也不会乱
+        ws[f'A{r}'].value = f'=IF(AND(B{r}="",C{r}="",D{r}=""),"",ROW()-{r0 - 1})'
         g = ws[f'G{r}'].value
         if g is None or (isinstance(g, str) and g.startswith('=')):
             ws[f'G{r}'].value = f'=IF(AND(E{r}<>"",F{r}<>""),E{r}*F{r},"")'
-        ws[f'B{r}'].number_format = DATE
-        ws[f'G{r}'].number_format = MONEY
+    style_rows(ws, r0, r1, 'ABCDEFGH', auto=('A', 'G'),
+               fmts={'B': DATE, 'E': QTY, 'F': PRICE, 'G': MONEY}, aligns={'H': AL, 'G': AR_}, height=16)
     add_date_dv(ws, f'B{r0}:B{r1}')
     add_list_dv(ws, f'C{r0}:C{r1}', '=客户列表', '从下拉选客户；新客户先去【总览汇总】B 列加')
     add_list_dv(ws, f'D{r0}:D{r1}', '=商品列表', '从下拉选商品；新商品先去【基础资料·商品档案】加')
@@ -52,23 +63,24 @@ def _fix_ledger(ws, r0, r1, last_data, ctx, changes, sheet):
 
 def fix_out(wb, ctx, changes):
     ws = wb[SH_OUT]
-    _copy_style(ws['B3'], ws['C3'])
-    ws['C3'].value = '客户名称'          # 原表这一格是空的
-    ws['A2'].value = '💡 每次送货/拣货在此登记（客户、商品从下拉选），总览表、库存表、利润表、对账单自动更新'
-    _fix_ledger(ws, OUT_R0, OUT_R1, ctx['out_last'], ctx, changes, SH_OUT)
+    _fix_ledger(ws, OUT_R0, OUT_R1, ctx, changes, SH_OUT, C_OUT,
+                ['序号', '日期', '客户名称', '商品品类', '领用数量(件)', '单价(元/件)', '本次领用金额(元)', '备注'],
+                '商品领用明细台账',
+                '💡 每次送货/拣货在此登记（客户、商品从下拉选），总览表、库存表、利润表、对账单自动更新')
     import fixes
     for r, d in fixes.OUT_DATE_FIX.items():
         old = ws[f'B{r}'].value
         if isinstance(old, str):
             ws[f'B{r}'].value = d
             changes.append((SH_OUT, f'B{r}', '日期', old, d.strftime('%Y-%m-%d')))
-    widths(ws, {'D': 13})
 
 
 def fix_cun(wb, ctx, changes):
     ws = wb[SH_CUN]
-    ws['A2'].value = '💡 每次客户存条在此登记，一个商品一行，库存表按「客户+商品」自动汇总累加'
-    _fix_ledger(ws, CUN_R0, CUN_R1, ctx['cun_last'], ctx, changes, SH_CUN)
+    _fix_ledger(ws, CUN_R0, CUN_R1, ctx, changes, SH_CUN, C_CUN,
+                ['序号', '入库日期', '客户名称', '商品品类', '入库数量(件)', '入库单价(元/件)', '本次入库总金额(元)', '备注'],
+                '商品入库明细台账（客户存条）',
+                '💡 每次客户存条在此登记，一个商品一行，库存表按「客户+商品」自动汇总累加')
 
 
 # ───────────────────────── 采购进货（新） ─────────────────────────
@@ -116,43 +128,25 @@ def build_buy(wb, ctx):
 # ───────────────────────── 总览汇总（客户名单） ─────────────────────────
 def fix_ov(wb, ctx):
     ws = wb[SH_OV]
-    # 记住原来每个客户第一次出现那一行的样式（用户自己标的底色要跟着人走）
-    orig_rows = {}
-    for r in range(5, 155):
-        b = ws.cell(r, 2).value
-        if isinstance(b, str) and b.strip():
-            n = ctx['cus_merge'].get(b.strip(), b.strip())
-            orig_rows.setdefault(n, r)
-    styles = {}
-    for n, r in orig_rows.items():
-        styles[n] = [copy(ws.cell(r, c)._style) for c in range(1, 11)]
-    plain = [copy(ws.cell(100, c)._style) for c in range(1, 11)]
-    tot_style = [copy(ws.cell(155, c)._style) for c in range(1, 11)]
-    k_hdr_style = copy(ws['J3']._style)
-    top_style = copy(ws['J4']._style)
     for mr in list(ws.merged_cells.ranges):
-        if mr.min_row >= 5:
+        if mr.min_row >= 3:
             ws.unmerge_cells(str(mr))
-    for r in range(5, max(ws.max_row, OV_TOT) + 1):
+    for r in range(3, max(ws.max_row, OV_TOT) + 1):
         for c in range(1, 21):
             ws.cell(r, c).value = None
-
-    ws['A2'].value = '💡 一篮子查看所有客户情况：新增客户在 B 列往下加（C 填初始存条），领用和收款自动更新'
-    ws['K3']._style = k_hdr_style
-    ws['K3'].value = '期初欠款(元)'
-    ws['K4']._style = top_style
-    ws.column_dimensions['K'].width = 15
-    ws.column_dimensions['J'].width = 19
+            ws.cell(r, c)._style = copy(ws.cell(OV_TOT + 30, 20)._style)
+    widths(ws, {'A': 6, 'B': 20, 'C': 15, 'D': 15, 'E': 15, 'F': 15, 'G': 15, 'H': 9, 'I': 14, 'J': 15, 'K': 14})
+    _retitle(ws, '客户存条&货款总览汇总表', 'K', C_OV,
+             '💡 一篮子查看所有客户情况：新增客户在 B 列往下加（C 填初始存条，K 填年初就欠的货款），领用和收款自动更新。'
+             '第 4 行是合计（往下翻也看得到）。')
+    header(ws, 3, list(zip('ABCDEFGHIJK', ['序号', '客户名称', '初始存条金额(元)', '已领用金额(元)', '剩余存条金额(元)',
+                                            '已付款金额(元)', '未付货款(元)', '状态', '库存总结余数量(件)',
+                                            '库存总结余金额(元)', '期初欠款(元)'])), C_OV, height=40)
 
     cust = ctx['customers']       # [(name, deposit, src_rows)]
     for i in range(OV_R1 - OV_R0 + 1):
         r = OV_R0 + i
         name, dep = (cust[i][0], cust[i][1]) if i < len(cust) else (None, None)
-        st = styles.get(name, plain) if name else plain
-        for c in range(1, 11):
-            ws.cell(r, c)._style = copy(st[c - 1])
-        ws.cell(r, 11)._style = copy(st[2])
-        ws.row_dimensions[r].height = 15
         ws[f'A{r}'] = f'=IF(B{r}="","",COUNTA($B${OV_R0}:B{r}))'
         ws[f'B{r}'] = name
         ws[f'C{r}'] = dep
@@ -164,24 +158,28 @@ def fix_ov(wb, ctx):
         ws[f'H{r}'] = f'=IF(B{r}="","",IF(ROUND(G{r},2)=0,"已结清",IF(G{r}>0,"有欠款","预存款")))'
         ws[f'I{r}'] = f'=IF(B{r}="","",IFERROR(SUMIF({SH_INV}!B:B,B{r},{SH_INV}!I:I),0))'
         ws[f'J{r}'] = f'=IF(B{r}="","",IFERROR(SUMIF({SH_INV}!B:B,B{r},{SH_INV}!J:J),0))'
-        ws[f'K{r}'].number_format = MONEY
-        ws[f'I{r}'].number_format = 'General'       # 原表这一列是数量（件），却套了 ¥ 金额格式
-    r = OV_TOT
-    for c in range(1, 12):
-        ws.cell(r, c)._style = copy(tot_style[min(c, 10) - 1] if c != 2 else tot_style[0])
-    ws.merge_cells(f'A{r}:B{r}')
-    ws[f'A{r}'] = '合计'
+    money = {c: MONEY for c in 'CDEFGJK'}
+    style_rows(ws, OV_R0, OV_R1, 'ABCDEFGHIJK', auto=tuple('ADEFGHIJ'), fmts={**money, 'I': QTY},
+               aligns={c: AR_ for c in 'CDEFGIJK'}, bold=('G',), height=16)
+    # 合计：底部一行 + 顶上第 4 行（冻结在表头下面）
+    for rr, lab in ((OV_TOT, '合计'), (OV_TOP, '合计')):
+        for c in range(1, 12):
+            col = CL(c)
+            put(ws, f'{col}{rr}', None, F_TXTB, FILL_TOT, money.get(col, QTY if col == 'I' else None), AR_)
+        ws[f'B{rr}'] = lab
+        ws[f'B{rr}'].alignment = AC
     for col in 'CDEFGIJK':
-        ws[f'{col}{r}'] = f'=SUM({col}{OV_R0}:{col}{OV_R1})'
-    for col in 'CDEFGIJK':
+        ws[f'{col}{OV_TOT}'] = f'=SUM({col}{OV_R0}:{col}{OV_R1})'
         ws[f'{col}{OV_TOP}'] = f'={col}{OV_TOT}'
-    ws[f'I{OV_TOT}'].number_format = 'General'
-    ws[f'I{OV_TOP}'].number_format = 'General'
-    ws[f'H{OV_TOP}'] = None
+    ws.row_dimensions[OV_TOP].height = 22
     # 重名提醒：同一个客户写了两行，SUMIF 会把他的领用/收款算两遍
     ws.conditional_formatting.add(f'B{OV_R0}:B{OV_R1}',
                                   FormulaRule(formula=[f'AND(B{OV_R0}<>"",COUNTIF($B${OV_R0}:$B${OV_R1},B{OV_R0})>1)'],
                                               fill=FILL_WARN))
+    ws.conditional_formatting.add(f'H{OV_R0}:H{OV_R1}', FormulaRule(formula=[f'$H{OV_R0}="有欠款"'],
+                                                                   font=Font(name=YH, sz=10, bold=True, color='FFC00000')))
+    ws.conditional_formatting.add(f'H{OV_R0}:H{OV_R1}', FormulaRule(formula=[f'$H{OV_R0}="预存款"'],
+                                                                   font=Font(name=YH, sz=10, color='FF00B050')))
     ws.auto_filter.ref = f'A{OV_TOP}:K{OV_R1}'
     ws.freeze_panes = 'A5'
 
@@ -231,22 +229,22 @@ def build_aux_combo(wb, ctx):
 
 def fix_inv(wb, ctx):
     ws = wb[SH_INV]
-    even = [copy(ws.cell(18, c)._style) for c in range(1, 12)]     # 原表偶数行：整行淡蓝，剩余数量红色加粗
-    odd = [copy(ws.cell(19, c)._style) for c in range(1, 12)]      # 原表奇数行
-    tot = [copy(ws.cell(298, c)._style) for c in range(1, 12)]
     for mr in list(ws.merged_cells.ranges):
-        if mr.min_row >= 4:
+        if mr.min_row >= 3:
             ws.unmerge_cells(str(mr))
-    for r in range(4, max(ws.max_row, INV_TOT) + 1):
+    blank = copy(ws.cell(INV_TOT + 30, 20)._style)
+    for r in range(3, max(ws.max_row, INV_TOT) + 1):
         for c in range(1, 21):
             ws.cell(r, c).value = None
-            ws.cell(r, c)._style = copy(ws.cell(300, 1)._style) if r > INV_TOT else ws.cell(r, c)._style
-    ws['A2'].value = '💡 每个客户每个商品的库存：全自动，存条/出库里出现新的「客户+商品」这里自动多一行'
+            ws.cell(r, c)._style = copy(blank)
+    widths(ws, {'A': 6, 'B': 20, 'C': 14, 'D': 12, 'E': 11, 'F': 14, 'G': 12, 'H': 14, 'I': 12, 'J': 14, 'K': 12})
+    _retitle(ws, '商品库存明细（按客户+商品）', 'K', C_INV,
+             '💡 每个客户每个商品的存条库存：全自动，存条/出库里出现新的「客户+商品」这里自动多一行；剩余数量为负（领的比存的多）标红')
+    header(ws, INV_HDR, list(zip('ABCDEFGHIJK', ['序号', '客户名称', '商品品类', '累计入库数量(件)', '入库单价(元)',
+                                                 '累计入库总金额(元)', '已领用数量(件)', '已领用金额(元)', '剩余数量(件)',
+                                                 '剩余金额(元)', '最后更新日期'])), C_INV, height=40)
     pos = lambda r: f'{SH_AUX}!$B{r}'
     for r in range(INV_R0, INV_R1 + 1):
-        for c in range(1, 12):
-            ws.cell(r, c)._style = copy((even if r % 2 == 0 else odd)[c - 1])
-        ws.row_dimensions[r].height = 15
         p = pos(r)
         ws[f'A{r}'] = f'=IF(B{r}="","",ROW()-{INV_R0 - 1})'
         ws[f'B{r}'] = (f'=IF({p}="","",IF({p}<={CUN_R1 - CUN_R0 + 1},INDEX({cun("C")},{p}),'
@@ -265,15 +263,18 @@ def fix_inv(wb, ctx):
         agg = lambda sh, r0, r1: (f'IFERROR(_xlfn.AGGREGATE(14,6,{sh}!$B${r0}:$B${r1}/(({sh}!$C${r0}:$C${r1}=$B{r})'
                                   f'*({sh}!$D${r0}:$D${r1}=$C{r})),1),0)')     # 最后一次进/出的日期（AGGREGATE：Excel 2010 起都有）
         ws[f'K{r}'] = f'=IF($B{r}="","",MAX({agg(SH_CUN, CUN_R0, CUN_R1)},{agg(SH_OUT, OUT_R0, OUT_R1)}))'
-        ws[f'K{r}'].number_format = 'yyyy/mm/dd;;'
-        ws[f'E{r}'].number_format = MONEY
+    style_rows(ws, INV_R0, INV_R1, 'ABCDEFGHIJK',
+               fmts={'D': QTY, 'E': MONEY, 'F': MONEY, 'G': QTY, 'H': MONEY, 'I': QTY, 'J': MONEY, 'K': 'yyyy/mm/dd;;'},
+               aligns={c: AR_ for c in 'DEFGHIJ'}, bold=('I', 'J'), height=16)
     r = INV_TOT
     for c in range(1, 12):
-        ws.cell(r, c)._style = copy(tot[c - 1])
+        put(ws, f'{CL(c)}{r}', None, F_TXTB, FILL_TOT, align=AR_)
     ws.merge_cells(f'A{r}:C{r}')
     ws[f'A{r}'] = '合计'
+    ws[f'A{r}'].alignment = AC
     for col in 'DFGHIJ':
         ws[f'{col}{r}'] = f'=SUM({col}{INV_R0}:{col}{INV_R1})'
+        ws[f'{col}{r}'].number_format = MONEY if col in 'FHJ' else QTY
     # 剩余数量为负：领用比存条多，标红
     ws.conditional_formatting.add(f'I{INV_R0}:J{INV_R1}',
                                   FormulaRule(formula=[f'AND(ISNUMBER($I{INV_R0}),$I{INV_R0}<0)'],
@@ -286,27 +287,49 @@ def fix_inv(wb, ctx):
 Q_R0, Q_R1 = 12, 51                      # 一个客户最多列 40 个商品
 
 
+def _bar(ws, row, text, color, c1='G'):
+    for mr in list(ws.merged_cells.ranges):
+        if mr.min_row == row:
+            ws.unmerge_cells(str(mr))
+    ws.merge_cells(f'A{row}:{c1}{row}')
+    put(ws, f'A{row}', text, Font(name=YH, sz=12, bold=True, color='FFFFFFFF'), fill(color), align=AL, border=False)
+    ws.row_dimensions[row].height = 26
+
+
 def fix_q(wb, ctx):
     ws = wb[SH_Q]
-    ws['A2'].value = '💡 在黄色格子选客户名称，自动显示该客户的所有库存和货款情况（打印对账单去【客户对账单】）'
-    add_list_dv(ws, 'B4', '=客户列表', '选一个客户')
-    for i, col in enumerate('ABCDEF'):
-        v = f'VLOOKUP($B$4,{SH_OV}!$B${OV_R0}:$H${OV_R1},{i + 2},FALSE)'
-        ws[f'{col}8'] = f'=IFERROR(IF({v}="","",{v}),"")'
-    s12 = [copy(ws.cell(12, c)._style) for c in range(1, 8)]
-    s13 = [copy(ws.cell(13, c)._style) for c in range(1, 8)]
     for r in range(Q_R0, max(ws.max_row, Q_R1) + 1):
         for c in range(1, 10):
             ws.cell(r, c).value = None
+    widths(ws, {'A': 20, 'B': 13, 'C': 15, 'D': 13, 'E': 15, 'F': 13, 'G': 15})
+    _retitle(ws, '客户快速查询', 'G', C_Q,
+             '💡 在黄色格子选客户名称，自动显示该客户的所有库存和货款情况（要打印给客户签字的对账单去【客户对账单】）')
+    ws.row_dimensions[4].height = 28
+    put(ws, 'A4', '🔍 请选客户名称：', F_KPI_L, align=AR_, border=False)
+    for c in 'BCD':
+        put(ws, f'{c}4', None, Font(name=YH, sz=12, bold=True, color='FF1F4E79'), FILL_SEL, align=AC)
+    ws['B4'].value = ws['B4'].value or ctx['customers'][0][0]
+    add_list_dv(ws, 'B4', '=客户列表', '选一个客户')
+    put(ws, 'E4', '← 下拉选客户', F_NOTE, border=False)
+    _bar(ws, 6, '💰 货款汇总', C_RP)
+    header(ws, 7, list(zip('ABCDEFG', ['初始存条金额', '已领用金额', '剩余存条金额', '已付款金额', '未付货款', '状态', ''])),
+           C_RP, height=24)
+    for i, col in enumerate('ABCDEF'):
+        v = f'VLOOKUP($B$4,{SH_OV}!$B${OV_R0}:$H${OV_R1},{i + 2},FALSE)'
+        ws[f'{col}8'] = f'=IFERROR(IF({v}="","",{v}),"")'
+    style_rows(ws, 8, 8, 'ABCDEFG', fmts={c: MONEY for c in 'ABCDE'}, bold=tuple('ABCDEF'), height=22)
+    _bar(ws, 10, '📦 商品库存明细', C_INV)
+    header(ws, 11, list(zip('ABCDEFG', ['商品品类', '初始数量', '初始金额', '已领用数量', '已领用金额', '剩余数量', '剩余金额'])),
+           C_INV, height=24)
     src_cols = ['C', 'D', 'F', 'G', 'H', 'I', 'J']   # 商品 / 入库数 / 入库额 / 领用数 / 领用额 / 剩余数 / 剩余额
     for r in range(Q_R0, Q_R1 + 1):
         k = r - Q_R0 + 1
-        st = s12 if (r - Q_R0) % 2 == 0 else s13
-        for c in range(1, 8):
-            ws.cell(r, c)._style = copy(st[c - 1])
         ws[f'I{r}'] = f'=IFERROR(MATCH({k},{SH_AUX}!${AUX_Q_COL}${AUX_COMBO_R0}:${AUX_Q_COL}${AUX_COMBO_R0 + INV_R1 - INV_R0},0),"")'
         for j, sc in enumerate(src_cols):
             col = 'ABCDEFG'[j]
             ws[f'{col}{r}'] = f'=IF($I{r}="","",INDEX({SH_INV}!${sc}${INV_R0}:${sc}${INV_R1},$I{r}))'
+    style_rows(ws, Q_R0, Q_R1, 'ABCDEFG', fmts={'B': QTY, 'C': MONEY, 'D': QTY, 'E': MONEY, 'F': QTY, 'G': MONEY},
+               aligns={c: AR_ for c in 'BCDEFG'}, bold=('F', 'G'), height=16)
+    ws.conditional_formatting.add(f'F{Q_R0}:G{Q_R1}', FormulaRule(formula=[f'AND(ISNUMBER($F{Q_R0}),$F{Q_R0}<0)'],
+                                                                 font=Font(name=YH, sz=10, bold=True, color='FFC00000')))
     ws.column_dimensions['I'].hidden = True
-    put(ws, 'E4', '← 下拉选客户', F_NOTE, border=False)

@@ -8,14 +8,15 @@
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter as CL, column_index_from_string as CI
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.hyperlink import Hyperlink
 
 # ─────────────────────────── 表名 ───────────────────────────
 SH_HOME = '首页'
 SH_BASE = '基础资料'
 SH_CASH = '资金台帐'
 SH_BUY  = '采购进货'
-SH_FEE  = '全量费用明细总表'  # 你后来补的费用报销明细（原格式搬进来，当费用录入表）
-SH_QR   = '收款码到账对账'    # 同一个文件里的 Sheet1：收款码收款 vs 农业银行到账，差额是手续费
+SH_FEE  = '全量费用明细总表'  # 你补的费用报销明细：现在不用录，从资金台帐的费用支出自动列出（原来的列不变）
+SH_QR   = '收款码到账对账'    # 从资金台帐自动生成：收款码每天收款 vs 转到银行的到账，差额是手续费
 SH_OV   = '总览汇总'      # 原表
 SH_OUT  = '出库明细'      # 原表
 SH_RP   = '收付款明细'    # 原表（改成从资金台帐自动提取）
@@ -28,19 +29,16 @@ SH_SST  = '供应商对账单'
 SH_STK  = '公司库存'
 SH_COST = '成本计算'
 SH_BSS  = '报损汇总一览'  # 原表2
-SH_BS6  = '报损明细台账'  # 原表2（统计周期 2026-06）
-SH_BS7  = '2026年7月报损'  # 原表2
-SH_BS8  = '2026年8月报损'  # 原表2
-SH_BS9  = '2026年9月报损'  # 新增：照 8 月的样子复制的空白月表
+SH_BSL  = '报损明细台账'  # 原表2：原来一个月一张，合成一年一张（加「月份」列，按月筛选）
 SH_EXP  = '费用汇总'
 SH_PL   = '利润表'
 SH_BAL  = '资产负债表'
 SH_CHK  = '数据校验'
 SH_AUX  = '_辅助'
 
-SHEET_ORDER = [SH_HOME, SH_BASE, SH_CASH, SH_BUY, SH_FEE, SH_QR, SH_OV, SH_OUT, SH_RP, SH_CUN, SH_INV,
-               SH_Q, SH_RPS, SH_CST, SH_SST, SH_STK, SH_COST, SH_BSS, SH_BS6, SH_BS7,
-               SH_BS8, SH_BS9, SH_EXP, SH_PL, SH_BAL, SH_CHK, SH_AUX]
+SHEET_ORDER = [SH_HOME, SH_BASE, SH_CASH, SH_BUY, SH_OV, SH_OUT, SH_RP, SH_CUN, SH_INV, SH_Q,
+               SH_FEE, SH_QR, SH_RPS, SH_CST, SH_SST, SH_STK, SH_COST, SH_BSL, SH_BSS,
+               SH_EXP, SH_PL, SH_BAL, SH_CHK, SH_AUX]
 
 def q(sh):
     """跨表引用时的表名写法：带数字开头或特殊字符的表名要加单引号"""
@@ -67,8 +65,6 @@ CAT_R0, CAT_R1 = 5, 34           # 收支项目 30 行  AB:AF
 C_SEQ, C_NAME, C_DIR, C_TO, C_NOTE = 'AB', 'AC', 'AD', 'AE', 'AF'
 EXP_R0, EXP_R1 = 5, 54           # 费用项目 50 行  AH:AK
 E_SEQ, E_NAME, E_CLASS, E_NOTE = 'AH', 'AI', 'AJ', 'AK'
-BSM_R0, BSM_R1 = 5, 16           # 报损月表清单 12 行  AM:AO
-M_MONTH, M_SHEET, M_NOTE = 'AM', 'AN', 'AO'
 
 def base_rng(col, r0, r1):
     return f"{SH_BASE}!${col}${r0}:${col}${r1}"
@@ -90,8 +86,7 @@ TO_DRAW  = '提取'       # 股东提取：所有者权益
 TO_LOAN  = '借款'       # 借入 / 归还：短期借款
 TO_XFER  = '转账'       # 账户之间互转：不影响报表，收支要成对
 TO_OTH   = '其他往来'   # 押金等：其他应收 / 其他应付
-TO_REIMB = '报销'       # 付【全量费用明细总表】里登记过的费用：冲减应付费用（费用已经在明细表里进了利润表）
-TO_ALL = [TO_AR, TO_AP, TO_EXP, TO_REB, TO_OI, TO_INV, TO_DRAW, TO_LOAN, TO_XFER, TO_OTH, TO_REIMB]
+TO_ALL = [TO_AR, TO_AP, TO_EXP, TO_REB, TO_OI, TO_INV, TO_DRAW, TO_LOAN, TO_XFER, TO_OTH]
 
 # 费用「利润表归类」
 EC_TAX, EC_SELL, EC_ADMIN, EC_FIN, EC_NOI, EC_IT = '税金及附加', '销售费用', '管理费用', '财务费用', '营业外支出', '所得税费用'
@@ -101,10 +96,12 @@ EC_ALL = [EC_SELL, EC_ADMIN, EC_FIN, EC_TAX, EC_NOI, EC_IT]
 CASH_HDR = 6
 CASH_R0, CASH_R1 = 7, 3006       # 3000 行
 (K_SEQ, K_DATE, K_ACC, K_CAT, K_MEMO, K_IN, K_OUT, K_ABAL, K_TBAL,
- K_CUS, K_SUP, K_EXP, K_NOTE, K_CHK) = 'A B C D E F G H I J K L M N'.split()
+ K_CUS, K_SUP, K_EXP, K_WHO, K_NOTE, K_CHK) = 'A B C D E F G H I J K L M N O'.split()
+K_LAST = K_CHK                   # 看得见的最后一列
 # 隐藏辅助列
-K_CAT2, K_TO, K_CSEQ, K_SSEQ, K_NET = 'O', 'P', 'Q', 'R', 'S'
-# O 实际收支项目（没选项目时按客户/供应商/费用推断） P 去向  Q 客户收款序号  R 供应商付款序号  S 净额=收入-支出
+K_CAT2, K_TO, K_CSEQ, K_SSEQ, K_NET, K_ESEQ = 'P', 'Q', 'R', 'S', 'T', 'U'
+# P 实际收支项目（没选项目时按客户/供应商/费用推断） Q 去向  R 客户收款排序键  S 供应商付款排序键  T 净额=收入-支出
+# U 费用排序键（给【全量费用明细总表】按日期列出费用用）
 
 def cash(col, absolute=True):
     return f"{SH_CASH}!${col}${CASH_R0}:${col}${CASH_R1}" if absolute else f"{SH_CASH}!{col}{CASH_R0}:{col}{CASH_R1}"
@@ -117,13 +114,19 @@ BUY_R0, BUY_R1 = 4, 1503         # 1500 行
 def buy(col):
     return f"{SH_BUY}!${col}${BUY_R0}:${col}${BUY_R1}"
 
-# ─────────────────────────── 全量费用明细总表（补充的原表） ───────────────────────────
-FEE_HDR = 1
-FEE_R0, FEE_R1 = 2, 2001         # 2000 行（原来 367 行）
-(F_SEQ, F_DATE, F_CAT, F_DETAIL, F_WHO, F_AMT, F_ACC, F_NOTE) = 'A B C D E F G H'.split()
+# ─────────────────────────── 全量费用明细总表（自动从资金台帐列出，列跟你原来的表一样） ───────────────────────────
+FEE_HDR = 4
+FEE_R0, FEE_R1 = 5, 2004         # 2000 行
+(F_SEQ, F_DATE, F_CAT, F_DETAIL, F_WHO, F_AMT, F_ACC, F_REMK, F_POS) = 'A B C D E F G H I'.split()   # I 隐藏：资金台帐第几行
 
-def fee(col):
-    return f"{SH_FEE}!${col}${FEE_R0}:${col}${FEE_R1}"
+# ─────────────────────────── 报损明细台账（一年一张） ───────────────────────────
+BSL_HDR = 5
+BSL_R0, BSL_R1 = 6, 2005         # 2000 行
+(L_SEQ, L_MON, L_COMP, L_NAME, L_SPEC, L_QTY, L_UNIT, L_PRICE, L_AMT, L_WHY, L_NOTE, L_CHK) = \
+    'A B C D E F G H I J K L'.split()
+
+def bsl(col):
+    return f"{SH_BSL}!${col}${BSL_R0}:${col}${BSL_R1}"
 
 # ─────────────────────────── 出库明细（原表） ───────────────────────────
 OUT_HDR = 3
@@ -204,8 +207,9 @@ F_BIG   = Font(name=YH, sz=12, bold=True, color='FF000000')
 def fill(rgb):
     return PatternFill('solid', fgColor=rgb)
 
-# 原表各张的标题色
-C_OV, C_OUT, C_RP, C_CUN, C_INV, C_Q = 'FFC00000', 'FF4472C4', 'FF70AD47', 'FF0070C0', 'FF5B9BD5', 'FFFFC000'
+# 原表各张的标题色（标签颜色也用同一个色，一眼能认出是哪张）
+C_OV, C_OUT, C_RP, C_CUN, C_INV, C_Q = 'FFC00000', 'FF4472C4', 'FF70AD47', 'FF0070C0', 'FF5B9BD5', 'FFBF8F00'
+C_BS, C_FEE = 'FF833C0C', 'FFC65911'
 # 新表标题色
 C_CASH, C_BUY, C_BASE, C_RPT, C_STMT, C_CHK, C_COST = 'FF2F75B5', 'FF7030A0', 'FF595959', 'FF375623', 'FFBF8F00', 'FF833C0C', 'FF808080'
 C_INCOME, C_EXPENSE = 'FF00B050', 'FFFFC000'      # 资金台帐：收入绿、支出黄（照你给的截图）
@@ -293,6 +297,32 @@ def header(ws, row, cols_texts, color, font=F_HDR, height=37):
 def widths(ws, mapping):
     for col, w in mapping.items():
         ws.column_dimensions[col].width = w
+
+
+def link(cell, sheet, ref='A1'):
+    """表内跳转链接：写成 location（Excel 自己存内部链接的方式），WPS / Excel / 手机版都能点过去。
+    不能写成 '#表名!A1' 的外部链接——WPS 不认，点了没反应。"""
+    cell.hyperlink = Hyperlink(ref=cell.coordinate, location=f"'{sheet}'!{ref}",
+                               display=None if cell.value is None else str(cell.value))
+    return cell
+
+
+def style_rows(ws, r0, r1, cols, auto=(), fmts=None, aligns=None, bold=(), height=None):
+    """数据区统一样式（跟 A064 新表一样）：白底细灰框；手填列黑字，公式列灰底灰字；不再隔行涂色。
+    cols: 列字母串；auto: 公式列；fmts / aligns: {列: 格式 / 对齐}；bold: 要加粗的列"""
+    fmts, aligns = fmts or {}, aligns or {}
+    for r in range(r0, r1 + 1):
+        for col in cols:
+            c = ws[f'{col}{r}']
+            is_auto = col in auto
+            c.font = (F_TXTB if col in bold else (F_AUTO if is_auto else F_TXT))
+            c.fill = FILL_AUTO if is_auto else PatternFill(fill_type=None)
+            c.border = BD
+            c.alignment = aligns.get(col, AC)
+            if col in fmts:
+                c.number_format = fmts[col]
+        if height:
+            ws.row_dimensions[r].height = height
 
 
 def add_date_dv(ws, sqref):

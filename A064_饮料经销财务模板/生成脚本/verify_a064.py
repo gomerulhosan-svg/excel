@@ -17,7 +17,7 @@ sys.path.insert(0, HERE)
 import fixes
 import data_prep
 from common import *
-from build_a064 import SRC1, SRC2
+from build_a064 import SRC1, SRC2, SRC3
 
 TOL = 0.01
 fails = []
@@ -64,6 +64,28 @@ def main(lo_path):
     ok('存条明细金额合计 = 商品库存累计入库金额合计', wv[SH_INV][f'F{INV_TOT}'].value, tot_dep)
     ok('出库明细金额合计 = 商品库存已领用金额合计', wv[SH_INV][f'H{INV_TOT}'].value, tot_out)
 
+    print('【1b】费用明细：搬进资金台帐、再列回【全量费用明细总表】')
+    fees = data_prep.Src3(SRC3).fee_rows()
+    fv = wv[SH_FEE]
+    got_rows = []
+    for r in range(FEE_R0, FEE_R1 + 1):
+        if fv[f'{F_SEQ}{r}'].value in (None, ''):
+            continue
+        d = fv[f'{F_DATE}{r}'].value
+        got_rows.append((d.date() if hasattr(d, 'date') else d, fv[f'{F_CAT}{r}'].value or None,
+                         fv[f'{F_DETAIL}{r}'].value or None, fv[f'{F_WHO}{r}'].value or None))
+    s_ = lambda v: None if v in (None, '') else str(v)
+    got_rows = [(d, s_(c), s_(t), s_(w)) for d, c, t, w in got_rows]
+    exp_rows = sorted(((x['date'], s_(x['cat']), s_(x['detail']), s_(x['who'])) for x in fees),
+                      key=lambda t: (t[0] or dt.date(2100, 1, 1)))
+    ok('费用明细笔数', len(got_rows), len(exp_rows))
+    ok('费用明细逐笔一致（日期/类别/明细/报销人，按日期排）', sum(1 for a, b in zip(got_rows, exp_rows) if a != b), 0)
+    cats = {x['cat'] for x in fees if x['cat']}
+    base_items = {wv[SH_BASE][f'{E_NAME}{r}'].value for r in range(EXP_R0, EXP_R1 + 1)}
+    ok('费用明细里的支出类别都在基础资料·费用项目里（缺的个数）', len(cats - base_items), 0)
+    ok('资金台帐费用笔数 = 费用明细笔数',
+       sum(1 for r in range(CASH_R0, CASH_R1 + 1) if cash_ws[f'{K_TO}{r}'].value == TO_EXP), len(fees))
+
     print('【2】按客户：已领用 / 已付款 / 未付货款')
     cust = data_prep.build_customer_master(s1)
     by_out, by_rec = defaultdict(float), defaultdict(float)
@@ -109,13 +131,11 @@ def main(lo_path):
         if by_m[m] or num(pl[f'{col}{R_REV}'].value):
             ok(f'{m} 月主营业务收入', pl[f'{col}{R_REV}'].value, by_m[m])
 
-    print('【5】报损')
+    print('【5】报损（原来三张月表 vs 合成的一年一张）')
     s2 = openpyxl.load_workbook(SRC2, data_only=False)
-    month_sheet = fixes.BAOSUN_MONTHS
     total = 0.0
-    for m, sh in month_sheet.items():
-        if sh == SH_BS9:
-            continue
+    led = wv[SH_BSL]
+    for sh, m in fixes.BAOSUN_SRC.items():
         ws = s2[sh]
         s = 0.0
         for r in range(6, ws.max_row + 1):
@@ -129,8 +149,10 @@ def main(lo_path):
                 elif e not in (None, '') and g in (None, ''):
                     pass                     # 有数量没单价：金额按 0（【数据校验】会提示）
         total += s
-        ok(f'{m} 月报损（{sh}）', num(pl[f'{CL(4 + m)}{R_LOSS}'].value), s)
-    ok('报损汇总一览 全年总金额', wv[SH_BSS]['B3'].value, total)
+        ok(f'{m} 月报损（{sh}）→ 利润表', num(pl[f'{CL(4 + m)}{R_LOSS}'].value), s)
+        ok(f'{m} 月报损（{sh}）→ 报损明细台账', sum(num(led[f'{L_AMT}{r}'].value) for r in range(BSL_R0, BSL_R1 + 1)
+                                                if led[f'{L_MON}{r}'].value == m), s)
+    ok('报损汇总一览 全年总金额', wv[SH_BSS]['B4'].value, total)
 
     print('【6】资产负债表平衡 & 报错')
     bal = wv[SH_BAL]
