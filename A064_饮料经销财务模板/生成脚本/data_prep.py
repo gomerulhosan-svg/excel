@@ -163,8 +163,11 @@ class Src3:
             v = [ws.cell(r, c).value for c in range(1, 9)]
             if all(_s(x) in ('', None) for x in v[1:]):
                 continue
+            # 备注：H 列，外加表头外面 I 列以后随手写的字（原表只有第 283 行 I 列「老袁多付」）
+            extra = [_s(ws.cell(r, c).value) for c in range(9, ws.max_column + 1) if _s(ws.cell(r, c).value) not in ('', None)]
+            note = '；'.join(str(x) for x in [_s(v[7])] + extra if x not in ('', None)) or None
             res.append(dict(row=r, raw_date=v[1], date=parse_date(v[1]), cat=_s(v[2]) or None, detail=_s(v[3]) or None,
-                            who=_s(v[4]) or None, amount=v[5], acc=_s(v[6]) or None, note=_s(v[7]) or None))
+                            who=_s(v[4]) or None, amount=v[5], acc=_s(v[6]) or None, note=note))
         return res
 
 

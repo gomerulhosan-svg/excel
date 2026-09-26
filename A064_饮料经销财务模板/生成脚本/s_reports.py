@@ -5,7 +5,7 @@
 - 收入 = 出库明细的领用金额，按出库日期归月；
 - 成本 = 出库数量 × 当月加权平均进价；当月没进过货、也没有期初库存时，用商品档案的「参考进价」估算，
   估算的部分在利润表上单列一行提示；
-- 报损 = 各月报损表的报损金额，全额进利润表「商品报损损失」，同时冲减存货；
+- 报损 = 报损明细台账（一年一张）按月份的报损金额，全额进利润表「商品报损损失」，同时冲减存货；
 - 费用 / 返利 / 其他收入 / 投入 / 提取 / 借款 都从资金台帐按「去向」取；
 - 资产负债表由上面这些流量滚出来，结构上保证 资产 = 负债 + 所有者权益（有对不上的都显式列成「待查」行）。
 """
@@ -196,7 +196,7 @@ EXP_TOTAL = EXP_ROW1 + 2                         # 56
 EXP_CLASS0 = EXP_ROW1 + 4                        # 58..63 按 EC_ALL 顺序
 EXP_CLASS_ROW = {c: EXP_CLASS0 + i for i, c in enumerate(EC_ALL)}
 EXP_WHO_HDR = EXP_CLASS0 + len(EC_ALL) + 2       # 按报销人表头
-EXP_WHO_N = 40
+EXP_WHO_N = 100
 EXP_MCOL = {m: CL(3 + m) for m in range(1, 13)}  # D..O
 
 
@@ -302,7 +302,7 @@ def build_pl(wb, ctx):
     ws = wb.create_sheet(SH_PL)
     ws.sheet_properties.tabColor = C_RPT[2:]
     title(ws, '利润表（按月 · 自动）', 'Q', C_RPT,
-          '💡 不用填：收入取【出库明细】，成本取【成本计算】，费用/返利/营业外收支取【资金台帐】，报损取各月报损表。'
+          '💡 不用填：收入取【出库明细】，成本取【成本计算】，费用/返利/营业外收支取【资金台帐】，报损取【报损明细台账】（按月份）。'
           '选报表月份看「本月」和「本年累计」，右边是 1～12 月逐月数。')
     put(ws, 'A3', '报表月份：', F_KPI_L, align=AR_, border=False)
     put(ws, 'B3', ctx['kpi_month'], Font(name=YH, sz=13, bold=True, color='FF1F4E79'), FILL_SEL, '0"月"', AC)

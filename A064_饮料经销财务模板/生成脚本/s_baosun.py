@@ -60,8 +60,9 @@ def _crit(base, month_cell, comp_cell, value_rng=None, count=False):
     head = f'{fn}(' + ('' if count else f'{value_rng},') + base
     m = f',{L_MON}${BSL_R0}:{L_MON}${BSL_R1},{month_cell}'
     c = f',{L_COMP}${BSL_R0}:{L_COMP}${BSL_R1},{comp_cell}'
-    return (f'IF({comp_cell}="",IF({month_cell}="全年",{head}),{head}{m})),'
-            f'IF({month_cell}="全年",{head}{c}),{head}{m}{c})))')
+    y = f',{L_MON}${BSL_R0}:{L_MON}${BSL_R1},">=1",{L_MON}${BSL_R0}:{L_MON}${BSL_R1},"<=12"'   # 全年＝1～12 月（跟汇总、利润表一致）
+    return (f'IF({comp_cell}="",IF({month_cell}="全年",{head}{y}),{head}{m})),'
+            f'IF({month_cell}="全年",{head}{y}{c}),{head}{m}{c})))')
 
 
 def _build_ledger(wb, ctx):
@@ -72,7 +73,8 @@ def _build_ledger(wb, ctx):
     title(ws, '产品过期报损明细台账', L_CHK, C_BS,
           '💡 一年一张：每条报损记一行，「月份」填 1～12（几月的报损）。同一个月同一个商品可以只记一行，数量像原来一样写 =5+27+16 累加；'
           '金额自动＝数量×单价。只看某个月：点「月份」表头的筛选按钮选那个月，第 4 行的合计跟着变；'
-          '或者在第 3 行黄格子选月份、公司，右边直接出合计。报损汇总一览、利润表、公司库存都从这张表取数。')
+          '或者在第 3 行黄格子选月份、公司，右边直接出合计。新记录往下面空行填，别在第一条记录上面插行。'
+          '报损汇总一览、利润表、公司库存都从这张表取数。')
     ws['A1'] = '=年度&"年 产品过期报损明细台账"'
     # 第 3 行：查询
     ws.row_dimensions[3].height = 28
@@ -86,14 +88,14 @@ def _build_ledger(wb, ctx):
     q = _crit(base, '$B$3', '$C$3', f'{L_QTY}${BSL_R0}:{L_QTY}${BSL_R1}')
     a = _crit(base, '$B$3', '$C$3', f'{L_AMT}${BSL_R0}:{L_AMT}${BSL_R1}')
     put(ws, 'D3', (f'=IF($B$3="全年","全年",$B$3&"月")&IF($C$3="","·全部公司","·"&$C$3)&"：共 "&{n}&" 行，报损数量 "'
-                   f'&TEXT({q},"#,##0.##")&"，报损金额 "&TEXT({a},"#,##0.00")&" 元"'),
+                   f'&IF({q}=INT({q}),TEXT({q},"#,##0"),TEXT({q},"#,##0.##"))&"，报损金额 "&TEXT({a},"#,##0.00")&" 元"'),
         Font(name=YH, sz=11, bold=True, color='FFC00000'), align=AL, border=False)
     ws.merge_cells(f'D3:{L_CHK}3')
     # 第 4 行：筛选后合计
     ws.row_dimensions[4].height = 22
-    put(ws, 'A4', '↓ 表头筛选后的合计（没筛选就是全年）', F_TXTB, FILL_TOT, align=AR_)
+    put(ws, 'A4', '↓ 表头筛选后的合计（没筛选＝所有行）', F_TXTB, FILL_TOT, align=AR_)
     ws.merge_cells(f'A4:{L_SPEC}4')
-    put(ws, f'{L_QTY}4', f'=SUBTOTAL(109,{L_QTY}{BSL_R0}:{L_QTY}{BSL_R1})', F_TXTB, FILL_TOT, '#,##0.##', AR_)
+    put(ws, f'{L_QTY}4', f'=SUBTOTAL(109,{L_QTY}{BSL_R0}:{L_QTY}{BSL_R1})', F_TXTB, FILL_TOT, QTY, AR_)
     for col in (L_UNIT, L_PRICE):
         put(ws, f'{col}4', None, F_TXTB, FILL_TOT)
     put(ws, f'{L_AMT}4', f'=SUBTOTAL(109,{L_AMT}{BSL_R0}:{L_AMT}{BSL_R1})', F_TXTB, FILL_TOT, MONEY, AR_)
@@ -203,7 +205,8 @@ def _build_staging(wb, ctx):
         ws[f'{a}{AUX_BS_NOPRICE}'] = '=' + safe(f'COUNTIFS({N},"<>",{Q},"<>",{H},"",{mm})')
         ws[f'{a}{AUX_BS_NOCOMP}'] = '=' + safe(f'COUNTIFS({N},"<>",{C},"",{mm})')
         ws[f'{a}{AUX_BS_NONNUM}'] = '=' + safe(f'SUMPRODUCT(ISTEXT({Q})*({M}={a}$4))+SUMPRODUCT(ISTEXT({H})*({M}={a}$4))')
-        ws[f'{a}{AUX_BS_NOH}'] = '=' + safe(f'COUNTIFS({Q},"<>",{H},"<>",{A},"",{mm})')
+        # 数量、单价都是数字，金额却是空：只有金额格没公式（插行插出来的）才会这样；数量/单价是文字的另有一项报
+        ws[f'{a}{AUX_BS_NOH}'] = '=' + safe(f'SUMPRODUCT(ISNUMBER({Q})*ISNUMBER({H})*({A}="")*({M}={a}$4))')
     for rr in (AUX_BS_TOT, AUX_BS_TOTQ, AUX_BS_UNM):
         ws[f'{BSX_SEL}{rr}'] = f'=SUMPRODUCT({mask}*{bsx_amt(1)}{rr}:{bsx_amt(12)}{rr})'
 
@@ -223,8 +226,8 @@ def _build_summary(wb, ctx):
     add_list_dv(ws, 'A4', '"全年,1,2,3,4,5,6,7,8,9,10,11,12"', '选「全年」或某个月')
     kf = Font(name=YH, sz=12, bold=True, color='FFC00000')
     put(ws, 'B4', f'={aux}{BSX_SEL}{AUX_BS_TOT}', kf, fmt=MONEY, align=AC)
-    put(ws, 'C4', f'={aux}{BSX_SEL}{AUX_BS_TOTQ}', kf, fmt='#,##0.##', align=AC)
-    put(ws, 'D4', f'=COUNTIF({aux}{BSX_SEL}{AUX_BS_P0}:{BSX_SEL}{AUX_BS_P1},">0")', kf, fmt='0', align=AC)
+    put(ws, 'C4', f'={aux}{BSX_SEL}{AUX_BS_TOTQ}', kf, fmt=QTY, align=AC)
+    put(ws, 'D4', f'=COUNTIF({aux}{BSX_SELQ}{AUX_BS_P0}:{BSX_SELQ}{AUX_BS_P1},">0")', kf, fmt='0', align=AC)   # 有数量就算（没单价的也算）
     put(ws, 'E4', f'=COUNTIF({aux}{BSX_SEL}{AUX_BS_S0}:{BSX_SEL}{AUX_BS_S1},">0")+IF(ROUND(C{BSS_C0 + 5},2)>0,1,0)', kf,
         fmt='0', align=AC)
 

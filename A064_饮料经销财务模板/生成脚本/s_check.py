@@ -4,7 +4,7 @@ from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font
 
 from common import *
-from s_reports import PL, BAL, STK_R0, STK_R1, STK_TOT, PL_MCOL
+from s_reports import PL, BAL, STK_R0, STK_R1, STK_TOT, PL_MCOL, EXP_WHO_N
 from s_baosun import AUX_BS_UNM, AUX_BS_NOPRICE, AUX_BS_NOCOMP, AUX_BS_NONNUM, AUX_BS_NOH, bsx_amt
 
 AUX_CHK_OUT = 'N'     # _辅助 N 列：出库明细每行 金额≠数量×单价 标 1
@@ -123,11 +123,13 @@ def build_check(wb, ctx):
           f'+COUNTIFS({buy(B_QTY)},"<>",{buy(B_PRICE)},"<>",{buy(B_AMT)},"")'
           f'+COUNTIFS({CUS_NAMES},"?*",{SH_OV}!$D${OV_R0}:$D${OV_R1},"")'
           f'+SUM({SH_AUX}!{bsx_amt(1)}{AUX_BS_NOH}:{bsx_amt(12)}{AUX_BS_NOH})'), 'E',
-         '别在表中间插行：新记录往最下面的空行填；已经插了的，把上一行的公式往下拖一格', SH_CASH),
-        ('容量快满了（商品库存组合、收付款明细、费用明细）',
+         '别在表中间插行：新记录往最下面的空行填。已经插了的：点上一行的行号选中整行复制，粘到插出来的那行再改内容'
+         '（资金台帐右边有隐藏的公式列，只拖看得见的格子不够）', SH_CASH),
+        ('容量快满了（商品库存组合、收付款明细、费用明细、按报销人汇总）',
          (f'=MAX(0,{SH_AUX}!$A$2-{INV_R1 - INV_R0 + 1})+MAX(0,COUNTIF({cash(K_TO)},"{TO_AR}")-{RP_R1 - RP_R0 + 1})'
           f'+MAX(0,COUNTIF({cash(K_TO)},"{TO_AP}")-{RP_SR1 - RP_R0 + 1})'
-          f'+MAX(0,COUNT({cash(K_ESEQ)})-{FEE_R1 - FEE_R0 + 1})'), 'E',
+          f'+MAX(0,COUNT({cash(K_ESEQ)})-{FEE_R1 - FEE_R0 + 1})'
+          f'+MAX(0,COUNT({SH_AUX}!$S$4:$S${CASH_R1 - CASH_R0 + 4})-{EXP_WHO_N})'), 'E',
          '超出的部分列不出来——跟我说一声，把容量加大', SH_INV),
         ('商品档案：填了报损表品名却没填每件瓶数（报损会按 1 瓶＝1 件扣库存）',
          f'=SUMPRODUCT(({base_rng(G_BSNAME, BASE_R0, BASE_R1)}<>"")*({base_rng(G_PACK, BASE_R0, BASE_R1)}=""))', 'W',
@@ -139,7 +141,7 @@ def build_check(wb, ctx):
         r = 5 + i
         put(ws, f'A{r}', i + 1, F_AUTO, align=AC)
         put(ws, f'B{r}', t, F_TXT, align=ALW)
-        put(ws, f'C{r}', f, F_TXTB, fmt='#,##0.##;[Red]-#,##0.##;0', align=AC)
+        put(ws, f'C{r}', f, F_TXTB, fmt='General;[Red]-General;0', align=AC)
         bad = '✗ 要改' if lvl == 'E' else '⚠ 看一下'
         put(ws, f'D{r}', f'=IF(ROUND(N(C{r}),2)=0,"√","{bad}")', F_TXTB, align=AC)
         put(ws, f'E{r}', how, F_NOTE, align=ALW)
@@ -198,7 +200,7 @@ def build_home(wb, ctx):
         put(ws, f'{col}6', f, Font(name=YH, sz=14, bold=True, color='FFC00000' if i < 7 else 'FF1F4E79'),
             fill('FFF2F2F2'), MONEY2 if i < 7 else '0"项"', AC)
         ws.column_dimensions[col].width = 17
-    widths(ws, {'A': 21, 'C': 13, 'D': 20, 'F': 21, 'H': 13})     # 照你上一版里拉过的列宽
+    widths(ws, {'A': 21, 'C': 17, 'D': 20, 'F': 21, 'H': 13})     # 照你上一版里拉过的列宽（C 列放净利润，窄了会显示 ###）
     ws.row_dimensions[6].height = 32
     put(ws, 'A7', '「欠厂家货款」按资产负债表选定月份月底算；其余是全年/当前数。', F_NOTE, border=False)
     ws.merge_cells('A7:H7')
