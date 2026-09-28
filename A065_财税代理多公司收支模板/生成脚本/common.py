@@ -1,0 +1,328 @@
+# -*- coding: utf-8 -*-
+"""A065 财税代理多公司收支模板 · 共用常量（表名 / 行列地址 / 容量）与样式。
+
+各张表之间互相引用的行列地址都从这里取，不在各模块里手写，免得一处改了另一处没跟上。
+"""
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter as CL, column_index_from_string as CI
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.hyperlink import Hyperlink
+
+# ─────────────────────────── 表名 ───────────────────────────
+SH_HOME = '首页'
+SH_BASE = '基础资料'
+SH_PARTY = '往来单位'
+SH_CASH = '资金台帐'
+SH_CONV = '流水格式转换'
+SH_INV = '发票导入'
+SH_SUM = '收支汇总表'
+SH_CF = '简易现金流量表'
+SH_BAL = '资金余额表'
+SH_EXP = '费用统计'
+SH_CUS = '客户收入统计'
+SH_AR = '应收应付汇总'
+SH_STMT = '往来对账单'
+SH_INTRA = '内部往来'
+SH_INVS = '发票汇总'
+SH_CHK = '数据校验'
+SH_AUX = '_辅助'
+
+SHEET_ORDER = [SH_HOME, SH_BASE, SH_PARTY, SH_CASH, SH_CONV, SH_INV,
+               SH_SUM, SH_CF, SH_BAL, SH_EXP, SH_CUS, SH_AR, SH_STMT, SH_INTRA, SH_INVS, SH_CHK, SH_AUX]
+
+# ─────────────────────────── 基础资料 ───────────────────────────
+BASE_HDR = 4
+CO_R0, CO_R1 = 5, 12            # 公司 8 行（你现在 5 家）
+CO_SEQ, CO_NAME, CO_FULL, CO_TAX, CO_NOTE, CO_NORM = 'A', 'B', 'C', 'D', 'E', 'F'   # F 隐藏：全称规范写法
+AC_R0, AC_R1 = 5, 24            # 资金账户 20 行（你现在 15 个）
+AC_SEQ, AC_NAME, AC_CO, AC_TYPE, AC_NO, AC_BANK, AC_OPEN, AC_ODATE, AC_NOW, AC_LAST, AC_NOTE = \
+    'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R'
+IT_R0, IT_R1 = 5, 64            # 收支项目 60 行
+IT_SEQ, IT_NAME, IT_CLS, IT_SHOW, IT_NOTE = 'T', 'U', 'V', 'W', 'X'
+KW_R0, KW_R1 = 5, 44            # 摘要关键词 40 行
+KW_SEQ, KW_WORD, KW_DIR, KW_ITEM = 'Z', 'AA', 'AB', 'AC'
+OP_R0, OP_R1 = 5, 204           # 期初往来 200 行
+OP_SEQ, OP_CO, OP_PARTY, OP_AR, OP_AP, OP_OTH, OP_NOTE = 'AE', 'AF', 'AG', 'AH', 'AI', 'AJ', 'AK'
+
+# 收支类别（跟你截图的分组一样；最后两个是系统用的）
+CLS_IN, CLS_VAR, CLS_FIX, CLS_OTH, CLS_CAP, CLS_INVT, CLS_WL, CLS_INTRA, CLS_XFER = \
+    '收入', '变动成本', '固定成本', '其他支出', '收到为准', '支出为准', '往来', '内部划转', '账户互转'
+CLS_ALL = [CLS_IN, CLS_VAR, CLS_FIX, CLS_OTH, CLS_CAP, CLS_INVT, CLS_WL, CLS_INTRA, CLS_XFER]
+CLS_COST = [CLS_VAR, CLS_FIX, CLS_OTH]          # 费用类（应付的付款也按这些算）
+
+# 截图里的收支项目，一字不差；两个「其他」在下拉里要分得开，叫「其他收入」「其他成本」，报表上还显示「其他」
+ITEMS = [
+    (CLS_IN, ['项目', '续费', '新增', '代办', '刻章', '场地', '办证', '转介绍', '园区返税', '咨询服务', '其他收入']),
+    (CLS_VAR, ['人工-工资', '人工-社保', '人工-福利', '税金', '差旅费', '培训费', '银行手续费', '刻章费用', '办公费用',
+               '固定资产', '汽车费用', '交际支出', '佣金支出', '营销费用', '地址成本', '项目成本', '其他成本']),
+    (CLS_FIX, ['店面租金', '装修成本']),
+    (CLS_OTH, ['工资挂靠', '社保挂靠', '贷款利息']),
+    (CLS_CAP, ['实收资本']),
+    (CLS_INVT, ['投资']),
+    (CLS_WL, ['往来']),
+    (CLS_INTRA, ['内部划转']),
+    (CLS_XFER, ['账户互转']),
+]
+SHOW_NAME = {'其他收入': '其他', '其他成本': '其他'}
+
+# ─────────────────────────── 往来单位 ───────────────────────────
+PT_HDR = 3
+PT_R0, PT_R1 = 4, 603           # 600 个往来单位
+(PT_SEQ, PT_NAME, PT_TYPE, PT_BIND, PT_AL1, PT_AL2, PT_ACCT, PT_TAX, PT_OLD, PT_AP, PT_NOTE,
+ PT_N0, PT_N1, PT_N2) = 'A B C D E F G H I J K L M N'.split()      # L:N 隐藏：规范写法
+PT_TYPES = ['客户', '供应商', '个人', '税务银行', '股东', '其他']
+
+# ─────────────────────────── 资金台帐 ───────────────────────────
+J_HDR = 5
+J_R0, J_R1 = 6, 6005            # 6000 行（跨年一直往下记；快满了在中间插行，报表范围自动跟着变大）
+(J_SEQ, J_ACC, J_TIME, J_IN, J_OUT, J_BANKBAL, J_OACCT, J_ONAME, J_OBANK, J_MEMO,
+ J_MPARTY, J_MITEM, J_NOTE,
+ J_DATE, J_CO, J_PARTY, J_PTYPE, J_CUS, J_SUP, J_ITEM, J_CLS, J_BAL, J_BCHK, J_CHK) = \
+    'A B C D E F G H I J K L M N O P Q R S T U V W X'.split()
+# 隐藏辅助列
+(J_INV, J_OUTV, J_NET, J_AUTO, J_DUPK, J_TODO, J_TODO1, J_TODOC, J_SKEY, J_KW, J_APF) = \
+    'Y Z AA AB AC AD AE AF AG AH AI'.split()      # AI：付款算「冲应付」的类别（成本费用、投资）
+J_LAST_VIS = J_CHK
+
+
+def jr(col):
+    return f"{SH_CASH}!${col}${J_R0}:${col}${J_R1}"
+
+
+# ─────────────────────────── 发票导入 ───────────────────────────
+V_HDR = 4
+V_R0, V_R1 = 5, 3004            # 3000 张
+# A..S：跟电子税务局导出的「发票基础信息」一模一样（整块粘贴）
+V_RAW = ['序号', '发票代码', '发票号码', '数电发票号码', '销方识别号', '销方名称', '购方识别号', '购买方名称', '开票日期',
+         '金额', '税额', '价税合计', '发票来源', '发票票种', '发票状态', '是否正数发票', '发票风险等级', '开票人', '备注']
+(V_SEQ, V_CODE, V_NO, V_ENO, V_STAX, V_SNAME, V_BTAX, V_BNAME, V_TIME, V_AMT, V_TAXAMT, V_TOTAL,
+ V_SRC, V_KIND, V_STAT, V_POS, V_RISK, V_ISSUER, V_REM) = [CL(i) for i in range(1, 20)]
+(V_DATE, V_CO, V_DIR, V_PARTY, V_VAL, V_USE, V_MAP, V_DUP, V_ARV, V_APV, V_CHK) = \
+    'T U V W X Y Z AA AB AC AD'.split()
+V_SKEY = 'AE'                   # 隐藏：往来对账单排序键
+V_TODO, V_TODO1, V_TODOC = 'AF', 'AG', 'AH'   # 隐藏：待登记单位
+V_SCO, V_BCO = 'AI', 'AJ'       # 隐藏：销方/购方是不是自家公司
+V_EFF, V_EAMT, V_ETAX = 'AK', 'AL', 'AM'   # 隐藏：有效（不重复、不作废）的价税合计 / 金额 / 税额
+
+
+def vr(col):
+    return f"{SH_INV}!${col}${V_R0}:${col}${V_R1}"
+
+
+def br(col, r0, r1):
+    return f"{SH_BASE}!${col}${r0}:${col}${r1}"
+
+
+def pr(col):
+    return f"{SH_PARTY}!${col}${PT_R0}:${col}${PT_R1}"
+
+
+CO_NAMES = br(CO_NAME, CO_R0, CO_R1)
+CO_FULLS = br(CO_FULL, CO_R0, CO_R1)
+CO_NORMS = br(CO_NORM, CO_R0, CO_R1)
+CO_TAXES = br(CO_TAX, CO_R0, CO_R1)
+AC_NAMES = br(AC_NAME, AC_R0, AC_R1)
+AC_COS = br(AC_CO, AC_R0, AC_R1)
+AC_OPENS = br(AC_OPEN, AC_R0, AC_R1)
+AC_ODATES = br(AC_ODATE, AC_R0, AC_R1)
+IT_NAMES = br(IT_NAME, IT_R0, IT_R1)
+IT_CLSS = br(IT_CLS, IT_R0, IT_R1)
+
+# _辅助：下拉用的清单
+AUX_CO_ALL = f"{SH_AUX}!$A$1:$A$9"       # 全部 + 8 个公司
+YEARS = '"2024,2025,2026,2027,2028,2029,2030"'
+
+
+def norm(x):
+    """名称规范写法：去空格、半角括号改全角（流水、发票里同一家公司括号写法常常不一样）"""
+    return f'SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(TRIM({x})," ",""),"(","（"),")","）")'
+
+
+def co_crit(sel):
+    """公司选择格 → SUMIFS 条件：选「全部」就是 "*"（任何公司）"""
+    return f'IF({sel}="全部","*",{sel})'
+
+
+# ─────────────────────────── 样式（跟 A064 一个样：微软雅黑，彩色标题带 ＋ 💡提示） ───────────────────────────
+YH = '微软雅黑'
+F_TITLE = Font(name=YH, sz=16, bold=True, color='FFFFFFFF')
+F_TIP = Font(name=YH, sz=10, color='FFFF6600')
+F_HDR = Font(name=YH, sz=10, bold=True, color='FFFFFFFF')
+F_TXT = Font(name=YH, sz=10, color='FF000000')
+F_TXTB = Font(name=YH, sz=10, bold=True, color='FF000000')
+F_IN = Font(name=YH, sz=10, color='FF1F4E79')
+F_AUTO = Font(name=YH, sz=10, color='FF404040')
+F_AUTOB = Font(name=YH, sz=10, bold=True, color='FF1F3864')
+F_NOTE = Font(name=YH, sz=9, color='FF808080')
+F_HELP = Font(name=YH, sz=8, color='FFBFBFBF')
+F_RED = Font(name=YH, sz=10, bold=True, color='FFC00000')
+F_KPI_L = Font(name=YH, sz=10, bold=True, color='FF1F3864')
+F_KPI_V = Font(name=YH, sz=13, bold=True, color='FFC00000')
+F_SEC = Font(name=YH, sz=11, bold=True, color='FFFFFFFF')
+F_SEL = Font(name=YH, sz=11, bold=True, color='FF000000')
+
+
+def fill(rgb):
+    return PatternFill('solid', fgColor=rgb)
+
+
+C_BASE, C_CASH, C_CONV, C_INV, C_RPT, C_AR, C_CHK, C_HOME = \
+    'FF595959', 'FF2F75B5', 'FF7F7F7F', 'FF7030A0', 'FF375623', 'FFBF8F00', 'FF833C0C', 'FF1F3864'
+C_IN, C_VAR, C_FIX, C_OTH, C_MISC = 'FFE2EFDA', 'FFDDEBF7', 'FFFFF2CC', 'FFF2F2F2', 'FFFFFFFF'   # 截图里各组的底色
+C_IN_D, C_VAR_D, C_FIX_D = 'FF70AD47', 'FF5B9BD5', 'FFBF8F00'
+
+FILL_TIP = fill('FFFFF2CC')
+FILL_IN = fill('FFFFF7E0')      # 手工录入：淡黄
+FILL_PASTE = fill('FFEAF1FB')   # 粘贴区：淡蓝
+FILL_AUTO = fill('FFF2F2F2')    # 自动：淡灰
+FILL_SUB = fill('FFDDEBF7')     # 小计
+FILL_TOT = fill('FFFCE4D6')     # 合计 / 利润
+FILL_SEL = fill('FFFFFF00')     # 选择格（亮黄）
+FILL_OK = fill('FFE2EFDA')
+FILL_WARN = fill('FFFFC7CE')
+FILL_NONE = PatternFill(fill_type=None)
+
+thin = Side(style='thin', color='FFBFBFBF')
+BD = Border(left=thin, right=thin, top=thin, bottom=thin)
+NOBD = Border()
+AC = Alignment(horizontal='center', vertical='center')
+ACW = Alignment(horizontal='center', vertical='center', wrap_text=True)
+AL = Alignment(horizontal='left', vertical='center')
+ALW = Alignment(horizontal='left', vertical='center', wrap_text=True)
+AR = Alignment(horizontal='right', vertical='center')
+
+MONEY = '#,##0.00;[Red]-#,##0.00;"-"'
+MONEY0 = '#,##0;[Red]-#,##0;"-"'
+DATE = 'yyyy/mm/dd'
+DTIME = 'yyyy/mm/dd hh:mm'
+INT = '0;-0;"-"'
+PCT = '0.0%;[Red]-0.0%;"-"'
+MONTH = 'm"月"'
+
+
+def put(ws, coord, value=None, font=None, fill_=None, fmt=None, align=None, border=True):
+    c = ws[coord]
+    if value is not None:
+        c.value = value
+    if font is not None:
+        c.font = font
+    if fill_ is not None:
+        c.fill = fill_
+    if fmt is not None:
+        c.number_format = fmt
+    if align is not None:
+        c.alignment = align
+    if border:
+        c.border = BD
+    return c
+
+
+def title(ws, text, last_col, color, tip=None, h1=33, h2=None):
+    """第 1 行标题带 ＋ 第 2 行 💡 提示；提示长就把第 2 行加高"""
+    if h2 is None:
+        width = sum((ws.column_dimensions[CL(i)].width or 9) for i in range(1, CI(last_col) + 1))
+        per_line = max(20, int(width / 1.9))
+        lines = -(-len(tip or '') // per_line)
+        h2 = max(24, 16 * lines + 6)
+    ws.merge_cells(f'A1:{last_col}1')
+    put(ws, 'A1', text, F_TITLE, fill(color), align=AC, border=False)
+    ws.row_dimensions[1].height = h1
+    if tip:
+        ws.merge_cells(f'A2:{last_col}2')
+        put(ws, 'A2', tip, F_TIP, FILL_TIP, align=ALW, border=False)
+        ws.row_dimensions[2].height = h2
+    ws.sheet_properties.tabColor = color[2:] if len(color) == 8 else color
+    ws.sheet_view.showGridLines = False
+
+
+def header(ws, row, cols_texts, color, font=F_HDR, height=34):
+    for col, t in cols_texts:
+        put(ws, f'{col}{row}', t, font, fill(color), align=ACW)
+    ws.row_dimensions[row].height = height
+
+
+def section(ws, row, c1, c2, text, color):
+    ws.merge_cells(f'{c1}{row}:{c2}{row}')
+    put(ws, f'{c1}{row}', text, F_SEC, fill(color), align=AL)
+    for i in range(CI(c1) + 1, CI(c2) + 1):
+        ws.cell(row=row, column=i).border = BD
+
+
+def widths(ws, mapping):
+    for col, w in mapping.items():
+        ws.column_dimensions[col].width = w
+
+
+def hide(ws, *cols):
+    for c in cols:
+        ws.column_dimensions[c].hidden = True
+
+
+def link(cell, sheet, ref='A1'):
+    """表内跳转：写成 location，WPS / Excel 都能点过去"""
+    cell.hyperlink = Hyperlink(ref=cell.coordinate, location=f"'{sheet}'!{ref}",
+                               display=None if cell.value is None else str(cell.value))
+    return cell
+
+
+def style_rows(ws, r0, r1, cols, auto=(), fmts=None, aligns=None, fills=None, bold=()):
+    """数据区：白底细灰框；公式列淡灰；fills 可给手工列指定底色"""
+    fmts, aligns, fills = fmts or {}, aligns or {}, fills or {}
+    for r in range(r0, r1 + 1):
+        for col in cols:
+            c = ws[f'{col}{r}']
+            is_auto = col in auto
+            c.font = F_AUTOB if col in bold else (F_AUTO if is_auto else F_IN)
+            c.fill = FILL_AUTO if is_auto else fills.get(col, FILL_NONE)
+            c.border = BD
+            c.alignment = aligns.get(col, AC)
+            if col in fmts:
+                c.number_format = fmts[col]
+
+
+def dv_list(ws, sqref, formula, prompt=None, stop=True, blank=True):
+    dv = DataValidation(type='list', formula1=formula, allow_blank=blank, showErrorMessage=stop,
+                        errorStyle='stop' if stop else 'warning')
+    if prompt:
+        dv.promptTitle, dv.prompt = '提示', prompt
+        dv.showInputMessage = True
+    dv.errorTitle = '不在清单里'
+    dv.error = '请从下拉里选；清单里没有的，先到【基础资料】/【往来单位】里登记'
+    ws.add_data_validation(dv)
+    dv.add(sqref)
+    return dv
+
+
+def dv_date(ws, sqref):
+    dv = DataValidation(type='date', operator='between', formula1='36526', formula2='73050', allow_blank=True,
+                        showErrorMessage=True, errorStyle='warning', errorTitle='日期', error='要像 2026/9/1 这样填日期')
+    ws.add_data_validation(dv)
+    dv.add(sqref)
+    return dv
+
+
+def selector(ws, cell_lbl, lbl, cell_in, value, dv_formula=None, fmt=None, prompt=None):
+    """报表顶上的选择格：标签 ＋ 亮黄输入格"""
+    put(ws, cell_lbl, lbl, F_KPI_L, fill('FFD9E1F2'), align=AC)
+    put(ws, cell_in, value, F_SEL, FILL_SEL, fmt=fmt, align=AC)
+    if dv_formula:
+        dv = DataValidation(type='list', formula1=dv_formula, allow_blank=True, showErrorMessage=False)
+        if prompt:
+            dv.promptTitle, dv.prompt, dv.showInputMessage = '提示', prompt, True
+        ws.add_data_validation(dv)
+        dv.add(cell_in.replace('$', ''))
+
+
+def date_parse(x):
+    """把粘贴进来的各种日期写法变成真日期（取日期部分）：
+       真日期/日期时间 → 取整；"2026-09-01 08:24:04" / "2026/9/1" / "2026.9.1" / "20260901" 文本 → 拆年月日"""
+    s = f'SUBSTITUTE(SUBSTITUTE(TRIM({x}),"/","-"),".","-")'
+    dp = f'LEFT({s},FIND(" ",{s}&" ")-1)'
+    return (f'IF({x}="","",IF(ISNUMBER({x}),IF({x}>19000000,DATE(INT({x}/10000),MOD(INT({x}/100),100),MOD({x},100)),INT({x})),'
+            f'IFERROR(IF(LEN({dp})=8,DATE(LEFT({dp},4),MID({dp},5,2),RIGHT({dp},2)),'
+            f'DATE(LEFT({dp},4),MID({dp},6,FIND("-",{dp},6)-6),MID({dp},FIND("-",{dp},6)+1,2))),"")))')
+
+
+def num(x):
+    """粘贴来的金额可能是文本、带 ¥ 或千分位逗号"""
+    return f'IF({x}="",0,IFERROR(--SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({x},"¥",""),"￥",""),",",""),0))'
