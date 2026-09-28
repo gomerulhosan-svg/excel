@@ -64,6 +64,11 @@ ITEMS = [
     (CLS_XFER, ['账户互转']),
 ]
 SHOW_NAME = {'其他收入': '其他', '其他成本': '其他'}
+# 每个收支项目在【基础资料】③ 的哪一行（报表按位置引用，基础资料里改名字报表跟着变）
+IT_ROW = {}
+for _cls, _names in ITEMS:
+    for _n in _names:
+        IT_ROW[_n] = 5 + len(IT_ROW)
 
 # ─────────────────────────── 往来单位 ───────────────────────────
 PT_HDR = 3
@@ -82,6 +87,9 @@ J_R0, J_R1 = 6, 6005            # 6000 行（跨年一直往下记；快满了�
 # 隐藏辅助列
 (J_INV, J_OUTV, J_NET, J_AUTO, J_DUPK, J_TODO, J_TODO1, J_TODOC, J_SKEY, J_KW, J_APF) = \
     'Y Z AA AB AC AD AE AF AG AH AI'.split()      # AI：付款算「冲应付」的类别（成本费用、投资）
+J_NESC, J_PESC = 'AJ', 'AK'     # 隐藏：对方户名规范写法、往来单位——都把 * ? ~ 转义（支付宝/微信打码的人名像「*丽」，不转义会当通配符）
+J_TS = 'AL'                     # 隐藏：交易时刻（秒，整数）——即时余额按时间先后算，倒序导出、后补的月份也对
+J_ARF = 'AM'                    # 隐藏：算不算往来（收入类、往来、内部划转、冲应付）——应收应付汇总、对账单、内部往来同一口径
 J_LAST_VIS = J_CHK
 
 
@@ -103,6 +111,7 @@ V_SKEY = 'AE'                   # 隐藏：往来对账单排序键
 V_TODO, V_TODO1, V_TODOC = 'AF', 'AG', 'AH'   # 隐藏：待登记单位
 V_SCO, V_BCO = 'AI', 'AJ'       # 隐藏：销方/购方是不是自家公司
 V_EFF, V_EAMT, V_ETAX = 'AK', 'AL', 'AM'   # 隐藏：有效（不重复、不作废）的价税合计 / 金额 / 税额
+V_SD, V_SE = 'AN', 'AO'         # 隐藏：往来对账单里这张票算「开票」多少、算「进项」多少（按对账单选的公司、单位）
 
 
 def vr(col):
@@ -139,8 +148,13 @@ def norm(x):
 
 
 def co_crit(sel):
-    """公司选择格 → SUMIFS 条件：选「全部」就是 "*"（任何公司）"""
-    return f'IF({sel}="全部","*",{sel})'
+    """公司选择格 → SUMIFS 条件：选「全部」就是 "?*"（任何非空公司；"*" 在 Excel 里连公式算出的空文本也算进去）"""
+    return f'IF({sel}="全部","?*",{sel})'
+
+
+def esc(x):
+    """当 SUMIFS/COUNTIFS/MATCH 的条件用时，把名字里的 ~ * ? 转义成普通字符"""
+    return f'SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({x},"~","~~"),"*","~*"),"?","~?")'
 
 
 # ─────────────────────────── 样式（跟 A064 一个样：微软雅黑，彩色标题带 ＋ 💡提示） ───────────────────────────
@@ -315,11 +329,13 @@ def selector(ws, cell_lbl, lbl, cell_in, value, dv_formula=None, fmt=None, promp
 
 def date_parse(x):
     """把粘贴进来的各种日期写法变成真日期（取日期部分）：
-       真日期/日期时间 → 取整；"2026-09-01 08:24:04" / "2026/9/1" / "2026.9.1" / "20260901" 文本 → 拆年月日"""
+       真日期/日期时间 → 取整；"2026-09-01 08:24:04" / "2026/9/1" / "2026.9.1" / "20260901" 文本 → 拆年月日。
+       只有纯 8 位数字才按 yyyymmdd 拆（"2026-9-1" 也是 8 个字，不能按位置拆）；小于 2000 年的数（比如只有时间）算看不懂"""
     s = f'SUBSTITUTE(SUBSTITUTE(TRIM({x}),"/","-"),".","-")'
     dp = f'LEFT({s},FIND(" ",{s}&" ")-1)'
-    return (f'IF({x}="","",IF(ISNUMBER({x}),IF({x}>19000000,DATE(INT({x}/10000),MOD(INT({x}/100),100),MOD({x},100)),INT({x})),'
-            f'IFERROR(IF(LEN({dp})=8,DATE(LEFT({dp},4),MID({dp},5,2),RIGHT({dp},2)),'
+    return (f'IF({x}="","",IF(ISNUMBER({x}),IF({x}>19000000,DATE(INT({x}/10000),MOD(INT({x}/100),100),MOD({x},100)),'
+            f'IF({x}<36526,"",INT({x}))),'
+            f'IFERROR(IF(ISERROR(FIND("-",{dp})),DATE(LEFT({dp},4),MID({dp},5,2),RIGHT({dp},2)),'
             f'DATE(LEFT({dp},4),MID({dp},6,FIND("-",{dp},6)-6),MID({dp},FIND("-",{dp},6)+1,2))),"")))')
 
 

@@ -53,7 +53,7 @@ def build_cash(wb, ctx):
     ws.row_dimensions[J_HDR].height = 34
     for col, t in ((J_INV, '收入数'), (J_OUTV, '支出数'), (J_NET, '净额'), (J_AUTO, '自动匹配'), (J_DUPK, '查重键'),
                    (J_TODO, '待登记名'), (J_TODO1, '首次'), (J_TODOC, '计数'), (J_SKEY, '对账单键'), (J_KW, '关键词'),
-                   (J_APF, '冲应付')):
+                   (J_APF, '冲应付'), (J_NESC, '户名转义'), (J_PESC, '单位转义'), (J_TS, '时刻'), (J_ARF, '算往来')):
         ws[f'{col}{J_HDR}'] = t
         ws[f'{col}{J_HDR}'].font = F_HELP
 
@@ -75,59 +75,76 @@ def build_cash(wb, ctx):
         f[J_NET] = f'={g(J_INV)}-{g(J_OUTV)}'
         f[J_DATE] = f'={date_parse(g(J_TIME))}'
         f[J_CO] = f'=IF({g(J_ACC)}="","",IFERROR(INDEX({AC_COS},MATCH({g(J_ACC)},{AC_NAMES},0))&"",""))'
-        nh = norm(g(J_ONAME))
-        f[J_AUTO] = (f'=IF(AND({g(J_ONAME)}="",{g(J_OACCT)}=""),"",'
-                     f'IFERROR(INDEX({PN},MATCH({nh},{PN0},0)),IFERROR(INDEX({PN},MATCH({nh},{PA1},0)),'
-                     f'IFERROR(INDEX({PN},MATCH({nh},{PA2},0)),IFERROR(INDEX({CO_NAMES},MATCH({nh},{CO_NORMS},0)),'
-                     f'IF({g(J_OACCT)}="","",IFERROR(INDEX({PN},MATCH({g(J_OACCT)}&"",{PAC},0)),"")))))))')
+        nh = g(J_NESC)
+        f[J_NESC] = f'=IF({g(J_ONAME)}="","",{esc(norm(g(J_ONAME)))})'
+        # 先认自家公司（全称），再认往来单位的名称 / 别名 1 / 别名 2，户名空着或都对不上再按对方账号认
+        oacct = f'TRIM({g(J_OACCT)}&"")'
+        byacct = f'IF({oacct}="","",IFERROR(INDEX({PN},MATCH({esc(oacct)},{PAC},0))&"",""))'
+        f[J_AUTO] = (f'=IF(AND({nh}="",{oacct}=""),"",IF({nh}="",{byacct},'
+                     f'IFERROR(INDEX({CO_NAMES},MATCH({nh},{CO_NORMS},0))&"",IFERROR(INDEX({PN},MATCH({nh},{PN0},0))&"",'
+                     f'IFERROR(INDEX({PN},MATCH({nh},{PA1},0))&"",IFERROR(INDEX({PN},MATCH({nh},{PA2},0))&"",{byacct}))))))')
         f[J_PARTY] = f'=IF({g(J_MPARTY)}<>"",{g(J_MPARTY)},{g(J_AUTO)})'
-        f[J_PTYPE] = (f'=IF({g(J_PARTY)}="","",IF(ISNUMBER(MATCH({g(J_PARTY)},{CO_NAMES},0)),"内部公司",'
-                      f'IFERROR(INDEX({PTY},MATCH({g(J_PARTY)},{PN},0))&"","未登记")))')
+        f[J_PESC] = f'={esc(g(J_PARTY))}'
+        pe = g(J_PESC)
+        f[J_PTYPE] = (f'=IF({g(J_PARTY)}="","",IF(ISNUMBER(MATCH({pe},{CO_NAMES},0)),"内部公司",'
+                      f'IFERROR(INDEX({PTY},MATCH({pe},{PN},0))&"","未登记")))')
         f[J_CUS] = f'=IF({g(J_PTYPE)}="客户",{g(J_PARTY)},"")'
         f[J_SUP] = f'=IF({g(J_PTYPE)}="供应商",{g(J_PARTY)},"")'
         text = f'{g(J_ONAME)}&" "&{g(J_MEMO)}&" "&{g(J_NOTE)}'
         f[J_KW] = (f'=IF({g(J_INV)}+{g(J_OUTV)}=0,"",IFERROR(INDEX({KWI},MATCH(1,INDEX(({KW}<>"")*ISNUMBER(SEARCH({KW},{text}))'
-                   f'*(({KWD}="全部")+({KWD}=IF({g(J_INV)}>0,"收入","支出"))>0),0),0)),""))')
-        bind = f'IFERROR(INDEX({PB},MATCH({g(J_PARTY)},{PN},0))&"","")'
-        old = f'IFERROR(INDEX({POLD},MATCH({g(J_PARTY)},{PN},0))&"","")'
-        prior = (f'COUNTIFS({jr(J_CO)},{g(J_CO)},{jr(J_PARTY)},{g(J_PARTY)},{jr(J_INV)},">0",{jr(J_DATE)},"<"&{g(J_DATE)})'
-                 f'+COUNTIFS(${J_CO}${R0}:{g(J_CO)},{g(J_CO)},${J_PARTY}${R0}:{g(J_PARTY)},{g(J_PARTY)},'
+                   f'*(({KWD}="全部")+({KWD}="")+({KWD}=IF({g(J_INV)}>0,"收入","支出"))>0),0),0)),""))')
+        bind = f'IFERROR(INDEX({PB},MATCH({pe},{PN},0))&"","")'
+        old = f'IFERROR(INDEX({POLD},MATCH({pe},{PN},0))&"","")'
+        prior = (f'COUNTIFS({jr(J_CO)},{g(J_CO)},{jr(J_PARTY)},{pe},{jr(J_INV)},">0",{jr(J_DATE)},"<"&{g(J_DATE)})'
+                 f'+COUNTIFS(${J_CO}${R0}:{g(J_CO)},{g(J_CO)},${J_PARTY}${R0}:{g(J_PARTY)},{pe},'
                  f'${J_INV}${R0}:{g(J_INV)},">0",${J_DATE}${R0}:{g(J_DATE)},{g(J_DATE)})-1')
+        cusin = f'AND({g(J_PTYPE)}="客户",{g(J_INV)}>0)'      # 客户来款：新增/续费优先于摘要关键词
         f[J_ITEM] = (f'=IF({g(J_MITEM)}<>"",{g(J_MITEM)},IF(OR({g(J_ACC)}="",{g(J_INV)}+{g(J_OUTV)}=0),"",'
                      f'IF({g(J_PTYPE)}="内部公司",IF({g(J_PARTY)}={g(J_CO)},"账户互转","内部划转"),'
-                     f'IF({bind}<>"",{bind},IF({g(J_KW)}<>"",{g(J_KW)},'
-                     f'IF(AND({g(J_PTYPE)}="客户",{g(J_INV)}>0,{g(J_DATE)}<>""),'
+                     f'IF({bind}<>"",{bind},IF(AND({g(J_KW)}<>"",NOT({cusin})),{g(J_KW)},'
+                     f'IF(AND({cusin},{g(J_DATE)}<>""),'
                      f'IF(OR({old}="是",{prior}>0),"续费","新增"),""))))))')
         f[J_CLS] = f'=IF({g(J_ITEM)}="","",IFERROR(INDEX({IT_CLSS},MATCH({g(J_ITEM)},{IT_NAMES},0))&"","？"))'
         # 冲应付：成本费用 / 投资类的付款，且对方是「计应付」的单位（供应商、J 列填了是、或者有计应付的进项发票）
-        apf = f'IFERROR(INDEX({PAP},MATCH({g(J_PARTY)},{PN},0))&"","")'
+        apf = f'IFERROR(INDEX({PAP},MATCH({pe},{PN},0))&"","")'
         f[J_APF] = (f'=IF(AND(OR({g(J_CLS)}="{CLS_VAR}",{g(J_CLS)}="{CLS_FIX}",{g(J_CLS)}="{CLS_OTH}",{g(J_CLS)}="{CLS_INVT}"),'
-                    f'{g(J_PARTY)}<>"",{apf}<>"否"),IF(OR({g(J_PTYPE)}="供应商",{apf}="是",'
-                    f'COUNTIFS({vr(V_PARTY)},{g(J_PARTY)},{vr(V_USE)},"应付")>0),1,0),0)')
-        f[J_BAL] = (f'=IF({g(J_ACC)}="","",ROUND(IFERROR(INDEX({AC_OPENS},MATCH({g(J_ACC)},{AC_NAMES},0)),0)'
-                    f'+SUMIFS(${J_NET}${R0}:{g(J_NET)},${J_ACC}${R0}:{g(J_ACC)},{g(J_ACC)}),2))')
+                    f'{g(J_PARTY)}<>""),IF(OR(AND({g(J_PTYPE)}="供应商",{apf}<>"否"),{apf}="是",'
+                    f'COUNTIFS({vr(V_PARTY)},{pe},{vr(V_USE)},"应付")>0),1,0),0)')
+        tm = f'TRIM({g(J_TIME)}&"")'
+        f[J_TS] = (f'=IF({g(J_DATE)}="","",ROUND(({g(J_DATE)}+IF(ISNUMBER({g(J_TIME)}),MOD({g(J_TIME)},1),'
+                   f'IFERROR(TIMEVALUE(MID({tm},FIND(" ",{tm}&" ")+1,8)),0)))*86400,0))')
+        # 即时余额＝期初 ＋ 这个账户时间更早的所有收支 ＋ 同一时刻排在上面的（按时间先后算，粘贴顺序乱了也对）
+        f[J_BAL] = (f'=IF(OR({g(J_ACC)}="",{g(J_TS)}=""),"",ROUND(IFERROR(INDEX({AC_OPENS},MATCH({g(J_ACC)},{AC_NAMES},0)),0)'
+                    f'+SUMIFS({jr(J_NET)},{jr(J_ACC)},{g(J_ACC)},{jr(J_TS)},"<"&{g(J_TS)})'
+                    f'+SUMIFS(${J_NET}${R0}:{g(J_NET)},${J_ACC}${R0}:{g(J_ACC)},{g(J_ACC)},${J_TS}${R0}:{g(J_TS)},{g(J_TS)}),2))')
         f[J_BCHK] = (f'=IF(OR({g(J_BANKBAL)}="",{g(J_ACC)}=""),"",IF(ABS({g(J_BAL)}-{num(g(J_BANKBAL))})<0.005,"✓",'
                      f'"差 "&TEXT({g(J_BAL)}-{num(g(J_BANKBAL))},"#,##0.00")))')
         f[J_DUPK] = (f'=IF({emp},"",{g(J_ACC)}&"|"&{g(J_TIME)}&"|"&{g(J_INV)}&"|"&{g(J_OUTV)}&"|"&LEFT({g(J_ONAME)},20)'
-                     f'&"|"&{g(J_BANKBAL)})')
-        f[J_TODO] = (f'=IF(AND({g(J_PARTY)}="",{g(J_ONAME)}<>"",{g(J_ITEM)}=""),{norm(g(J_ONAME))},'
+                     f'&"|"&{g(J_BANKBAL)}&"|"&LEFT({g(J_MEMO)},20)&"|"&LEFT({g(J_NOTE)},20))')
+        noparty_in = f'AND({g(J_PARTY)}="",{g(J_MITEM)}<>"",{g(J_CLS)}="{CLS_IN}")'
+        f[J_TODO] = (f'=IF(AND({g(J_PARTY)}="",{g(J_ONAME)}<>"",OR({g(J_ITEM)}="",{noparty_in})),{norm(g(J_ONAME))},'
                      f'IF({g(J_PTYPE)}="未登记",{g(J_PARTY)},""))')
-        f[J_TODO1] = f'=IF({g(J_TODO)}="",0,IF(MATCH({g(J_TODO)},{jr(J_TODO)},0)={r - R0 + 1},1,0))'
+        f[J_TODO1] = f'=IF({g(J_TODO)}="",0,IF(MATCH({esc(g(J_TODO))},{jr(J_TODO)},0)={r - R0 + 1},1,0))'
         f[J_TODOC] = f'=N({J_TODOC}{r - 1})+{g(J_TODO1)}' if r > R0 else f'={g(J_TODO1)}'
+        f[J_ARF] = (f'=IF(OR({g(J_CLS)}="{CLS_IN}",{g(J_CLS)}="{CLS_WL}",{g(J_CLS)}="{CLS_INTRA}",{g(J_APF)}=1),1,0)')
         per = (f'AND({g(J_PARTY)}={ST_PARTY},{g(J_PARTY)}<>"",OR({ST_CO}="全部",{g(J_CO)}={ST_CO}),'
-               f'{g(J_DATE)}>={ST_S},{g(J_DATE)}<={ST_E},{g(J_INV)}+{g(J_OUTV)}<>0,{g(J_CLS)}<>"账户互转")')
+               f'{g(J_DATE)}>={ST_S},{g(J_DATE)}<={ST_E},{g(J_INV)}+{g(J_OUTV)}<>0,{g(J_ARF)}=1)')
         f[J_SKEY] = f'=IF({per},{g(J_DATE)}*100000+50000+ROW(),"")'
         chk = (f'=IF({emp},"",IF({g(J_ACC)}="","✗ 没选账户",IF(COUNTIF({AC_NAMES},{g(J_ACC)})=0,"✗ 账户不在基础资料里",'
                f'IF({g(J_DATE)}="","✗ 日期看不懂（要像 2026/9/1 这样）",'
                f'IF(AND({g(J_INV)}<>0,{g(J_OUTV)}<>0),"✗ 收入、支出只能填一边",'
                f'IF({g(J_INV)}+{g(J_OUTV)}=0,"✗ 没填金额（或金额不是数字）",'
+               f'IF(COUNTIF(${J_DUPK}${R0}:{g(J_DUPK)},{esc(g(J_DUPK))})>1,"⚠ 跟上面某行一模一样，是不是重复粘贴了",'
+               f'IF(AND({g(J_PARTY)}<>"",{g(J_PTYPE)}=""),"✗ 往来单位没选类型：到【往来单位】C 列选",'
                f'IF({g(J_ITEM)}="",IF(AND({g(J_PARTY)}="",{g(J_ONAME)}<>""),"✗ 认不出：对方户名没登记，到【往来单位】加，或 K/L 列手工选",'
                f'"✗ 请在 L 列选收支项目"),'
                f'IF({g(J_CLS)}="？","✗ 收支项目不在基础资料清单里",'
                f'IF(LEFT({g(J_BCHK)},1)="差","⚠ 余额跟银行对不上（漏记或重复？）",'
-               f'IF(COUNTIF(${J_DUPK}${R0}:{g(J_DUPK)},{g(J_DUPK)})>1,"⚠ 跟上面某行一模一样，是不是重复粘贴了",'
                f'IF({g(J_PTYPE)}="未登记","⚠ 往来单位没在【往来单位】登记（统计照算）",'
-               f'IF({g(J_ITEM)}="新增","√ 新客户首笔","√"))))))))))))')
+               f'IF({noparty_in},"⚠ 收入没选往来单位（客户统计、应收里算不到），K 列选一下",'
+               f'IF(AND({g(J_PTYPE)}="税务银行",{g(J_MITEM)}="",{g(J_CLS)}="{CLS_VAR}",{g(J_OUTV)}>0),'
+               f'"⚠ 税务扣款默认算税金：是社保（挂靠）的在 L 列改",'
+               f'IF({g(J_ITEM)}="新增","√ 新客户首笔","√")))))))))))))))')
         f[J_CHK] = chk
         for col, v in f.items():
             ws[f'{col}{r}'] = v
@@ -146,7 +163,7 @@ def build_cash(wb, ctx):
               J_CHK: AL, J_IN: AR, J_OUT: AR, J_BANKBAL: AR, J_BAL: AR}
     style_rows(ws, J_R0, J_R1, inp + man + auto, auto=auto, fmts=fmts, aligns=aligns,
                fills={**{c: FILL_PASTE for c in inp}, **{c: FILL_IN for c in man}}, bold=[J_BAL])
-    for col in (J_INV, J_OUTV, J_NET, J_AUTO, J_DUPK, J_TODO, J_TODO1, J_TODOC, J_SKEY, J_KW, J_APF):
+    for col in (J_INV, J_OUTV, J_NET, J_AUTO, J_DUPK, J_TODO, J_TODO1, J_TODOC, J_SKEY, J_KW, J_APF, J_NESC, J_PESC, J_TS, J_ARF):
         for r in range(J_R0, J_R1 + 1):
             ws[f'{col}{r}'].font = F_HELP
         ws.column_dimensions[col].hidden = True

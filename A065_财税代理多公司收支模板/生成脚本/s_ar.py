@@ -3,6 +3,7 @@
    应收＝销项发票 − 收入类收款；应付＝计应付的进项发票 − 成本费用类付款；其他往来＝收支项目「往来」（借款、押金…）；
    内部往来＝5 家公司之间的「内部划转」。"""
 import datetime as dt
+from openpyxl.formatting.rule import FormulaRule
 from common import *
 from s_reports import year_crit
 
@@ -65,7 +66,10 @@ def build_ar(wb, ctx):
         put(ws, f'A{r}', f'=IF({n}="","",{i + 1})', F_AUTO, align=AC)
         put(ws, f'B{r}', f'=IF({SH_PARTY}!$B${p}="","",{SH_PARTY}!$B${p})', F_AUTOB, align=AL)
         put(ws, f'C{r}', f'=IF({n}="","",{SH_PARTY}!$C${p}&"")', F_AUTO, align=AC)
-        f = cols(n, f'{jr(J_PARTY)},{n},{jr(J_CO)},{cc}', f'{vr(V_PARTY)},{n},{vr(V_CO)},{cc}')
+        ne = f'$P{r}'           # 隐藏：名字转义后当条件用
+        ws[f'P{r}'] = f'={esc(n)}'
+        ws[f'P{r}'].font = F_HELP
+        f = cols(ne, f'{jr(J_PARTY)},{ne},{jr(J_CO)},{cc}', f'{vr(V_PARTY)},{ne},{vr(V_CO)},{cc}')
         for c, v in f.items():
             put(ws, f'{c}{r}', f'=IF({n}="","",ROUND({v},2))', F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'G{r}', f'=IF({n}="","",ROUND(D{r}+E{r}-F{r},2))', F_AUTOB, fmt=MONEY, align=AR)
@@ -78,9 +82,13 @@ def build_ar(wb, ctx):
     put(ws, f'B{r}', '（没登记的单位合计）', F_RED, FILL_AUTO, align=AL)
     put(ws, f'C{r}', '', F_AUTO, FILL_AUTO)
     tot = cols(None, f'{jr(J_PARTY)},"?*",{jr(J_CO)},{cc}', f'{vr(V_PARTY)},"?*",{vr(V_CO)},{cc}')
-    tot['D'] = f'SUMIFS({br(OP_AR, OP_R0, OP_R1)},{br(OP_CO, OP_R0, OP_R1)},{cc})+' + tot['D'].split('+', 1)[1]
-    tot['H'] = f'SUMIFS({br(OP_AP, OP_R0, OP_R1)},{br(OP_CO, OP_R0, OP_R1)},{cc})+' + tot['H'].split('+', 1)[1]
-    tot['L'] = f'SUMIFS({br(OP_OTH, OP_R0, OP_R1)},{br(OP_CO, OP_R0, OP_R1)},{cc})+' + tot['L'].split('+', 1)[1]
+    def op_all(col):
+        # 期初往来全部 − 对方是自家公司的（那些在【内部往来】里算）
+        return (f'(SUMIFS({br(col, OP_R0, OP_R1)},{br(OP_CO, OP_R0, OP_R1)},{cc})'
+                f'-SUMPRODUCT(({CO_NAMES}<>"")*SUMIFS({br(col, OP_R0, OP_R1)},{br(OP_CO, OP_R0, OP_R1)},{cc},{br(OP_PARTY, OP_R0, OP_R1)},{CO_NAMES})))')
+    tot['D'] = op_all(OP_AR) + '+' + tot['D'].split('+', 1)[1]
+    tot['H'] = op_all(OP_AP) + '+' + tot['H'].split('+', 1)[1]
+    tot['L'] = op_all(OP_OTH) + '+' + tot['L'].split('+', 1)[1]
     for c, v in tot.items():
         put(ws, f'{c}{r}', f'=ROUND({v}-SUM({c}{AR_R0}:{c}{r - 1}),2)', F_RED, FILL_AUTO, MONEY, AR)
     put(ws, f'G{r}', f'=ROUND(D{r}+E{r}-F{r},2)', F_RED, FILL_AUTO, MONEY, AR)
@@ -88,6 +96,7 @@ def build_ar(wb, ctx):
     put(ws, f'M{r}', f'=ROUND(G{r}-K{r}+L{r},2)', F_RED, FILL_AUTO, MONEY, AR)
     put(ws, f'N{r}', '到【数据校验】看是哪些，登记后会分到上面各行', F_NOTE, FILL_AUTO, align=AL)
     ws.auto_filter.ref = f'A4:N{r}'
+    hide(ws, 'P')
     ws.freeze_panes = f'C{AR_R0}'
     return ws
 
@@ -104,7 +113,8 @@ def build_stmt(wb, ctx):
     title(ws, '往 来 对 账 单（选公司、往来单位、起止日期 · 发票和收付款按日期排 · 每行带余额）', 'M', C_AR,
           '💡 C3 选公司（全部＝5 家合起来），F3 选往来单位（客户、供应商、借款人、自家另一家公司都行），起止日期不填＝不限。'
           '开票（销项）让对方欠我方增加，对方付款减少；进项发票（计应付的）是我方欠对方，我方付款冲掉。'
-          '余额正数＝对方欠我方，负数＝我方欠对方（或对方预付）。账户互转不列。')
+          '余额正数＝对方欠我方，负数＝我方欠对方（或对方预付）。跟【应收应付汇总】一个口径：只列销项/进项发票、收入类收款、'
+          '付给供应商的成本费用款、往来（借款押金）、内部划转；发工资、交税这类不算往来的不列。')
     selector(ws, 'B3', '公司', 'C3', '全部', f'={AUX_CO_ALL}')
     selector(ws, 'E3', '往来单位', 'F3', '宁波市华方塑料机械制造有限公司', f'={SH_AUX}!$C$1:$C$620')
     ws.merge_cells('F3:H3')
@@ -117,6 +127,10 @@ def build_stmt(wb, ctx):
         ws[c].font = F_HELP
     cc = co_crit('$C$3')
     n = '$F$3'
+    ws['R5'] = f'={esc(n)}'
+    ws['Q5'] = '单位(转义)'
+    ws['Q5'].font = ws['R5'].font = F_HELP
+    ne = '$R$5'
     s = '$R$3'
     # 第 4、5 行：摘要
     heads = [('C', '期初余额（起始日前）'), ('D', '本期开票'), ('E', '本期进项'), ('F', '本期收款'), ('G', '本期付款'),
@@ -124,17 +138,21 @@ def build_stmt(wb, ctx):
     for c, t in heads:
         put(ws, f'{c}4', t, F_KPI_L, fill('FFD9E1F2'), align=ACW)
     ws.row_dimensions[4].height = 30
-    pc = f'{jr(J_PARTY)},{n},{jr(J_CO)},{cc},{jr(J_CLS)},"<>{CLS_XFER}"'
-    pv = f'{vr(V_PARTY)},{n},{vr(V_CO)},{cc}'
-    opening = (f'SUMIFS({br(OP_AR, OP_R0, OP_R1)},{br(OP_PARTY, OP_R0, OP_R1)},{n},{br(OP_CO, OP_R0, OP_R1)},{cc})'
-               f'-SUMIFS({br(OP_AP, OP_R0, OP_R1)},{br(OP_PARTY, OP_R0, OP_R1)},{n},{br(OP_CO, OP_R0, OP_R1)},{cc})'
-               f'+SUMIFS({br(OP_OTH, OP_R0, OP_R1)},{br(OP_PARTY, OP_R0, OP_R1)},{n},{br(OP_CO, OP_R0, OP_R1)},{cc})'
-               f'+SUMIFS({vr(V_ARV)},{pv},{vr(V_DATE)},"<"&{s})-SUMIFS({vr(V_APV)},{pv},{vr(V_DATE)},"<"&{s})'
+    e = '$R$4'
+    pc = f'{jr(J_PARTY)},{ne},{jr(J_CO)},{cc},{jr(J_ARF)},1'
+    opening = (f'SUMIFS({br(OP_AR, OP_R0, OP_R1)},{br(OP_PARTY, OP_R0, OP_R1)},{ne},{br(OP_CO, OP_R0, OP_R1)},{cc})'
+               f'-SUMIFS({br(OP_AP, OP_R0, OP_R1)},{br(OP_PARTY, OP_R0, OP_R1)},{ne},{br(OP_CO, OP_R0, OP_R1)},{cc})'
+               f'+SUMIFS({br(OP_OTH, OP_R0, OP_R1)},{br(OP_PARTY, OP_R0, OP_R1)},{ne},{br(OP_CO, OP_R0, OP_R1)},{cc})'
+               f'+SUMIFS({vr(V_SD)},{vr(V_DATE)},"<"&{s})-SUMIFS({vr(V_SE)},{vr(V_DATE)},"<"&{s})'
                f'+SUMIFS({jr(J_OUTV)},{pc},{jr(J_DATE)},"<"&{s})-SUMIFS({jr(J_INV)},{pc},{jr(J_DATE)},"<"&{s})')
+    vin = f'{vr(V_DATE)},">="&{s},{vr(V_DATE)},"<="&{e}'
+    jin = f'{pc},{jr(J_DATE)},">="&{s},{jr(J_DATE)},"<="&{e}'
     put(ws, 'C5', f'=IF({n}="","",ROUND({opening},2))', F_KPI_V, fmt=MONEY, align=AC)
     R1 = ST_R0 + ST_N - 1
-    for c, col in (('D', 'D'), ('E', 'E'), ('F', 'F'), ('G', 'G')):
-        put(ws, f'{c}5', f'=ROUND(SUM({col}{ST_R0}:{col}{R1}),2)', F_KPI_V, fmt=MONEY, align=AC)
+    # 本期数直接按条件求和（不靠下面列出来的行，超出一屏也不会少算）
+    for c, v in (('D', f'SUMIFS({vr(V_SD)},{vin})'), ('E', f'SUMIFS({vr(V_SE)},{vin})'),
+                 ('F', f'SUMIFS({jr(J_INV)},{jin})'), ('G', f'SUMIFS({jr(J_OUTV)},{jin})')):
+        put(ws, f'{c}5', f'=IF({n}="","",ROUND({v},2))', F_KPI_V, fmt=MONEY, align=AC)
     put(ws, 'H5', f'=IF({n}="","",ROUND(C5+D5-E5-F5+G5,2))', F_KPI_V, fmt=MONEY, align=AC)
     put(ws, 'I4', '结论', F_KPI_L, fill('FFD9E1F2'), align=AC)
     ws.merge_cells('I5:M5')
@@ -163,12 +181,12 @@ def build_stmt(wb, ctx):
         vi = lambda col: f'INDEX({SH_INV}!${col}:${col},W{r})'
         ji = lambda col: f'INDEX({SH_CASH}!${col}:${col},W{r})'
         put(ws, f'A{r}', f'=IF(T{r}="","",INT(T{r}/100000))', F_AUTO, fmt=DATE, align=AC)
-        put(ws, f'B{r}', f'=IF(T{r}="","",IF({isv},IF(N({vi(V_ARV)})<>0,"开票","进项发票"),IF(N({ji(J_INV)})>0,"收款","付款")))',
+        put(ws, f'B{r}', f'=IF(T{r}="","",IF({isv},IF(N({vi(V_SD)})<>0,"开票","进项发票"),IF(N({ji(J_INV)})>0,"收款","付款")))',
             F_AUTO, align=AC)
         put(ws, f'C{r}', f'=IF(T{r}="","",IF({isv},"发票 "&{vi(V_ENO)}&{vi(V_NO)}&IF({vi(V_STAT)}&""="正常",""," （"&{vi(V_STAT)}&"）"),'
                          f'TRIM({ji(J_MEMO)}&" "&{ji(J_ONAME)})))', F_AUTO, align=AL)
-        put(ws, f'D{r}', f'=IF(T{r}="","",IF({isv},N({vi(V_ARV)}),0))', F_AUTO, fmt=MONEY, align=AR)
-        put(ws, f'E{r}', f'=IF(T{r}="","",IF({isv},N({vi(V_APV)}),0))', F_AUTO, fmt=MONEY, align=AR)
+        put(ws, f'D{r}', f'=IF(T{r}="","",IF({isv},N({vi(V_SD)}),0))', F_AUTO, fmt=MONEY, align=AR)
+        put(ws, f'E{r}', f'=IF(T{r}="","",IF({isv},N({vi(V_SE)}),0))', F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'F{r}', f'=IF(T{r}="","",IF(NOT({isv}),N({ji(J_INV)}),0))', F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'G{r}', f'=IF(T{r}="","",IF(NOT({isv}),N({ji(J_OUTV)}),0))', F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'H{r}', f'=IF(T{r}="","",ROUND($C$5+SUM($D${ST_R0}:D{r})-SUM($E${ST_R0}:E{r})-SUM($F${ST_R0}:F{r})'
@@ -177,8 +195,11 @@ def build_stmt(wb, ctx):
         put(ws, f'J{r}', f'=IF(T{r}="","",IF({isv},{vi(V_CO)}&"",{ji(J_ACC)}&""))', F_AUTO, align=AC)
         put(ws, f'L{r}', f'=IF(T{r}="","",IF({isv},"发票导入","资金台帐"))', F_NOTE, align=AC)
         put(ws, f'M{r}', f'=IF(T{r}="","",W{r})', F_NOTE, fmt='0', align=AC)
-    put(ws, f'A{R1 + 1}', f'="共 "&COUNT($T${ST_R0}:$T${R1})&" 笔（发票最多 {N_INV} 张、收付款最多 {N_CASH} 笔一屏；超了请缩短起止日期）"',
-        F_NOTE, align=AL, border=False)
+    put(ws, f'A{R1 + 1}', f'="共 "&(COUNT({vr(V_SKEY)})+COUNT({jr(J_SKEY)}))&" 笔"&IF(OR(COUNT({vr(V_SKEY)})>{N_INV},COUNT({jr(J_SKEY)})>{N_CASH}),'
+                          f'"，⚠ 超出一屏（发票最多 {N_INV} 张、收付款最多 {N_CASH} 笔），下面没列全，请缩短起止日期；上面的本期、期末数是全的","")',
+        F_RED, align=AL, border=False)
+    ws.conditional_formatting.add(f'A4:M5', FormulaRule(formula=[f'OR(COUNT({vr(V_SKEY)})>{N_INV},COUNT({jr(J_SKEY)})>{N_CASH})'],
+                                                        fill=fill('FFFFEB9C')))
     hide(ws, 'Q', 'R', 'S', 'T', 'U', 'V', 'W')
     ws.freeze_panes = f'A{ST_R0}'
     ws.print_title_rows = f'1:{ST_R0 - 1}'
@@ -192,7 +213,7 @@ def build_intra(wb, ctx):
     widths(ws, {'A': 14, **{c: 13 for c in CC}, 'J': 14, 'K': 3, 'L': 30})
     title(ws, '内 部 往 来（5 家公司之间划转的钱 · 谁欠谁）', 'J', C_AR,
           '💡 资金台帐里对方户名是自家另一家公司的，自动记成「内部划转」。第一张表：行＝本公司，列＝对方公司，'
-          '数＝本公司转出去的 − 对方转进来的（正数＝对方欠本公司）。第二张表检查两边记账是不是一致（A 欠 B 的应该等于 B 借给 A 的），'
+          '数＝期初往来 ＋ 本公司开给对方的票 − 对方开给本公司的票 ＋ 本公司转出去的 − 对方转进来的（正数＝对方欠本公司）。第二张表检查两边记账是不是一致（A 欠 B 的应该等于 B 借给 A 的），'
           '只导了一边的流水会显示差额。第三张是自家公司之间开的发票。截止日不填＝到现在。')
     selector(ws, 'A3', '截止日', 'B3', None, fmt=DATE)
     ws['L3'] = '=IF(N($B$3)>0,$B$3+1,2958466)'
@@ -216,8 +237,12 @@ def build_intra(wb, ctx):
 
     def bal(a, b, *_):
         pc = f'{jr(J_CO)},{a},{jr(J_PARTY)},{b},{jr(J_CLS)},"{CLS_INTRA}",{jr(J_DATE)},"<"&{e}'
-        op = f'SUMIFS({br(OP_OTH, OP_R0, OP_R1)},{br(OP_CO, OP_R0, OP_R1)},{a},{br(OP_PARTY, OP_R0, OP_R1)},{b})'
-        return f'ROUND({op}+SUMIFS({jr(J_OUTV)},{pc})-SUMIFS({jr(J_INV)},{pc}),2)'
+        opc = f'{br(OP_CO, OP_R0, OP_R1)},{a},{br(OP_PARTY, OP_R0, OP_R1)},{b}'
+        op = (f'SUMIFS({br(OP_AR, OP_R0, OP_R1)},{opc})-SUMIFS({br(OP_AP, OP_R0, OP_R1)},{opc})'
+              f'+SUMIFS({br(OP_OTH, OP_R0, OP_R1)},{opc})')
+        inv = (f'SUMIFS({vr(V_EFF)},{vr(V_DIR)},"内部",{vr(V_SCO)},{a},{vr(V_BCO)},{b},{vr(V_DATE)},"<"&{e})'
+               f'-SUMIFS({vr(V_EFF)},{vr(V_DIR)},"内部",{vr(V_SCO)},{b},{vr(V_BCO)},{a},{vr(V_DATE)},"<"&{e})')
+        return f'ROUND({op}+{inv}+SUMIFS({jr(J_OUTV)},{pc})-SUMIFS({jr(J_INV)},{pc}),2)'
 
     t1 = 5
     nxt = grid(t1, '① 内部往来余额（正数＝对方欠本公司）', bal)

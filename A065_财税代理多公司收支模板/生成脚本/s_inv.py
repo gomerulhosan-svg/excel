@@ -29,7 +29,8 @@ def build_inv(wb, ctx):
         put(ws, f'{col}{V_HDR}', t, F_HDR, fill(C_INV if col != V_MAP else 'FFBF8F00'), align=ACW)
     ws.row_dimensions[V_HDR].height = 34
     for col, t in ((V_SKEY, '对账单键'), (V_TODO, '待登记'), (V_TODO1, '首次'), (V_TODOC, '计数'), (V_SCO, '销方自家'),
-                   (V_BCO, '购方自家'), (V_EFF, '有效价税'), (V_EAMT, '有效金额'), (V_ETAX, '有效税额')):
+                   (V_BCO, '购方自家'), (V_EFF, '有效价税'), (V_EAMT, '有效金额'), (V_ETAX, '有效税额'),
+                   (V_SD, '对账开票'), (V_SE, '对账进项')):
         ws[f'{col}{V_HDR}'] = t
         ws[f'{col}{V_HDR}'].font = F_HELP
     PN, PTAX, P0, P1, P2, PAP = pr(PT_NAME), pr(PT_TAX), pr(PT_N0), pr(PT_N1), pr(PT_N2), pr(PT_AP)
@@ -40,22 +41,24 @@ def build_inv(wb, ctx):
         f = {}
         f[V_DATE] = f'=IF(NOT({real}),"",{date_parse(g(V_TIME))})'
         co = lambda tax, name: (f'IF({tax}&""="","",IFERROR(INDEX({CO_NAMES},MATCH({tax}&"",{CO_TAXES},0))&"",'
-                                f'IFERROR(INDEX({CO_NAMES},MATCH({norm(name)},{CO_NORMS},0))&"","")))')
+                                f'IFERROR(INDEX({CO_NAMES},MATCH({esc(norm(name))},{CO_NORMS},0))&"","")))')
         f[V_SCO] = f'=IF(NOT({real}),"",{co(g(V_STAX), g(V_SNAME))})'
         f[V_BCO] = f'=IF(NOT({real}),"",{co(g(V_BTAX), g(V_BNAME))})'
         f[V_CO] = f'=IF({g(V_SCO)}<>"",{g(V_SCO)},{g(V_BCO)})'
         f[V_DIR] = (f'=IF(NOT({real}),"",IF(AND({g(V_SCO)}<>"",{g(V_BCO)}<>""),"内部",IF({g(V_SCO)}<>"","销项",'
                     f'IF({g(V_BCO)}<>"","进项","未识别"))))')
-        pty = lambda tax, name: (f'IFERROR(INDEX({PN},MATCH({tax}&"",{PTAX},0)),IFERROR(INDEX({PN},MATCH({norm(name)},{P0},0)),'
-                                 f'IFERROR(INDEX({PN},MATCH({norm(name)},{P1},0)),IFERROR(INDEX({PN},MATCH({norm(name)},{P2},0)),'
+        pty = lambda tax, name: (f'IFERROR(INDEX({PN},MATCH({tax}&"",{PTAX},0)),IFERROR(INDEX({PN},MATCH({esc(norm(name))},{P0},0)),'
+                                 f'IFERROR(INDEX({PN},MATCH({esc(norm(name))},{P1},0)),IFERROR(INDEX({PN},MATCH({esc(norm(name))},{P2},0)),'
                                  f'{norm(name)}))))')
         f[V_PARTY] = (f'=IF({g(V_DIR)}="销项",{pty(g(V_BTAX), g(V_BNAME))},IF({g(V_DIR)}="进项",{pty(g(V_STAX), g(V_SNAME))},'
                       f'IF({g(V_DIR)}="内部",{g(V_BCO)},"")))')
         f[V_VAL] = f'=IF({g(V_DIR)}="","",IF(ISNUMBER(SEARCH("作废",{g(V_STAT)})),0,{num(g(V_TOTAL))}))'
-        reg = f'ISNUMBER(MATCH({g(V_PARTY)},{PN},0))'
-        apflag = f'IFERROR(INDEX({PAP},MATCH({g(V_PARTY)},{PN},0))&"","")'
+        reg = f'ISNUMBER(MATCH({esc(g(V_PARTY))},{PN},0))'
+        apflag = f'IFERROR(INDEX({PAP},MATCH({esc(g(V_PARTY))},{PN},0))&"","")'
+        ptype = f'IFERROR(INDEX({pr(PT_TYPE)},MATCH({esc(g(V_PARTY))},{PN},0))&"","")'
+        # 进项默认：登记成「供应商」的（J 列没填否）或 J 列填了「是」的算应付；其余（报销小票、登记成客户的饭店……）算报销票
         f[V_USE] = (f'=IF({g(V_DIR)}="销项","应收",IF({g(V_DIR)}="进项",IF({g(V_MAP)}="是","应付",IF({g(V_MAP)}="否","报销票",'
-                    f'IF(AND({reg},{apflag}<>"否"),"应付","报销票"))),IF({g(V_DIR)}="内部","内部","")))')
+                    f'IF(OR(AND({ptype}="供应商",{apflag}<>"否"),{apflag}="是"),"应付","报销票"))),IF({g(V_DIR)}="内部","内部","")))')
         dupk = (f'IF({g(V_ENO)}<>"",COUNTIFS(${V_ENO}${R0}:{g(V_ENO)},{g(V_ENO)}&"*",${V_DIR}${R0}:{g(V_DIR)},{g(V_DIR)}),'
                 f'COUNTIFS(${V_CODE}${R0}:{g(V_CODE)},{g(V_CODE)}&"*",${V_NO}${R0}:{g(V_NO)},{g(V_NO)}&"*",${V_DIR}${R0}:{g(V_DIR)},{g(V_DIR)}))')
         f[V_DUP] = f'=IF({g(V_DIR)}="","",IF({dupk}>1,"重复",""))'
@@ -65,14 +68,21 @@ def build_inv(wb, ctx):
         f[V_ARV] = f'=IF(AND({g(V_USE)}="应收",{g(V_DUP)}=""),{g(V_VAL)},0)'
         f[V_APV] = f'=IF(AND({g(V_USE)}="应付",{g(V_DUP)}=""),{g(V_VAL)},0)'
         f[V_CHK] = (f'=IF({g(V_DIR)}="","",IF({g(V_DIR)}="未识别","✗ 销方、购方都不是自家公司：到【基础资料】核对公司税号",'
-                    f'IF({g(V_DATE)}="","✗ 开票日期看不懂",IF({g(V_DUP)}<>"","⚠ 重复粘贴了，只算一次",'
+                    f'IF({g(V_DATE)}="","✗ 开票日期看不懂",IF({g(V_DUP)}<>"",IF({g(V_DIR)}="内部","内部开票：两家的导出里都有，只算一次","⚠ 重复粘贴了，只算一次"),'
                     f'IF(ISNUMBER(SEARCH("作废",{g(V_STAT)})),"作废票，不算",'
                     f'IF({g(V_DIR)}="内部","内部开票，看【内部往来】",IF({g(V_USE)}="报销票","报销票（不计应付）",'
-                    f'IF(NOT({reg}),"⚠ 客户没在【往来单位】登记（应收照算）","√"))))))))')
-        f[V_SKEY] = (f'=IF(AND({g(V_PARTY)}={ST_PARTY},{g(V_PARTY)}<>"",OR({ST_CO}="全部",{g(V_CO)}={ST_CO}),'
-                     f'{g(V_DATE)}>={ST_S},{g(V_DATE)}<={ST_E},{g(V_ARV)}+{g(V_APV)}<>0),{g(V_DATE)}*100000+ROW(),"")')
+                    f'IF(NOT({reg}),IF({g(V_DIR)}="销项","⚠ 客户没在【往来单位】登记（应收照算）","⚠ 供应商没在【往来单位】登记（应付照算）"),"√"))))))))')
+        # 往来对账单：销项/进项按单位＋公司；自家公司之间的票，对方是所选单位（另一家自家公司）时也列上
+        coall = f'{ST_CO}="全部"'
+        f[V_SD] = (f'=IF({g(V_DIR)}="销项",IF(AND({g(V_PARTY)}={ST_PARTY},OR({coall},{g(V_CO)}={ST_CO})),{g(V_ARV)},0),'
+                   f'IF({g(V_DIR)}="内部",IF(AND({g(V_DUP)}="",{g(V_BCO)}={ST_PARTY},{g(V_SCO)}<>{ST_PARTY},'
+                   f'OR({coall},{g(V_SCO)}={ST_CO})),{g(V_EFF)},0),0))')
+        f[V_SE] = (f'=IF({g(V_DIR)}="进项",IF(AND({g(V_PARTY)}={ST_PARTY},OR({coall},{g(V_CO)}={ST_CO})),{g(V_APV)},0),'
+                   f'IF({g(V_DIR)}="内部",IF(AND({g(V_DUP)}="",{g(V_SCO)}={ST_PARTY},{g(V_BCO)}<>{ST_PARTY},'
+                   f'OR({coall},{g(V_BCO)}={ST_CO})),{g(V_EFF)},0),0))')
+        f[V_SKEY] = (f'=IF(AND({g(V_SD)}+{g(V_SE)}<>0,{g(V_DATE)}>={ST_S},{g(V_DATE)}<={ST_E}),{g(V_DATE)}*100000+ROW(),"")')
         f[V_TODO] = f'=IF(AND({g(V_DIR)}="销项",NOT({reg})),{g(V_PARTY)},"")'
-        f[V_TODO1] = f'=IF({g(V_TODO)}="",0,IF(MATCH({g(V_TODO)},{vr(V_TODO)},0)={r - R0 + 1},1,0))'
+        f[V_TODO1] = f'=IF({g(V_TODO)}="",0,IF(MATCH({esc(g(V_TODO))},{vr(V_TODO)},0)={r - R0 + 1},1,0))'
         f[V_TODOC] = f'=N({V_TODOC}{r - 1})+{g(V_TODO1)}' if r > R0 else f'={g(V_TODO1)}'
         for col, v in f.items():
             ws[f'{col}{r}'] = v
@@ -89,7 +99,7 @@ def build_inv(wb, ctx):
                      V_DATE: DATE, V_ENO: '@', V_STAX: '@', V_BTAX: '@'},
                aligns={V_SNAME: AL, V_BNAME: AL, V_PARTY: AL, V_CHK: AL, V_REM: AL},
                fills={**{c: FILL_PASTE for c in raw}, V_MAP: FILL_IN})
-    for col in (V_SKEY, V_TODO, V_TODO1, V_TODOC, V_SCO, V_BCO, V_EFF, V_EAMT, V_ETAX):
+    for col in (V_SKEY, V_TODO, V_TODO1, V_TODOC, V_SCO, V_BCO, V_EFF, V_EAMT, V_ETAX, V_SD, V_SE):
         for rr in range(V_R0, V_R1 + 1):
             ws[f'{col}{rr}'].font = F_HELP
         ws.column_dimensions[col].hidden = True

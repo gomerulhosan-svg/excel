@@ -11,10 +11,10 @@ TODO_N = 60      # 待登记清单各列 60 个
 
 def build_check(wb, ctx):
     ws = wb.create_sheet(SH_CHK)
-    widths(ws, {'A': 6, 'B': 44, 'C': 12, 'D': 8, 'E': 50, 'F': 14})
+    widths(ws, {'A': 6, 'B': 44, 'C': 12, 'D': 8, 'E': 50, 'F': 22, 'G': 14})
     title(ws, '数 据 校 验（全自动 · 每项应为 √）', 'F', C_CHK,
           '💡 这里把「会让报表算错」的情况一项项数出来。✗ 要改；⚠ 是提醒，看一眼没问题就行。改完回来看，变成 √ 就好了。'
-          '下面还列出流水、发票里出现了、但【往来单位】里还没登记的名字：复制名字，到【往来单位】B 列最下面粘上、选类型'
+          '下面还列出流水、发票里出现了、但【往来单位】里还没登记的名字：复制名字，到【往来单位】B 列最下面「选择性粘贴 → 数值」、选类型'
           '（要绑收支项目的顺手选上），资金台帐和应收应付就会自动认出来。')
     header(ws, 4, [('A', '序号'), ('B', '检查项'), ('C', '数量'), ('D', '状态'), ('E', '怎么处理'), ('F', '去哪看')], C_CHK, height=28)
     PN = pr(PT_NAME)
@@ -30,11 +30,19 @@ def build_check(wb, ctx):
         ('资金台帐：算出的余额跟银行给的余额对不上', f'=COUNTIF({jr(J_CHK)},"⚠ 余额*")', 'W',
          '一般是漏粘了几行、重复粘了几行，或期初余额不对；从第一个对不上的行往上查', SH_CASH),
         ('资金台帐：疑似重复粘贴（跟上面某行一模一样）', f'=COUNTIF({jr(J_CHK)},"⚠ 跟上面*")', 'W',
-         '真是重复的就把这一行删掉；同一天同金额两笔真实交易的，在 M 列备注写一下就不算重复了（查重不看备注，需把摘要改一下）', SH_CASH),
+         '真是重复的就把这一行删掉；同一天同金额两笔真实交易的，在 M 列备注写一下就不算重复了', SH_CASH),
+        ('资金台帐：税务扣款（默认算税金）要确认是不是社保', f'=COUNTIF({jr(J_CHK)},"⚠ 税务扣款*")', 'W',
+         '国库扣款里可能有社保、社保挂靠：是的话在 L 列改成人工-社保 / 社保挂靠，改了提醒就消失', SH_CASH),
+        ('往来单位：没选类型', f'=SUMPRODUCT(({PN}<>"")*({pr(PT_TYPE)}=""))', 'E',
+         '【往来单位】C 列选客户 / 供应商 / 个人……，不选的话客户来款认不出新增、续费', SH_PARTY),
         ('资金台帐：手工选的往来单位没在【往来单位】登记', f'=COUNTIF({jr(J_CHK)},"⚠ 往来单位没*")', 'W',
          '统计照算；想在应收应付、客户统计里单独一行，就去【往来单位】登记', SH_CASH),
-        ('发票导入：认不出是哪家公司的发票', f'=COUNTIF({vr(V_CHK)},"✗*")', 'E',
+        ('资金台帐：收入只选了项目、没选往来单位', f'=COUNTIF({jr(J_CHK)},"⚠ 收入没*")', 'W',
+         '收支汇总照算，但客户收入统计、应收里算不到这笔；K 列把客户选上（名单见下面）', SH_CASH),
+        ('发票导入：认不出是哪家公司的发票', f'=COUNTIF({vr(V_CHK)},"✗ 销方*")', 'E',
          '到【基础资料】① 公司，把 5 家公司的税号都填上（发票靠税号认公司）', SH_INV),
+        ('发票导入：开票日期看不懂', f'=COUNTIF({vr(V_CHK)},"✗ 开票日期*")', 'E',
+         '开票日期要像 2026-09-01 或 2026/9/1；看不懂的票不进应收应付和发票汇总', SH_INV),
         ('发票导入：重复粘贴的发票（只算一次）', f'=COUNTIF({vr(V_CHK)},"⚠ 重复*")', 'W', '不影响金额；想干净可以把重复的行删掉', SH_INV),
         ('发票导入：开了销项票、客户还没登记', f'=COUNTIF({vr(V_CHK)},"⚠ 客户没*")', 'W',
          '应收照算（在应收应付汇总最后一行「没登记的单位合计」）；登记后单独一行。名单见下面右边', SH_INV),
@@ -50,17 +58,26 @@ def build_check(wb, ctx):
          '两个项目不能同名（两个「其他」已经叫其他收入、其他成本）', SH_BASE),
         ('基础资料：摘要关键词对应的项目不在收支项目里',
          f'=SUMPRODUCT(({kw_w}<>"")*(COUNTIF({ITN},{kw_i})=0))', 'E', '④ 的收支项目从下拉选', SH_BASE),
-        ('往来单位：名称重复', f'=SUMPRODUCT(({PN}<>"")*(COUNTIF({PN},{PN})>1))', 'E',
+        ('往来单位：名称重复', f'=SUMPRODUCT(({PN}<>"")*(COUNTIF({PN},{esc(PN)})>1))', 'E',
          '同一个单位只登记一行；别的写法填到别名 1、别名 2', SH_PARTY),
         ('往来单位：绑定的收支项目不在清单里',
          f'=SUMPRODUCT(({pr(PT_BIND)}<>"")*(COUNTIF({ITN},{pr(PT_BIND)})=0))', 'E', '从下拉选', SH_PARTY),
+        ('期初往来：填了金额，没选所属公司或往来单位',
+         f'=SUMPRODUCT(((({br(OP_AR, OP_R0, OP_R1)}<>0)+({br(OP_AP, OP_R0, OP_R1)}<>0)+({br(OP_OTH, OP_R0, OP_R1)}<>0))>0)'
+         f'*((({br(OP_CO, OP_R0, OP_R1)}="")+(op_p=""))>0))'.replace('op_p', op_p), 'E', '这几行哪张报表都算不进去，补上公司和单位', SH_BASE),
         ('期初往来：单位没在【往来单位】登记',
          f'=SUMPRODUCT(({op_p}<>"")*(COUNTIF({PN},{op_p})=0)*(COUNTIF({CO_NAMES},{op_p})=0))', 'W',
          '期初照算进合计；登记后才会在应收应付里单独一行', SH_BASE),
-        ('内部往来：两家公司各记的对不上', f'=COUNTIF({SH_INTRA}!$B${i0}:$I${i1},"差*")', 'W',
+        ('内部往来：两家公司各记的对不上（对数）', f'=COUNTIF({SH_INTRA}!$B${i0}:$I${i1},"差*")/2', 'W',
          '多半是另一家公司那个账户的流水还没导进来；都导了还对不上，看是不是有一笔没认成「内部划转」', SH_INTRA),
         ('账户互转：同一家公司转出、转入没抵平', f'=COUNTIF({SH_INTRA}!$C${x0}:$C${x1},"✗*")', 'W',
          '转入那个账户的流水还没导进来，或者只记了一边', SH_INTRA),
+        ('资金台帐：流水日期比账户的期初日期还早',
+         f'=SUMPRODUCT(({AC_NAMES}<>"")*ISNUMBER({AC_ODATES})*COUNTIFS({jr(J_ACC)},{AC_NAMES},{jr(J_DATE)},"<"&{AC_ODATES}))', 'E',
+         '【基础资料】② 把期初日期改成这个账户第一笔流水那天（期初余额也要是那一笔之前的余额），不然报表的期初期末会少算', SH_BASE),
+        ('往来单位：登记了自家公司（会被当成客户/供应商）',
+         f'=SUMPRODUCT(({PN}<>"")*((COUNTIF({CO_NAMES},{esc(PN)})+COUNTIF({CO_FULLS},{esc(PN)}))>0))', 'E',
+         '自家 5 家公司只在【基础资料】① 登记，从【往来单位】删掉，内部划转才认得出', SH_PARTY),
         ('资金台帐：已用行数（共 6000 行）', f'=COUNTA({jr(J_TIME)})', 'C',
          '跨年一直往下记。超过 5500 行时提醒：在倒数几行中间右键「插入」若干行，再把上面一行整行复制粘贴下来，各报表会自动算进去', SH_CASH),
         ('发票导入：已用行数（3000 行）', f'=COUNTA({vr(V_ENO)})+COUNTA({vr(V_NO)})-SUMPRODUCT(({vr(V_ENO)}<>"")*({vr(V_NO)}<>""))',
@@ -101,19 +118,20 @@ def build_check(wb, ctx):
     # 待登记清单
     t = s + 2
     section(ws, t, 'A', 'C', f'资金台帐里认不出 / 没登记的对方户名（前 {TODO_N} 个）', C_CHK)
-    section(ws, t, 'E', 'F', f'销项发票里没登记的客户（前 {TODO_N} 个）', C_CHK)
-    header(ws, t + 1, [('A', '序号'), ('B', '对方户名（复制到【往来单位】B 列）'), ('C', '笔数'),
-                       ('E', '客户名称 / 纳税人识别号（名称复制到 B 列，税号到 H 列）'), ('F', '应收金额')], C_CHK, height=30)
+    section(ws, t, 'E', 'G', f'销项发票里没登记的客户（前 {TODO_N} 个）', C_CHK)
+    header(ws, t + 1, [('A', '序号'), ('B', '对方户名（复制 → 【往来单位】B 列「选择性粘贴 → 数值」）'), ('C', '笔数'),
+                       ('E', '客户名称（→ 往来单位 B 列，粘贴为数值）'), ('F', '纳税人识别号（→ H 列）'), ('G', '应收金额')], C_CHK, height=30)
     jt, jc = jr(J_TODO), jr(J_TODOC)
     vt, vc = vr(V_TODO), vr(V_TODOC)
     for k in range(1, TODO_N + 1):
         r = t + 1 + k
         put(ws, f'A{r}', f'=IF(B{r}="","",{k})', F_AUTO, align=AC)
         put(ws, f'B{r}', f'=IFERROR(INDEX({jt},MATCH({k},{jc},0)),"")', F_AUTOB, align=AL)
-        put(ws, f'C{r}', f'=IF(B{r}="","",COUNTIF({jt},B{r}))', F_AUTO, fmt=INT, align=AC)
-        put(ws, f'E{r}', f'=IFERROR(INDEX({vt},MATCH({k},{vc},0))&" / "&INDEX({vr(V_BTAX)},MATCH({k},{vc},0)),"")',
+        put(ws, f'C{r}', f'=IF(B{r}="","",COUNTIF({jt},{esc(f"B{r}")}))', F_AUTO, fmt=INT, align=AC)
+        put(ws, f'F{r}', f'=IFERROR(INDEX({vr(V_BTAX)},MATCH({k},{vc},0))&"","")', F_AUTO, fmt='@', align=AC)
+        put(ws, f'E{r}', f'=IFERROR(INDEX({vt},MATCH({k},{vc},0)),"")',
             F_AUTOB, align=AL)
-        put(ws, f'F{r}', f'=IFERROR(ROUND(SUMIFS({vr(V_ARV)},{vt},INDEX({vt},MATCH({k},{vc},0))),2),"")', F_AUTO, fmt=MONEY, align=AR)
+        put(ws, f'G{r}', f'=IFERROR(ROUND(SUMIFS({vr(V_ARV)},{vt},{esc(f"INDEX({vt},MATCH({k},{vc},0))")}),2),"")', F_AUTO, fmt=MONEY, align=AR)
     r = t + 2 + TODO_N
     put(ws, f'A{r}', f'="流水里共 "&MAX({jc})&" 个、发票里共 "&MAX({vc})&" 个没登记的名字"', F_NOTE, align=AL, border=False)
     ws.freeze_panes = 'A5'
@@ -169,7 +187,7 @@ def build_home(wb, ctx):
     put(ws, 'A10', '怎么用（第一次按 ①～④ 设好，以后每月做 ⑤⑥）', F_SEC, fill(C_HOME), align=AL)
     ws.merge_cells('A10:H10')
     steps = [
-        ('① 基础资料', '填 5 家公司（简称、全称、税号）、15 个资金账户（选所属公司、填建账那天的期初余额和日期）。收支项目已按你的截图建好，可以往下加。'),
+        ('① 基础资料', '填 5 家公司（简称、全称、税号）、15 个资金账户（选所属公司；期初余额＝第一笔流水之前的余额，期初日期＝第一笔流水那天）。收支项目已按你的截图建好，可以往下加。'),
         ('② 往来单位', '常来往的客户、供应商登记一下：流水上的户名写法不一样的填到别名；房东、刻章店、电信这类绑上收支项目，以后自动归类。老客户「建账前已合作」填 是。'),
         ('③ 摘要关键词', '【基础资料】④：摘要里出现「费用外收」就是银行手续费、「扣税」就是税金……已经填了常见的，可以再加。'),
         ('④ 期初往来', '建账前就有的应收、应付、借款余额，在【基础资料】⑤ 填一次。'),
