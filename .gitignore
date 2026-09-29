@@ -5,3 +5,4 @@ __pycache__/
 _lo_copy.xlsx
 _build_log.json
 _scenario.xlsx
+_calc/

@@ -42,7 +42,11 @@ def link_targets(path):
     m = re.search(r'<externalReferences>(.*?)</externalReferences>', wbxml, re.S)
     ids = re.findall(r'r:id="(rId\d+)"', m.group(1)) if m else []
     rels = z.read('xl/_rels/workbook.xml.rels').decode('utf8')
-    rel = dict(re.findall(r'Id="(rId\d+)"[^>]*Target="([^"]+)"', rels))
+    rel = {}
+    for tag in re.findall(r'<Relationship\b[^>]*>', rels):      # 属性顺序不固定（openpyxl 存的是 Type/Target/Id）
+        i, t = re.search(r'\bId="([^"]+)"', tag), re.search(r'\bTarget="([^"]+)"', tag)
+        if i and t:
+            rel[i.group(1)] = t.group(1)
     out = {}
     for k, rid in enumerate(ids, 1):
         part = rel[rid].replace('../', '')
