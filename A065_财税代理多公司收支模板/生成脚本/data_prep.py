@@ -39,6 +39,21 @@ def bank_rows():
     return acct, opening, rows
 
 
+def bank_raw():
+    """农行导出文件原样（标题、账号行、表头、明细、末尾几行都在），给【流水1】当演示：就像你把导出文件整份复制粘贴过来"""
+    sh = xlrd.open_workbook(F_BANK).sheet_by_index(0)
+    out = []
+    for r in range(sh.nrows):
+        row = []
+        for c in range(sh.ncols):
+            v = sh.cell_value(r, c)
+            row.append(None if v in ('', None) else v)
+        out.append(row)
+    while out and all(v is None for v in out[-1]):
+        out.pop()
+    return out
+
+
 def invoice_rows(path):
     """「发票基础信息」那一页，19 列原样；最后的「合计行」不要"""
     ws = openpyxl.load_workbook(path)['发票基础信息']

@@ -33,7 +33,9 @@ def sheet_parts(z):
     return out
 
 
-def inject(target, valsrc):
+def inject(target, valsrc, names=None):
+    """names：{成品里的表名: 算数副本里的表名}，不给就同名对同名"""
+    names = names or {}
     vals = openpyxl.load_workbook(valsrc, data_only=True)
     tmp = target + '.tmp'
     zin = zipfile.ZipFile(target)
@@ -44,8 +46,9 @@ def inject(target, valsrc):
     for item in zin.infolist():
         data = zin.read(item.filename)
         sh = part2sheet.get(item.filename)
-        if sh and sh in vals.sheetnames:
-            wsv = vals[sh]
+        src = names.get(sh, sh)
+        if sh and src in vals.sheetnames:
+            wsv = vals[src]
             root = etree.fromstring(data)
             for c in root.iter(f'{{{NS}}}c'):
                 f = c.find(f'{{{NS}}}f')

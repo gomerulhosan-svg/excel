@@ -14,11 +14,12 @@ def build_base(wb, ctx):
     title(ws, '基 础 资 料（公司 · 资金账户 · 收支项目 · 摘要关键词 · 期初往来）', 'AK', C_BASE,
           '💡 淡黄格子手填，灰格子自动。① 公司：填简称、全称、税号（发票靠税号认是哪家公司的）；'
           '② 资金账户：每个银行卡、微信、支付宝、现金各一行，选所属公司；期初余额＝资金台帐里这个账户第一笔流水之前的余额，期初日期＝第一笔流水那天（或更早），不是你做表那天；'
-          '③ 收支项目：就是你截图那张「收支类型」，可以往下加，类别决定落到报表哪一块；'
+          '③ 收支项目：收支类型可以往下加，类别决定落到报表哪一块；'
           '④ 摘要关键词：流水摘要/对方户名里出现这个词就自动认成这个项目（比如「费用外收」→ 银行手续费）；'
-          '⑤ 期初往来：建账前就有的应收、应付、借款余额，填一次。往来单位在下一张表【往来单位】。')
+          '⑤ 期初往来：建账前就有的应收、应付、借款余额，填一次。往来单位在下一张表【往来单位】。'
+          '② 的第 1～8 个账户分别对应【流水1】～【流水8】（导出文件粘到对应那张），第 9 个起是现金等手工记账的账户。')
     # 第 3 行分块标题
-    for c1, c2, t, col in (('A', 'E', '① 公司（5 家，最多 8 家）', C_HOME), ('H', 'R', '② 资金账户（15 个，最多 20 个）', C_CASH),
+    for c1, c2, t, col in (('A', 'E', '① 公司', C_HOME), ('H', 'R', '② 资金账户（第 1～8 个 ↔ 流水1～流水8，第 9 个起手工记账）', C_CASH),
                            ('T', 'X', '③ 收支项目（收支类型）', C_RPT), ('Z', 'AC', '④ 摘要关键词 → 收支项目', C_INV),
                            ('AE', 'AK', '⑤ 期初往来（建账前的余额，填一次）', C_AR)):
         section(ws, 3, c1, c2, t, col)
@@ -32,7 +33,8 @@ def build_base(wb, ctx):
         ws[f'{CO_NORM}{r}'] = f'=IF({CO_FULL}{r}="","",{norm(CO_FULL + str(r))})'
         ws[f'{CO_NORM}{r}'].font = F_HELP
     ws[f'B{CO_R0}'], ws[f'C{CO_R0}'], ws[f'D{CO_R0}'] = ctx['my_co']
-    ws[f'E{CO_R0}'] = '其余 4 家请补上'
+    for i, r in enumerate(range(CO_R0 + 1, CO_R0 + 5)):
+        ws[f'E{r}'] = f'第 {i + 2} 家：请填'
     hide(ws, CO_NORM)
     # ② 资金账户
     header(ws, BASE_HDR, [('H', '序号'), ('I', '账户名称（简称）'), ('J', '所属公司'), ('K', '类型'), ('L', '账号'), ('M', '开户行'),
@@ -50,7 +52,13 @@ def build_base(wb, ctx):
     r = AC_R0
     ws[f'I{r}'], ws[f'J{r}'], ws[f'K{r}'], ws[f'L{r}'], ws[f'M{r}'] = ctx['my_acc'], ctx['my_co'][0], '银行', acc, '中国农业银行宁波五乡支行'
     ws[f'N{r}'], ws[f'O{r}'] = opening, dt.datetime(2026, 9, 1)
-    ws[f'R{r}'] = '期初＝9/1 第一笔之前的余额'
+    ws[f'R{r}'] = '→【流水1】；期初＝9/1 第一笔之前的余额'
+    r += 1
+    ws[f'I{r}'], ws[f'K{r}'], ws[f'M{r}'] = '工行（新开户）', '银行', '中国工商银行'
+    ws[f'N{r}'], ws[f'R{r}'] = 0, '→【流水2】；新开户还没流水，选所属公司，账户名可以改成简称'
+    for j in range(3, N_IMP + 1):
+        ws[f'R{AC_R0 + j - 1}'] = f'→【流水{j}】：填账户名、所属公司、期初'
+    ws[f'R{AC_R0 + N_IMP}'] = '第 9 个起：现金等，在【手工记账】记'
     dv_list(ws, f'J{AC_R0}:J{AC_R1}', f'={CO_NAMES}', '这个账户是哪家公司的')
     dv_list(ws, f'K{AC_R0}:K{AC_R1}', '"银行,微信,支付宝,现金,其他"')
     dv_date(ws, f'O{AC_R0}:O{AC_R1}')
@@ -58,8 +66,8 @@ def build_base(wb, ctx):
     header(ws, BASE_HDR, [('T', '序号'), ('U', '收支项目'), ('V', '类别'), ('W', '报表显示'), ('X', '说明')], C_RPT)
     notes = {'新增': '客户第一次来款自动算新增', '续费': '同一客户第二次起自动算续费', '其他收入': '报表上显示「其他」',
              '其他成本': '报表上显示「其他」', '往来': '借款、还款、押金等（其他应收/其他应付）',
-             '内部划转': '5 家公司之间转钱（自动认：对方户名是自家公司）', '账户互转': '同一家公司两个账户之间倒钱（自动认）',
-             '社保挂靠': '需要手工选', '工资挂靠': '需要手工选', '咨询服务': '截图里没有，你说的「改为咨询服务」加在这；不要可删', '实收资本': '收到为准', '投资': '支出为准'}
+             '内部划转': '几家公司之间互转（自动认：对方户名是自家公司）', '账户互转': '同一家公司两个账户之间互转（自动认）',
+             '社保挂靠': '需要手工选', '工资挂靠': '需要手工选', '咨询服务': '增加项目，不要可删', '实收资本': '收到为准', '投资': '支出为准'}
     r = IT_R0
     for cls, names in ITEMS:
         for n in names:
@@ -81,7 +89,8 @@ def build_base(wb, ctx):
            ('扣税', '支出', '税金'), ('税款', '支出', '税金'), ('结息', '收入', '其他收入'), ('利息', '支出', '贷款利息'),
            ('房租', '支出', '店面租金'), ('租金', '支出', '店面租金'), ('刻章', '收入', '刻章'), ('刻章', '支出', '刻章费用'),
            ('返税', '收入', '园区返税'), ('加油', '支出', '汽车费用'), ('油费', '支出', '汽车费用'), ('停车', '支出', '汽车费用'),
-           ('话费', '支出', '办公费用'), ('宽带', '支出', '办公费用'), ('工资', '支出', '人工-工资')]
+           ('话费', '支出', '办公费用'), ('宽带', '支出', '办公费用'), ('工资', '支出', '人工-工资'),
+           ('提现', '支出', '账户互转')]
     for i, r in enumerate(range(KW_R0, KW_R1 + 1)):
         put(ws, f'Z{r}', i + 1, F_AUTO, FILL_AUTO, align=AC)
         for c in ('AA', 'AB', 'AC'):
@@ -140,7 +149,8 @@ def build_party(wb, ctx):
     return ws
 
 
-def build_aux(wb, ctx):
+def build_aux(wb, ctx, sources=True, link=''):
+    """_辅助：A 全部＋公司（下拉）、C 往来单位＋自家公司（下拉）、B1～B3 几个关键数、E～AC 流水来源表（工作簿 1）"""
     ws = wb.create_sheet(SH_AUX)
     ws['A1'] = '全部'
     for i in range(CO_R1 - CO_R0 + 1):
@@ -150,5 +160,32 @@ def build_aux(wb, ctx):
         ws[f'C{i + 1}'] = f'=IF({SH_PARTY}!$B${PT_R0 + i}="","",{SH_PARTY}!$B${PT_R0 + i})'
     for i in range(CO_R1 - CO_R0 + 1):
         ws[f'C{PT_R1 - PT_R0 + 2 + i}'] = f'=IF({SH_BASE}!$B${CO_R0 + i}="","",{SH_BASE}!$B${CO_R0 + i})'
+    if sources:
+        # B1 数据校验要改的项数（数据校验建好后填）、B2 资金台帐最后日期、B3 笔数
+        ws['B2'] = f'=IF(COUNT({jr(J_DATE)})=0,"",MAX({jr(J_DATE)}))'
+        ws['B3'] = f'={AUX_TOTAL}'
+        heads = ['序号', '表名', '账户', '笔数', '偏移'] + FIELDS + ['方式']
+        for i, t in enumerate(heads):
+            ws.cell(row=1, column=CI(AUX_SEQ) + i, value=t)
+        for j, nm in enumerate(SRC_SHEETS, 1):
+            r = AUX_R0 + j - 1
+            ws[f'{AUX_SEQ}{r}'] = j
+            ws[f'{AUX_SHEET}{r}'] = nm
+            ws[f'{AUX_ACC}{r}'] = f'={SH_BASE}!$I${AC_R0 + j - 1}&""' if j <= N_IMP else ''
+            ws[f'{AUX_CNT}{r}'] = f"='{nm}'!${S_CUM}${S_R1}"
+            ws[f'{AUX_OFF}{r}'] = 0 if j == 1 else f'={AUX_OFF}{r - 1}+{AUX_CNT}{r - 1}'
+            for k in range(len(FIELDS)):
+                ws.cell(row=r, column=CI(AUX_MAP0) + k, value=f"=N('{nm}'!${CL(k + 1)}${S_EFF})")
+            m = lambda n: f'{CL(CI(AUX_MAP0) + FI[n] - 1)}{r}'
+            ws[f'{AUX_MODE}{r}'] = (f'=IF(AND({m("收入")}>0,{m("支出")}>0),1,IF({m("单列金额")}>0,IF({m("收支标志")}>0,2,3),'
+                                    f'IF(OR({m("收入")}>0,{m("支出")}>0),1,0)))')
+            # AD：粘了东西却没认出日期或金额列；AE：粘贴区用到第几行（容量提醒）
+            ws[f'AD{r}'] = (f"=IF(AND(COUNTA('{nm}'!$A${S_R0}:$T${S_R1})>0,OR({AUX_MAP0}{r}=0,{AUX_MODE}{r}=0)),1,0)")
+            ws[f'AE{r}'] = f"=IFERROR(LOOKUP(2,1/('{nm}'!$A${S_R0}:$A${S_R1}<>\"\"),ROW('{nm}'!$A${S_R0}:$A${S_R1}))-{S_R0 - 1},0)"
+        ws['AD1'], ws['AE1'] = '没认出格式', '用到第几行'
+        ws[f'{AUX_CNT}{AUX_R1 + 1}'] = f'=SUM({AUX_CNT}{AUX_R0}:{AUX_CNT}{AUX_R1})'
+    else:
+        for c in ('B1', 'B2', 'B3'):
+            ws[c] = f"={link}{SH_AUX}!{c}"
     ws.sheet_state = 'hidden'
     return ws

@@ -13,7 +13,7 @@ SH_HOME = '首页'
 SH_BASE = '基础资料'
 SH_PARTY = '往来单位'
 SH_CASH = '资金台帐'
-SH_CONV = '流水格式转换'
+SH_MAN = '手工记账'
 SH_INV = '发票导入'
 SH_SUM = '收支汇总表'
 SH_CF = '简易现金流量表'
@@ -27,8 +27,17 @@ SH_INVS = '发票汇总'
 SH_CHK = '数据校验'
 SH_AUX = '_辅助'
 
-SHEET_ORDER = [SH_HOME, SH_BASE, SH_PARTY, SH_CASH, SH_CONV, SH_INV,
-               SH_SUM, SH_CF, SH_BAL, SH_EXP, SH_CUS, SH_AR, SH_STMT, SH_INTRA, SH_INVS, SH_CHK, SH_AUX]
+# 流水表：每个导入账户一张（整份粘网银 / 微信 / 支付宝导出的原样），最后一张手工记账（现金等）
+N_IMP = 8                                           # 流水1～流水8 ↔ 基础资料 ② 第 1～8 个账户
+SRC_SHEETS = [f'流水{i}' for i in range(1, N_IMP + 1)] + [SH_MAN]
+N_SRC = len(SRC_SHEETS)
+
+WB1_FILE = 'A065-1_流水发票导入.xlsx'
+WB2_FILE = 'A065-2_汇总报表.xlsx'
+WB1_ORDER = [SH_HOME, SH_BASE, SH_PARTY] + SRC_SHEETS + [SH_CASH, SH_INV, SH_CHK, SH_AUX]
+WB2_REPORTS = [SH_SUM, SH_CF, SH_BAL, SH_EXP, SH_CUS, SH_AR, SH_STMT, SH_INTRA, SH_INVS]
+SH_HOME2 = '报表首页'                               # 合并算数时用的名字；工作簿 2 里就叫「首页」
+WB2_MIRRORS = [SH_CASH, SH_INV, SH_BASE, SH_PARTY]   # 工作簿 2 里隐藏的取数表，跟工作簿 1 同名同位置
 
 # ─────────────────────────── 基础资料 ───────────────────────────
 BASE_HDR = 4
@@ -77,20 +86,37 @@ PT_R0, PT_R1 = 4, 603           # 600 个往来单位
  PT_N0, PT_N1, PT_N2) = 'A B C D E F G H I J K L M N'.split()      # L:N 隐藏：规范写法
 PT_TYPES = ['客户', '供应商', '个人', '税务银行', '股东', '其他']
 
-# ─────────────────────────── 资金台帐 ───────────────────────────
+# ─────────────────────────── 流水表（每个账户一张） ───────────────────────────
+S_LBL, S_AUTO, S_MAN, S_EFF = 4, 5, 6, 7            # 第 4～7 行：每样东西在第几列（标签 / 自动认的 / 手工改 / 实际用）
+S_HDR = 8                                           # 第 8 行：列标题
+S_R0, S_R1 = 9, 1508                                # 粘贴区 1500 行
+S_HSCAN = 40                                        # 表头只在粘贴区前 40 行里找
+S_RAW = [CL(i) for i in range(1, 21)]               # A～T：原样粘贴
+S_STAT, S_MP, S_MI, S_MN = 'U', 'V', 'W', 'X'       # 状态（自动）、往来单位 / 收支项目 / 备注（手工改）
+S_HF, S_OK, S_CUM = 'Y', 'AA', 'AB'                 # 隐藏：是不是表头、是不是流水行、累计第几笔
+S_HROW = 'U'                                        # U4～U7：表头在第几行（自动 / 手工 / 实际）
+# 字段（1～19），第 4～7 行 A～S 列一格一个
+FIELDS = ['日期', '时间', '收入', '支出', '单列金额', '收支标志', '余额', '对方账号', '对方户名', '开户行',
+          '摘要', '用途/备注', '支付方式', '状态', '单号', '往来单位(手工)', '收支项目(手工)', '备注(手工)', '账户列']
+FI = {n: i + 1 for i, n in enumerate(FIELDS)}
+N_DET = 15                                          # 前 15 个按表头自动认；后 4 个固定
+
+# ─────────────────────────── 资金台帐（自动合并，只读） ───────────────────────────
 J_HDR = 5
-J_R0, J_R1 = 6, 6005            # 6000 行（跨年一直往下记；快满了在中间插行，报表范围自动跟着变大）
+J_R0, J_R1 = 6, 6005            # 6000 笔
 (J_SEQ, J_ACC, J_TIME, J_IN, J_OUT, J_BANKBAL, J_OACCT, J_ONAME, J_OBANK, J_MEMO,
  J_MPARTY, J_MITEM, J_NOTE,
- J_DATE, J_CO, J_PARTY, J_PTYPE, J_CUS, J_SUP, J_ITEM, J_CLS, J_BAL, J_BCHK, J_CHK) = \
-    'A B C D E F G H I J K L M N O P Q R S T U V W X'.split()
+ J_DATE, J_CO, J_PARTY, J_PTYPE, J_CUS, J_SUP, J_ITEM, J_CLS, J_BAL, J_BCHK, J_CHK, J_GO) = \
+    'A B C D E F G H I J K L M N O P Q R S T U V W X Y'.split()
 # 隐藏辅助列
-(J_INV, J_OUTV, J_NET, J_AUTO, J_DUPK, J_TODO, J_TODO1, J_TODOC, J_SKEY, J_KW, J_APF) = \
-    'Y Z AA AB AC AD AE AF AG AH AI'.split()      # AI：付款算「冲应付」的类别（成本费用、投资）
-J_NESC, J_PESC = 'AJ', 'AK'     # 隐藏：对方户名规范写法、往来单位——都把 * ? ~ 转义（支付宝/微信打码的人名像「*丽」，不转义会当通配符）
-J_TS = 'AL'                     # 隐藏：交易时刻（秒，整数）——即时余额按时间先后算，倒序导出、后补的月份也对
-J_ARF = 'AM'                    # 隐藏：算不算往来（收入类、往来、内部划转、冲应付）——应收应付汇总、对账单、内部往来同一口径
-J_LAST_VIS = J_CHK
+(J_SRC, J_SROW, J_INV, J_OUTV, J_NET, J_TS, J_AUTO, J_NESC, J_PESC, J_KW, J_APF, J_ARF,
+ J_TODO, J_TODO1, J_TODOC, J_DUPK, J_BS, J_BE, J_RIN, J_ROUT, J_RONE, J_RFLAG, J_RPAY, J_RSTAT, J_RNO, J_RTIME,
+ J_SKIP, J_SKEY, J_FDIR, J_CIN, J_COUT, J_RBAL) = (
+    'Z AA AB AC AD AE AF AG AH AI AJ AK AL AM AN AO AP AQ AR AS AT AU AV AW AX AY AZ BA BB BC BD BE').split()
+J_LAST_VIS = J_GO
+J_MIRROR = [J_ACC, J_ONAME, J_MEMO, J_DATE, J_CO, J_PARTY, J_PTYPE, J_ITEM, J_CLS, J_BCHK, J_CHK,
+            J_INV, J_OUTV, J_NET, J_APF, J_ARF]          # 工作簿 2 要取的列
+J_MIRROR_NUM = {J_DATE, J_INV, J_OUTV, J_NET, J_APF, J_ARF}
 
 
 def jr(col):
@@ -112,6 +138,9 @@ V_TODO, V_TODO1, V_TODOC = 'AF', 'AG', 'AH'   # 隐藏：待登记单位
 V_SCO, V_BCO = 'AI', 'AJ'       # 隐藏：销方/购方是不是自家公司
 V_EFF, V_EAMT, V_ETAX = 'AK', 'AL', 'AM'   # 隐藏：有效（不重复、不作废）的价税合计 / 金额 / 税额
 V_SD, V_SE = 'AN', 'AO'         # 隐藏：往来对账单里这张票算「开票」多少、算「进项」多少（按对账单选的公司、单位）
+V_MIRROR = [V_NO, V_ENO, V_STAT, V_DATE, V_CO, V_DIR, V_PARTY, V_USE, V_DUP, V_ARV, V_APV, V_SCO, V_BCO,
+            V_EFF, V_EAMT, V_ETAX]
+V_MIRROR_NUM = {V_DATE, V_ARV, V_APV, V_EFF, V_EAMT, V_ETAX}
 
 
 def vr(col):
@@ -139,6 +168,22 @@ IT_CLSS = br(IT_CLS, IT_R0, IT_R1)
 
 # _辅助：下拉用的清单
 AUX_CO_ALL = f"{SH_AUX}!$A$1:$A$9"       # 全部 + 8 个公司
+# _辅助 E～AC：流水来源表（第 2～10 行一张表一行）：序号 表名 账户 笔数 偏移 字段1..19 取数方式
+AUX_R0 = 2
+AUX_R1 = AUX_R0 + N_SRC - 1
+AUX_SEQ, AUX_SHEET, AUX_ACC, AUX_CNT, AUX_OFF = 'E', 'F', 'G', 'H', 'I'
+AUX_MAP0 = 'J'                                   # J～AB：字段 1～19 的列号
+AUX_MODE = 'AC'                                  # 1＝收入/支出两列 2＝一列金额＋收支标志 3＝一列金额正收负支
+AUX_TOTAL = f"{SH_AUX}!${AUX_CNT}${AUX_R1 + 1}"
+AUX_ERR = f"{SH_AUX}!$B$1"                       # 数据校验要改的项数（工作簿 2 首页用）
+AUX_LAST = f"{SH_AUX}!$B$2"                      # 资金台帐最后一笔日期
+AUX_NROW = f"{SH_AUX}!$B$3"                      # 资金台帐笔数
+
+
+def aux_rng(col):
+    return f"{SH_AUX}!${col}${AUX_R0}:${col}${AUX_R1}"
+
+
 YEARS = '"2024,2025,2026,2027,2028,2029,2030"'
 
 
@@ -329,9 +374,9 @@ def selector(ws, cell_lbl, lbl, cell_in, value, dv_formula=None, fmt=None, promp
 
 def date_parse(x):
     """把粘贴进来的各种日期写法变成真日期（取日期部分）：
-       真日期/日期时间 → 取整；"2026-09-01 08:24:04" / "2026/9/1" / "2026.9.1" / "20260901" 文本 → 拆年月日。
+       真日期/日期时间 → 取整；"2026-09-01 08:24:04" / "2026/9/1" / "2026.9.1" / "2026年9月1日" / "20260901" 文本 → 拆年月日。
        只有纯 8 位数字才按 yyyymmdd 拆（"2026-9-1" 也是 8 个字，不能按位置拆）；小于 2000 年的数（比如只有时间）算看不懂"""
-    s = f'SUBSTITUTE(SUBSTITUTE(TRIM({x}),"/","-"),".","-")'
+    s = (f'SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(TRIM({x}),"/","-"),".","-"),"年","-"),"月","-"),"日"," ")')
     dp = f'LEFT({s},FIND(" ",{s}&" ")-1)'
     return (f'IF({x}="","",IF(ISNUMBER({x}),IF({x}>19000000,DATE(INT({x}/10000),MOD(INT({x}/100),100),MOD({x},100)),'
             f'IF({x}<36526,"",INT({x}))),'
