@@ -53,7 +53,8 @@ def build_check(wb, ctx):
         ('发票导入：重复粘贴的发票（只算一次）', f'=COUNTIF({vr(V_CHK)},"⚠ 重复*")', 'W', '不影响金额；想干净可以把重复的行删掉', SH_INV),
         ('发票导入：开了销项票、客户还没登记', f'=COUNTIF({vr(V_CHK)},"⚠ 客户没*")', 'W',
          '应收照算（在应收应付汇总最后一行「没登记的单位合计」）；登记后单独一行。名单见下面右边', SH_INV),
-        ('基础资料：资金账户没选所属公司', f'=SUMPRODUCT(({AC_NAMES}<>"")*({AC_COS}=""))', 'E', '【基础资料】② 选所属公司', SH_BASE),
+        ('基础资料：有流水的资金账户没选所属公司', f'=SUMPRODUCT(({AC_NAMES}<>"")*({AC_COS}="")*(COUNTIF({jr(J_ACC)},{AC_NAMES})>0))', 'E',
+         '【基础资料】② 选所属公司（还没流水的新账户可以先空着，有了流水再选）', SH_BASE),
         ('基础资料：资金账户的所属公司不在公司清单里',
          f'=SUMPRODUCT(({AC_COS}<>"")*(COUNTIF({CO_NAMES},{AC_COS})=0))', 'E', '公司简称要跟 ① 里写的一模一样', SH_BASE),
         ('基础资料：资金账户名称重复', f'=SUMPRODUCT(({AC_NAMES}<>"")*(COUNTIF({AC_NAMES},{AC_NAMES})>1))', 'E',
@@ -80,14 +81,14 @@ def build_check(wb, ctx):
         ('期初往来：单位没在【往来单位】登记',
          f'=SUMPRODUCT(({op_p}<>"")*(COUNTIF({PN},{op_p})=0)*(COUNTIF({CO_NAMES},{op_p})=0))', 'W',
          '期初照算进合计；登记后才会在应收应付里单独一行', SH_BASE),
-        ('资金台帐：已认出笔数（共 6000 笔）', f'={AUX_TOTAL}', 'C', '超过 5500 时提醒：一年一本，或者找我把容量加大', SH_CASH),
-        ('流水表：最满的一张用到第几行（每张 1500 行）', f'=MAX({SH_AUX}!$AE${AUX_R0}:$AE${AUX_R1})', 'C',
-         '超过 1400 时提醒：在那张表倒数几行中间右键「插入」若干行即可（不要在最后一行下面加）', SH_CASH),
-        ('发票导入：已用行数（3000 行）', f'=COUNTA({vr(V_ENO)})+COUNTA({vr(V_NO)})-SUMPRODUCT(({vr(V_ENO)}<>"")*({vr(V_NO)}<>""))',
-         'C', '超过 2700 行时提醒：在倒数几行中间右键「插入」若干行，再把上面一行整行复制粘贴下来', SH_INV),
+        (f'资金台帐：已认出笔数（共 {J_CAP} 笔）', f'={AUX_TOTAL}', 'C', f'超过 {J_CAP - 300} 时提醒：一年一本，或者找我把容量加大', SH_CASH),
+        (f'流水表：最满的一张用到第几行（每张 {S_CAP} 行）', f'=MAX({SH_AUX}!$AE${AUX_R0}:$AE${AUX_R1})', 'C',
+         f'超过 {S_CAP - 100} 时提醒：在那张表倒数几行中间右键「插入」若干行即可（不要在最后一行下面加）', SH_CASH),
+        (f'发票导入：已用行数（{V_CAP} 行）', f'=COUNTA({vr(V_ENO)})+COUNTA({vr(V_NO)})-SUMPRODUCT(({vr(V_ENO)}<>"")*({vr(V_NO)}<>""))',
+         'C', f'超过 {V_CAP - 200} 行时提醒：在倒数几行中间右键「插入」若干行，再把上面一行整行复制粘贴下来', SH_INV),
     ]
-    caps = {'资金台帐：已认出笔数（共 6000 笔）': 5500, '流水表：最满的一张用到第几行（每张 1500 行）': 1400,
-            '发票导入：已用行数（3000 行）': 2700}
+    caps = {f'资金台帐：已认出笔数（共 {J_CAP} 笔）': J_CAP - 300, f'流水表：最满的一张用到第几行（每张 {S_CAP} 行）': S_CAP - 100,
+            f'发票导入：已用行数（{V_CAP} 行）': V_CAP - 200}
     R0 = 5
     for k, (lab, f, lvl, how, where) in enumerate(checks):
         r = R0 + k
@@ -278,18 +279,19 @@ def build_home2(wb, ctx, name=SH_HOME):
     selector(ws, 'D6', '年份', 'E6', 2026, YEARS)
     ws.row_dimensions[6].height = 24
     cc, y = co_crit('$B$6'), '$E$6'
+    ci = coi_crit('$B$6')
     yc = year_crit(y)
 
     def net(cls, sign=+1):
         a, b = (J_INV, J_OUTV) if sign > 0 else (J_OUTV, J_INV)
-        return (f'SUMIFS({jr(a)},{jr(J_CLS)},"{cls}",{jr(J_CO)},{cc},{yc})'
-                f'-SUMIFS({jr(b)},{jr(J_CLS)},"{cls}",{jr(J_CO)},{cc},{yc})')
+        return (f'SUMIFS({jr(a)},{jr(J_CLS)},"{cls}",{jr(J_COI)},{ci},{yc})'
+                f'-SUMIFS({jr(b)},{jr(J_CLS)},"{cls}",{jr(J_COI)},{ci},{yc})')
     kpis = [
         ('本年收入', f'=ROUND({net(CLS_IN)},2)', MONEY),
         ('变动利润', f'=ROUND({net(CLS_IN)}-({net(CLS_VAR, -1)}),2)', MONEY),
         ('利润', f'=ROUND({net(CLS_IN)}-({net(CLS_VAR, -1)})-({net(CLS_FIX, -1)}),2)', MONEY),
-        ('本年新增客户', f'=COUNTIFS({jr(J_ITEM)},"新增",{jr(J_INV)},">0",{jr(J_CO)},{cc},{yc})', '0"个"'),
-        ('资金余额（现在）', f'=ROUND(SUMIFS({AC_OPENS},{AC_COS},{cc})+SUMIFS({jr(J_NET)},{jr(J_CO)},{cc}),2)', MONEY),
+        ('本年新增客户', f'=COUNTIFS({jr(J_ITEM)},"新增",{jr(J_INV)},">0",{jr(J_COI)},{ci},{yc})', '0"个"'),
+        ('资金余额（现在）', f'=ROUND(SUMIFS({AC_OPENS},{AC_COS},{cc})+SUMIFS({jr(J_NET)},{jr(J_COI)},{ci}),2)', MONEY),
         ('客户欠款＊', f'=ROUND(SUMIF({SH_AR}!$G${AR_R0}:$G${AR_R0 + AR_N},">0"),2)', MONEY),
         ('欠供应商＊', f'=ROUND(SUMIF({SH_AR}!$K${AR_R0}:$K${AR_R0 + AR_N},">0"),2)', MONEY),
         ('内部往来对不上', f'=COUNTIF({SH_INTRA}!$B${ctx["intra_chk"][0]}:$I${ctx["intra_chk"][1]},"差*")/2'

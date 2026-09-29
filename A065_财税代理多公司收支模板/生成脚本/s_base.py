@@ -32,9 +32,8 @@ def build_base(wb, ctx):
             put(ws, f'{c}{r}', None, F_IN, FILL_IN, align=AL if c in 'CE' else AC, fmt='@' if c == 'D' else None)
         ws[f'{CO_NORM}{r}'] = f'=IF({CO_FULL}{r}="","",{norm(CO_FULL + str(r))})'
         ws[f'{CO_NORM}{r}'].font = F_HELP
-    ws[f'B{CO_R0}'], ws[f'C{CO_R0}'], ws[f'D{CO_R0}'] = ctx['my_co']
-    for i, r in enumerate(range(CO_R0 + 1, CO_R0 + 5)):
-        ws[f'E{r}'] = f'第 {i + 2} 家：请填'
+    for i, co in enumerate(ctx['companies']):
+        ws[f'B{CO_R0 + i}'], ws[f'C{CO_R0 + i}'], ws[f'D{CO_R0 + i}'] = co
     hide(ws, CO_NORM)
     # ② 资金账户
     header(ws, BASE_HDR, [('H', '序号'), ('I', '账户名称（简称）'), ('J', '所属公司'), ('K', '类型'), ('L', '账号'), ('M', '开户行'),
@@ -53,11 +52,12 @@ def build_base(wb, ctx):
     ws[f'I{r}'], ws[f'J{r}'], ws[f'K{r}'], ws[f'L{r}'], ws[f'M{r}'] = ctx['my_acc'], ctx['my_co'][0], '银行', acc, '中国农业银行宁波五乡支行'
     ws[f'N{r}'], ws[f'O{r}'] = opening, dt.datetime(2026, 9, 1)
     ws[f'R{r}'] = '→【流水1】；期初＝9/1 第一笔之前的余额'
-    r += 1
-    ws[f'I{r}'], ws[f'K{r}'], ws[f'M{r}'] = '工行（新开户）', '银行', '中国工商银行'
-    ws[f'N{r}'], ws[f'R{r}'] = 0, '→【流水2】；新开户还没流水，选所属公司，账户名可以改成简称'
-    for j in range(3, N_IMP + 1):
-        ws[f'R{AC_R0 + j - 1}'] = f'→【流水{j}】：填账户名、所属公司、期初'
+    for k, (name, co, typ, no, bank, op, od, _, note) in enumerate(ctx['accounts']):
+        r = AC_R0 + 1 + k
+        ws[f'I{r}'], ws[f'J{r}'], ws[f'K{r}'], ws[f'L{r}'], ws[f'M{r}'] = name, co or None, typ, no or None, bank or None
+        ws[f'N{r}'], ws[f'R{r}'] = op, note
+        if od:
+            ws[f'O{r}'] = dt.datetime(*od)
     ws[f'R{AC_R0 + N_IMP}'] = '第 9 个起：现金等，在【手工记账】记'
     dv_list(ws, f'J{AC_R0}:J{AC_R1}', f'={CO_NAMES}', '这个账户是哪家公司的')
     dv_list(ws, f'K{AC_R0}:K{AC_R1}', '"银行,微信,支付宝,现金,其他"')
@@ -84,7 +84,7 @@ def build_base(wb, ctx):
     dv_list(ws, f'V{IT_R0}:V{IT_R1}', '"' + ','.join(CLS_ALL) + '"')
     # ④ 摘要关键词
     header(ws, BASE_HDR, [('Z', '序号'), ('AA', '关键词'), ('AB', '适用'), ('AC', '收支项目')], C_INV)
-    kws = [('费用外收', '支出', '银行手续费'), ('手续费', '支出', '银行手续费'), ('短信费', '支出', '银行手续费'),
+    kws = [('印花税', '支出', '税金'), ('税收', '支出', '税金'), ('社保', '支出', '人工-社保'), ('公积金', '支出', '人工-社保'), ('费用外收', '支出', '银行手续费'), ('手续费', '支出', '银行手续费'), ('短信费', '支出', '银行手续费'),
            ('年费', '支出', '银行手续费'), ('账户管理费', '支出', '银行手续费'), ('国库', '支出', '税金'),
            ('扣税', '支出', '税金'), ('税款', '支出', '税金'), ('结息', '收入', '其他收入'), ('利息', '支出', '贷款利息'),
            ('房租', '支出', '店面租金'), ('租金', '支出', '店面租金'), ('刻章', '收入', '刻章'), ('刻章', '支出', '刻章费用'),
@@ -181,8 +181,9 @@ def build_aux(wb, ctx, sources=True, link=''):
                                     f'IF(OR({m("收入")}>0,{m("支出")}>0),1,0)))')
             # AD：粘了东西却没认出日期或金额列；AE：粘贴区用到第几行（容量提醒）
             ws[f'AD{r}'] = (f"=IF(AND(COUNTA('{nm}'!$A${S_R0}:$T${S_R1})>0,OR({AUX_MAP0}{r}=0,{AUX_MODE}{r}=0)),1,0)")
+            ws[f'{AUX_FLIP}{r}'] = f"=IF('{nm}'!${S_DIRC}${S_EFF}=\"反向\",1,0)"
             ws[f'AE{r}'] = f"=IFERROR(LOOKUP(2,1/('{nm}'!$A${S_R0}:$A${S_R1}<>\"\"),ROW('{nm}'!$A${S_R0}:$A${S_R1}))-{S_R0 - 1},0)"
-        ws['AD1'], ws['AE1'] = '没认出格式', '用到第几行'
+        ws['AD1'], ws['AE1'], ws[f'{AUX_FLIP}1'] = '没认出格式', '用到第几行', '收支反向'
         ws[f'{AUX_CNT}{AUX_R1 + 1}'] = f'=SUM({AUX_CNT}{AUX_R0}:{AUX_CNT}{AUX_R1})'
     else:
         for c in ('B1', 'B2', 'B3'):

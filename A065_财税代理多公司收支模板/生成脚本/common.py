@@ -41,7 +41,7 @@ WB2_MIRRORS = [SH_CASH, SH_INV, SH_BASE, SH_PARTY]   # 工作簿 2 里隐藏的�
 
 # ─────────────────────────── 基础资料 ───────────────────────────
 BASE_HDR = 4
-CO_R0, CO_R1 = 5, 12            # 公司 8 行（你现在 5 家）
+CO_R0, CO_R1 = 5, 12            # 公司 8 行（现在 5 家）
 CO_SEQ, CO_NAME, CO_FULL, CO_TAX, CO_NOTE, CO_NORM = 'A', 'B', 'C', 'D', 'E', 'F'   # F 隐藏：全称规范写法
 AC_R0, AC_R1 = 5, 24            # 资金账户 20 行（你现在 15 个）
 AC_SEQ, AC_NAME, AC_CO, AC_TYPE, AC_NO, AC_BANK, AC_OPEN, AC_ODATE, AC_NOW, AC_LAST, AC_NOTE = \
@@ -89,11 +89,14 @@ PT_TYPES = ['客户', '供应商', '个人', '税务银行', '股东', '其他']
 # ─────────────────────────── 流水表（每个账户一张） ───────────────────────────
 S_LBL, S_AUTO, S_MAN, S_EFF = 4, 5, 6, 7            # 第 4～7 行：每样东西在第几列（标签 / 自动认的 / 手工改 / 实际用）
 S_HDR = 8                                           # 第 8 行：列标题
-S_R0, S_R1 = 9, 1508                                # 粘贴区 1500 行
+S_R0, S_R1 = 9, 1008                                # 粘贴区 1000 行（一年的量；个人微信一个月六七十笔也够）
 S_HSCAN = 40                                        # 表头只在粘贴区前 40 行里找
 S_RAW = [CL(i) for i in range(1, 21)]               # A～T：原样粘贴
 S_STAT, S_MP, S_MI, S_MN = 'U', 'V', 'W', 'X'       # 状态（自动）、往来单位 / 收支项目 / 备注（手工改）
 S_HF, S_OK, S_CUM = 'Y', 'AA', 'AB'                 # 隐藏：是不是表头、是不是流水行、累计第几笔
+S_X, S_B, S_VOTE = 'AC', 'AD', 'AE'                 # 隐藏：收入−支出、余额、这一行跟上一行的余额说明借贷方向正常(+1)/反了(-1)
+S_NVOTE = 60                                        # 收支方向只看粘贴区前 60 行（一份导出文件的头几十笔就够判断）
+S_DIRC = 'T'                                        # T4～T7：收支方向（自动 / 手工 / 实际）：正常 / 反向（借方＝进账的银行）
 S_HROW = 'U'                                        # U4～U7：表头在第几行（自动 / 手工 / 实际）
 # 字段（1～19），第 4～7 行 A～S 列一格一个
 FIELDS = ['日期', '时间', '收入', '支出', '单列金额', '收支标志', '余额', '对方账号', '对方户名', '开户行',
@@ -103,7 +106,7 @@ N_DET = 15                                          # 前 15 个按表头自动�
 
 # ─────────────────────────── 资金台帐（自动合并，只读） ───────────────────────────
 J_HDR = 5
-J_R0, J_R1 = 6, 6005            # 6000 笔
+J_R0, J_R1 = 6, 3005            # 3000 笔（一年一本）
 (J_SEQ, J_ACC, J_TIME, J_IN, J_OUT, J_BANKBAL, J_OACCT, J_ONAME, J_OBANK, J_MEMO,
  J_MPARTY, J_MITEM, J_NOTE,
  J_DATE, J_CO, J_PARTY, J_PTYPE, J_CUS, J_SUP, J_ITEM, J_CLS, J_BAL, J_BCHK, J_CHK, J_GO) = \
@@ -111,8 +114,9 @@ J_R0, J_R1 = 6, 6005            # 6000 笔
 # 隐藏辅助列
 (J_SRC, J_SROW, J_INV, J_OUTV, J_NET, J_TS, J_AUTO, J_NESC, J_PESC, J_KW, J_APF, J_ARF,
  J_TODO, J_TODO1, J_TODOC, J_DUPK, J_BS, J_BE, J_RIN, J_ROUT, J_RONE, J_RFLAG, J_RPAY, J_RSTAT, J_RNO, J_RTIME,
- J_SKIP, J_SKEY, J_FDIR, J_CIN, J_COUT, J_RBAL) = (
-    'Z AA AB AC AD AE AF AG AH AI AJ AK AL AM AN AO AP AQ AR AS AT AU AV AW AX AY AZ BA BB BC BD BE').split()
+ J_SKIP, J_SKEY, J_FDIR, J_CIN, J_COUT, J_RBAL, J_BASE, J_YM, J_COI) = (
+    'Z AA AB AC AD AE AF AG AH AI AJ AK AL AM AN AO AP AQ AR AS AT AU AV AW AX AY AZ BA BB BC BD BE BF BG BH').split()
+J_CAP = J_R1 - J_R0 + 1
 J_LAST_VIS = J_GO
 J_MIRROR = [J_ACC, J_ONAME, J_MEMO, J_DATE, J_CO, J_PARTY, J_PTYPE, J_ITEM, J_CLS, J_BCHK, J_CHK,
             J_INV, J_OUTV, J_NET, J_APF, J_ARF]          # 工作簿 2 要取的列
@@ -125,7 +129,9 @@ def jr(col):
 
 # ─────────────────────────── 发票导入 ───────────────────────────
 V_HDR = 4
-V_R0, V_R1 = 5, 3004            # 3000 张
+V_R0, V_R1 = 5, 2004            # 2000 张
+V_CAP = V_R1 - V_R0 + 1
+S_CAP = S_R1 - S_R0 + 1
 # A..S：跟电子税务局导出的「发票基础信息」一模一样（整块粘贴）
 V_RAW = ['序号', '发票代码', '发票号码', '数电发票号码', '销方识别号', '销方名称', '购方识别号', '购买方名称', '开票日期',
          '金额', '税额', '价税合计', '发票来源', '发票票种', '发票状态', '是否正数发票', '发票风险等级', '开票人', '备注']
@@ -174,6 +180,7 @@ AUX_R1 = AUX_R0 + N_SRC - 1
 AUX_SEQ, AUX_SHEET, AUX_ACC, AUX_CNT, AUX_OFF = 'E', 'F', 'G', 'H', 'I'
 AUX_MAP0 = 'J'                                   # J～AB：字段 1～19 的列号
 AUX_MODE = 'AC'                                  # 1＝收入/支出两列 2＝一列金额＋收支标志 3＝一列金额正收负支
+AUX_FLIP = 'AF'                                  # 1＝收入、支出两列反了（借方＝进账）
 AUX_TOTAL = f"{SH_AUX}!${AUX_CNT}${AUX_R1 + 1}"
 AUX_ERR = f"{SH_AUX}!$B$1"                       # 数据校验要改的项数（工作簿 2 首页用）
 AUX_LAST = f"{SH_AUX}!$B$2"                      # 资金台帐最后一笔日期
@@ -195,6 +202,11 @@ def norm(x):
 def co_crit(sel):
     """公司选择格 → SUMIFS 条件：选「全部」就是 "?*"（任何非空公司；"*" 在 Excel 里连公式算出的空文本也算进去）"""
     return f'IF({sel}="全部","?*",{sel})'
+
+
+def coi_crit(sel):
+    """公司选择格 → 资金台帐「公司序号」列的条件：全部＝">0"，单家＝它在 ① 里第几行（按数字比，比按名字 / 通配符快）"""
+    return f'IF({sel}="全部",">0",IFERROR(MATCH({sel},{CO_NAMES},0),-1))'
 
 
 def esc(x):

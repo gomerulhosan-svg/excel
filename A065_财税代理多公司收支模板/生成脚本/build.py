@@ -43,7 +43,9 @@ def make_ctx():
     acct, opening, rows = data_prep.bank_rows()
     sales = data_prep.invoice_rows(data_prep.F_SALE)
     buys = data_prep.invoice_rows(data_prep.F_BUY)
+    samples = {j: data_prep.sample_raw(a[7]) for j, a in enumerate(data_prep.ACCOUNTS, 2) if a[7]}
     return {'my_co': data_prep.MY_CO, 'my_acc': data_prep.MY_ACC, 'bank': (acct, opening, rows),
+            'companies': data_prep.COMPANIES, 'accounts': data_prep.ACCOUNTS, 'samples': samples,
             'bank_raw': data_prep.bank_raw(), 'sales': sales, 'buys': buys,
             'parties': data_prep.parties(rows, sales, buys)}
 
@@ -67,7 +69,9 @@ def finish(wb, order):
         ws.sheet_view.tabSelected = False
     wb.active = 0
     wb.worksheets[0].sheet_view.tabSelected = True
-    wb.calculation.fullCalcOnLoad = True
+    # 打开时不强制整本重算：成品里已经写好了算出来的数（Excel/WPS 改了哪格只重算受影响的格子）
+    wb.calculation.fullCalcOnLoad = False
+    wb.calculation.calcId = 191029
 
 
 def build_wb1(ctx, composite=False):

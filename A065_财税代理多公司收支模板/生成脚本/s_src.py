@@ -21,7 +21,7 @@ PAT = {
     '对方户名': ['对方户名', '对方名称', '对方单位', '对方账户名', '对方账户名称', '对方单位名称', '交易对方', '收/付款方',
              '*对方户名*', '*交易对方*', '*对方*单位*', '*对方*名称*'],
     '开户行': ['对方开户行', '对方行名', '对方开户机构', '对方开户银行', '对方银行', '*对方*开户*', '*对方*行名*'],
-    '摘要': ['摘要', '交易摘要', '交易类型', '交易分类', '*摘要*'],
+    '摘要': ['摘要', '交易摘要', '交易类型', '交易分类', '动账类型', '业务类型', '*摘要*'],
     '用途/备注': ['用途', '附言', '交易附言', '商品', '商品说明', '备注', '交易备注', '*用途*', '*附言*', '*商品*'],
     '支付方式': ['支付方式', '收/付款方式', '*付款方式*', '*支付方式*'],
     '状态': ['当前状态', '交易状态', '*状态*'],
@@ -63,6 +63,7 @@ def build_src(wb, ctx, j):
                   f'以后每次导出的新流水粘到下面第一个空行，表头、标题、合计行粘进来也没关系，会自动跳过。'
                   f'认出来的每一笔自动进【资金台帐】，U 列显示结果；✗ 的就在同一行 V 列选往来单位、W 列选收支项目（跟着这一笔走）。'
                   f'第 5 行是自动认的列号，认错了在第 6 行填正确的列号（A 列＝1，B 列＝2……）。'
+                  f'有的银行「借方」是进账（跟一般银行反着），按余额自动判断，T 列显示「正常 / 反向」，判断错了在 T6 选。'
                   f'微信、支付宝里用银行卡付的钱（银行流水里已经有）、交易关闭的、零钱通来回倒的会自动跳过，免得记两次。',
         F_TIP, FILL_TIP, align=ALW, border=False)
     ws.row_dimensions[2].height = 64
@@ -82,7 +83,8 @@ def build_src(wb, ctx, j):
                   f'"还没有流水：第一次导出后整份粘到 A{S_R0}（连表头），会自动认格式",'
                   f'"✗ 前 {S_HSCAN} 行里没找到表头（要有「日期/时间」和「金额/收入/支出」那一行）：在 U6 填表头在第几行，或者第 6 行直接填列号"),'
                   f'"表头在第 "&${S_HROW}${S_EFF}&" 行 → "&{show("日期")}&{show("收入")}&{show("支出")}&{show("单列金额")}&{show("收支标志")}'
-                  f'&{show("余额")}&{show("对方户名")}&{show("摘要")}&IF(AND({e("日期")}>0,OR(AND({e("收入")}>0,{e("支出")}>0),{e("单列金额")}>0)),"✓","✗ 缺日期或金额列"))',
+                  f'&{show("余额")}&{show("对方户名")}&{show("摘要")}&IF(AND({e("日期")}>0,OR(AND({e("收入")}>0,{e("支出")}>0),{e("单列金额")}>0)),"✓","✗ 缺日期或金额列")'
+                  f'&IF(${S_DIRC}${S_EFF}="反向","　收支方向：反向（"&CHAR(64+{e("支出")})&" 列是进账，按余额认的）",""))',
         F_AUTOB, fill('FFF2F2F2'), align=AL)
     for c in range(CI('I'), CI(S_MN) + 1):
         ws.cell(3, c).border = BD
@@ -100,6 +102,14 @@ def build_src(wb, ctx, j):
     put(ws, f'{S_HROW}{S_AUTO}', f'=IFERROR(MATCH(1,{hscan},0)+{S_R0 - 1},0)', F_AUTO, FILL_AUTO, align=AC)
     put(ws, f'{S_HROW}{S_MAN}', None, F_IN, FILL_IN, align=AC)
     put(ws, f'{S_HROW}{S_EFF}', f'=IF(N({S_HROW}{S_MAN})>0,{S_HROW}{S_MAN},{S_HROW}{S_AUTO})', F_AUTOB, FILL_AUTO, align=AC)
+    # T4～T7：收支方向（两列金额时按余额判断：大多数银行 贷方＝进账，有的银行反过来 借方＝进账）
+    put(ws, f'{S_DIRC}{S_LBL}', '收支方向', F_HDR, fill('FF7F7F7F'), align=ACW)
+    vote = f'${S_VOTE}${S_R0}:${S_VOTE}${S_R0 + S_NVOTE - 1}'
+    put(ws, f'{S_DIRC}{S_AUTO}', f'=IF(AND(${CL(FI["收入"])}${S_EFF}>0,${CL(FI["支出"])}${S_EFF}>0,SUM({vote})<0),"反向","正常")',
+        F_AUTO, FILL_AUTO, align=AC)
+    put(ws, f'{S_DIRC}{S_MAN}', None, F_IN, FILL_IN, align=AC)
+    put(ws, f'{S_DIRC}{S_EFF}', f'=IF({S_DIRC}{S_MAN}<>"",{S_DIRC}{S_MAN},{S_DIRC}{S_AUTO})', F_AUTOB, FILL_AUTO, align=AC)
+    dv_list(ws, f'{S_DIRC}{S_MAN}', '"正常,反向"', '一般不用选：自动按余额判断。反向＝「支出/借方」那列其实是进账', stop=True)
     hrow = f'INDEX($A$1:$T${S_R1},${S_HROW}${S_EFF},0)'
     for n, col in L.items():
         k = FI[n]
@@ -145,7 +155,7 @@ def _data_area(ws, ctx, j, name, e, manual=False):
             continue
         put(ws, f'{c}{S_HDR}', t, F_HDR, fill(colr), align=ACW)
     ws.row_dimensions[S_HDR].height = 32
-    for c, t in ((S_HF, '表头?'), (S_OK, '流水行?'), (S_CUM, '累计')):
+    for c, t in ((S_HF, '表头?'), (S_OK, '流水行?'), (S_CUM, '累计'), (S_X, '收−支'), (S_B, '余额'), (S_VOTE, '方向')):
         ws[f'{c}{S_HDR}'] = t
         ws[f'{c}{S_HDR}'].font = F_HELP
     ws[f'{S_CUM}{S_HDR}'] = 0                                # 累计从 0 起（资金台帐二分查找用）
@@ -164,6 +174,21 @@ def _data_area(ws, ctx, j, name, e, manual=False):
             ok = f'IF($A{r}="",0,{ok})'
         ws[f'{S_OK}{r}'] = '=' + ok
         ws[f'{S_CUM}{r}'] = f'={S_CUM}{r - 1}+{S_OK}{r}'
+        if not manual and r < S_R0 + S_NVOTE:
+            ci, co_, cb = e('收入'), e('支出'), e('余额')
+            v = lambda c: f'INDEX({row},1,{c})'
+            ws[f'{S_X}{r}'] = f'=IF(AND({S_OK}{r}=1,{ci}>0,{co_}>0),{num(v(ci))}-{num(v(co_))},"")'
+            ws[f'{S_B}{r}'] = f'=IF(AND({S_OK}{r}=1,{cb}>0),IF({v(cb)}&""="","",{num(v(cb))}),"")'
+            if r == S_R0:
+                ws[f'{S_VOTE}{r}'] = 0
+            else:
+                x0, x1, b0, b1 = f'{S_X}{r}', f'{S_X}{r - 1}', f'{S_B}{r}', f'{S_B}{r - 1}'
+                d = f'({b0}-{b1})'
+                ws[f'{S_VOTE}{r}'] = (f'=IF(OR({x0}="",{x1}="",{b0}="",{b1}=""),0,'
+                                      f'IF(ABS(ABS{d}-ABS({x0}))<0.005,SIGN({d}*{x0}),0)'
+                                      f'+IF(ABS(ABS{d}-ABS({x1}))<0.005,-SIGN({d}*{x1}),0))')
+            for c in (S_X, S_B, S_VOTE):
+                ws[f'{c}{r}'].font = F_HELP
         ws[f'{S_STAT}{r}'] = (f'=IF({S_OK}{r}=1,IFERROR(INDEX({SH_CASH}!${J_CHK}${J_R0}:${J_CHK}${J_R1},{off}+{S_CUM}{r}),""),'
                               + (f'IF(N({S_HF}{r})=1,"（表头）",""))' if (r < S_R0 + S_HSCAN and not manual) else '"")'))
         for c in (S_HF, S_OK, S_CUM):
@@ -182,7 +207,7 @@ def _data_area(ws, ctx, j, name, e, manual=False):
     ws.conditional_formatting.add(rng, FormulaRule(formula=[f'LEFT(${S_STAT}{S_R0},1)="⚠"'], fill=fill('FFFFEB9C')))
     ws.conditional_formatting.add(rng, FormulaRule(formula=[f'LEFT(${S_STAT}{S_R0},1)="√"'],
                                                    font=Font(name=YH, sz=10, bold=True, color='FF00B050')))
-    hide(ws, S_HF, 'Z', S_OK, S_CUM)
+    hide(ws, S_HF, 'Z', S_OK, S_CUM, S_X, S_B, S_VOTE)
     ws.freeze_panes = f'A{S_R0}'
 
 
@@ -207,6 +232,7 @@ def build_man(wb, ctx):
         ws[f'{col}{S_EFF}'] = MAN_MAP.get(n, 0)
         ws[f'{col}{S_LBL}'].font = ws[f'{col}{S_EFF}'].font = F_HELP
     ws[f'{S_HROW}{S_EFF}'] = S_HDR
+    ws[f'{S_DIRC}{S_EFF}'] = '正常'
     for r in range(3, S_EFF + 1):
         ws.row_dimensions[r].hidden = True
     e = lambda n: f'${L[n]}${S_EFF}'
@@ -240,10 +266,11 @@ def build_all(wb, ctx):
         build_src(wb, ctx, j)
     build_man(wb, ctx)
     define_names(wb)
-    # 演示：流水1 放你发来的农行导出文件原样
-    ws = wb[SRC_SHEETS[0]]
-    for i, row in enumerate(ctx['bank_raw']):
-        for k, v in enumerate(row):
-            c = ws.cell(row=S_R0 + i, column=k + 1, value=v)
-            if isinstance(v, str) and v.isdigit():
-                c.number_format = '@'
+    # 演示：流水1 放农行2896 导出文件原样；流水3～8 放你 9/29 发来的几份样表原样（流水2 工行新开户空着）
+    for j, raw in [(1, ctx['bank_raw'])] + [(j, rows) for j, rows in ctx['samples'].items()]:
+        ws = wb[SRC_SHEETS[j - 1]]
+        for i, row in enumerate(raw):
+            for k, v in enumerate(row[:len(S_RAW)]):
+                c = ws.cell(row=S_R0 + i, column=k + 1, value=v)
+                if isinstance(v, str) and v.isdigit():
+                    c.number_format = '@'

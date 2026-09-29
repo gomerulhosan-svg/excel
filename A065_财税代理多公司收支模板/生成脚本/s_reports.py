@@ -5,6 +5,7 @@ import datetime as dt
 from common import *
 
 MCOLS = [CL(3 + i) for i in range(12)]     # C..N：1～12 月
+Q = '"'                                    # 公式里的双引号（嵌在 f-string 里用）
 
 
 def _yr(y, m=1, add=0):
@@ -21,6 +22,16 @@ def month_crit(y, m):
 
 def year_crit(y):
     return f'{jr(J_DATE)},">="&DATE({y},1,1),{jr(J_DATE)},"<"&DATE({y}+1,1,1)'
+
+
+def ym_crit(y, m):
+    """某年某月：资金台帐的「年月」列（YYYYMM 一个数）等于它——比「日期 ≥ 月初、< 下月初」两个条件快"""
+    return f'{jr(J_YM)},{y}*100+{m}'
+
+
+def net(crit, sign=1):
+    """净额（收 − 支）一次求和；sign=-1 是「支 − 收」（成本费用类）"""
+    return f'{"" if sign > 0 else "-"}SUMIFS({jr(J_NET)},{crit})'
 
 
 def _sel_block(ws, y_default=2026, co=True, yr=True, extra=None):
@@ -40,6 +51,7 @@ def build_sum(wb, ctx):
           '收入类＝收进来减退出去；成本费用类＝付出去减退回来。账户互转、内部公司之间划转不算收入支出（最下面单列）。')
     _sel_block(ws)
     cc, y = co_crit('$C$3'), '$F$3'
+    ci = coi_crit('$C$3')
     header(ws, 4, [('A', '收支类型'), ('B', '项目')] + [(c, f'{i + 1}月') for i, c in enumerate(MCOLS)] +
            [('O', '全年合计'), ('P', '占收入')], C_RPT)
     ws['Q4'] = '项目名'
@@ -48,8 +60,7 @@ def build_sum(wb, ctx):
     rows = {}
 
     def flow_cell(crit, sign):
-        a, b = (J_INV, J_OUTV) if sign > 0 else (J_OUTV, J_INV)
-        return f'SUMIFS({jr(a)},{crit})-SUMIFS({jr(b)},{crit})'
+        return net(crit, sign)
 
     def item_row(r, cls, item, sign, grp_fill):
         """一个项目一行：名字从【基础资料】③ 那一行取（改名跟着变），按「项目＋类别」求和"""
@@ -58,7 +69,7 @@ def build_sum(wb, ctx):
         ws[f'Q{r}'] = f'={SH_BASE}!$U${k}&""'
         ws[f'Q{r}'].font = F_HELP
         for i, c in enumerate(MCOLS):
-            base = f'{jr(J_ITEM)},$Q{r},{jr(J_CLS)},"{cls}",{jr(J_CO)},{cc},{month_crit(y, i + 1)}'
+            base = f'{jr(J_ITEM)},$Q{r},{jr(J_CLS)},"{cls}",{jr(J_COI)},{ci},{ym_crit(y, i + 1)}'
             put(ws, f'{c}{r}', f'=ROUND({flow_cell(base, sign)},2)', F_AUTO, grp_fill, MONEY, AR)
         put(ws, f'O{r}', f'=ROUND(SUM(C{r}:N{r}),2)', F_AUTOB, grp_fill, MONEY, AR)
 
@@ -70,7 +81,7 @@ def build_sum(wb, ctx):
         n_orig = len(dict(ITEMS)[cls])
         put(ws, f'B{r}', f'=IF(COUNTIFS({IT_CLSS},"{cls}",{IT_NAMES},"?*")>{n_orig},"其他（含新加项目）","其他")', F_TXT, grp_fill, align=AC)
         for i, c in enumerate(MCOLS):
-            base = f'{jr(J_CLS)},"{cls}",{jr(J_CO)},{cc},{month_crit(y, i + 1)}'
+            base = f'{jr(J_CLS)},"{cls}",{jr(J_COI)},{ci},{ym_crit(y, i + 1)}'
             put(ws, f'{c}{r}', f'=ROUND({flow_cell(base, sign)}-SUM({c}{g0}:{c}{r - 1}),2)' if r > g0 else f'=ROUND({flow_cell(base, sign)},2)',
                 F_AUTO, grp_fill, MONEY, AR)
         put(ws, f'O{r}', f'=ROUND(SUM(C{r}:N{r}),2)', F_AUTOB, grp_fill, MONEY, AR)
@@ -79,7 +90,7 @@ def build_sum(wb, ctx):
         """整类一行（实收资本、投资、往来、内部划转、账户互转）"""
         put(ws, f'B{r}', label, F_TXT, grp_fill, align=AC)
         for i, c in enumerate(MCOLS):
-            base = f'{jr(J_CLS)},"{cls}",{jr(J_CO)},{cc},{month_crit(y, i + 1)}'
+            base = f'{jr(J_CLS)},"{cls}",{jr(J_COI)},{ci},{ym_crit(y, i + 1)}'
             put(ws, f'{c}{r}', f'=ROUND({flow_cell(base, sign)},2)', F_AUTO, grp_fill, MONEY, AR)
         put(ws, f'O{r}', f'=ROUND(SUM(C{r}:N{r}),2)', F_AUTOB, grp_fill, MONEY, AR)
 
@@ -133,7 +144,7 @@ def build_sum(wb, ctx):
     put(ws, f'A{r}', '参考', F_NOTE, align=AC)
     put(ws, f'B{r}', '未定收支项目', F_TXT, FILL_AUTO, align=AC)
     for i, c in enumerate(MCOLS):
-        base = f'{jr(J_CO)},{cc},{month_crit(y, i + 1)}'
+        base = f'{jr(J_COI)},{ci},{ym_crit(y, i + 1)}'
         put(ws, f'{c}{r}', f'=ROUND(SUMIFS({jr(J_NET)},{base})-SUMIFS({jr(J_NET)},{jr(J_CLS)},"?*",{base})+SUMIFS({jr(J_NET)},{jr(J_CLS)},"？",{base}),2)',
             F_RED, FILL_AUTO, MONEY, AR)
     put(ws, f'O{r}', f'=ROUND(SUM(C{r}:N{r}),2)', F_RED, FILL_AUTO, MONEY, AR)
@@ -152,10 +163,10 @@ def build_sum(wb, ctx):
 
 
 # ─────────────────────────────── 简易现金流量表 ───────────────────────────────
-def _open_bal(cc, d):
+def _open_bal(cc, ci, d):
     """某天开始时的资金余额（该公司所有账户）：建账日期在这天之前（或没填建账日期）的期初 ＋ 这天之前的收支"""
     return (f'(SUMIFS({AC_OPENS},{AC_COS},{cc})-SUMIFS({AC_OPENS},{AC_COS},{cc},{AC_ODATES},">="&{d})'
-            f'+SUMIFS({jr(J_NET)},{jr(J_CO)},{cc},{jr(J_DATE)},"<"&{d}))')
+            f'+SUMIFS({jr(J_NET)},{jr(J_COI)},{ci},{jr(J_DATE)},"<"&{d}))')
 
 
 def _new_acc(cc, d0, d1):
@@ -171,17 +182,15 @@ def build_cf(wb, ctx):
           '最下面一行跟账户余额核对。选公司看单家时，自家公司之间的内部划转算流入流出；选「全部」时内部划转两边抵掉。')
     _sel_block(ws)
     cc, y = co_crit('$C$3'), '$F$3'
+    ci = coi_crit('$C$3')
     MC = [CL(2 + i) for i in range(12)]
     header(ws, 4, [('A', '项　　目')] + [(c, f'{i + 1}月') for i, c in enumerate(MC)] + [('N', '全年')], C_RPT)
 
     def flow(c, cls, sign, i=None):
-        """sign=+1: 收−支（流入为正）；-1: 支−收（流出为正）"""
+        """sign=+1: 收−支（流入为正）；-1: 支−收（流出为正）；全年＝12 个月加起来"""
         if c == 'N':
-            crit = f'{jr(J_CLS)},"{cls}",{jr(J_CO)},{cc},{year_crit(y)}' if cls else None
-        else:
-            crit = f'{jr(J_CLS)},"{cls}",{jr(J_CO)},{cc},{month_crit(y, i + 1)}'
-        a, b = (J_INV, J_OUTV) if sign > 0 else (J_OUTV, J_INV)
-        return f'ROUND(SUMIFS({jr(a)},{crit})-SUMIFS({jr(b)},{crit}),2)'
+            return f'ROUND(SUM({MC[0]}{{r}}:{MC[-1]}{{r}}),2)'
+        return f'ROUND({net(f"{jr(J_CLS)},{Q}{cls}{Q},{jr(J_COI)},{ci},{ym_crit(y, i + 1)}", sign)},2)'
 
     lines = [
         ('open', '一、期初资金余额', 'open'),
@@ -222,18 +231,21 @@ def build_cf(wb, ctx):
             if kind is None:
                 v = None
             elif kind == 'open':
-                v = f'=ROUND({_open_bal(cc, d0)},2)'
+                # 1 月（和全年）按日期算；2～12 月＝上个月的期末（少算好多遍）
+                v = f'=ROUND({_open_bal(cc, ci, d0)},2)' if c in ('B', 'N') else f'={MC[i - 1]}{at["end"]}'
+            elif kind in ('new', 'un') and c == 'N':
+                v = f'=ROUND(SUM({MC[0]}{r}:{MC[-1]}{r}),2)'
             elif kind == 'new':
                 v = f'=ROUND({_new_acc(cc, d0, d1)},2)'
             elif kind == 'un':
-                crit = f'{jr(J_CO)},{cc},' + (year_crit(y) if c == 'N' else month_crit(y, i + 1))
+                crit = f'{jr(J_COI)},{ci},{ym_crit(y, i + 1)}'
                 v = f'=ROUND(SUMIFS({jr(J_NET)},{crit})-SUMIFS({jr(J_NET)},{jr(J_CLS)},"?*",{crit})+SUMIFS({jr(J_NET)},{jr(J_CLS)},"？",{crit}),2)'
             elif kind == 'chk':
-                v = f'=ROUND(SUM({c}{HR0}:{c}{HR0 + NACC - 1})+SUMIFS({jr(J_NET)},{jr(J_CO)},{cc},{jr(J_DATE)},"<"&{d1}),2)'
+                v = f'=ROUND(SUM({c}{HR0}:{c}{HR0 + NACC - 1})+SUMIFS({jr(J_NET)},{jr(J_COI)},{ci},{jr(J_DATE)},"<"&{d1}),2)'
             elif kind == 'ok':
                 v = (f'=IF(ABS({c}{at["end"]}-{c}{at["chk"]})<0.01,"✓","✗ 差 "&TEXT({c}{at["end"]}-{c}{at["chk"]},"#,##0.00"))')
             elif kind[0] == 'flow':
-                v = '=' + flow(c, kind[1], kind[2], i)
+                v = '=' + flow(c, kind[1], kind[2], i).replace('{r}', str(r))
             else:
                 v = '=ROUND(' + '+'.join(f'{"-" if s < 0 else ""}{c}{at[j]}' for s, j in kind[1]) + ',2)'
             if v is not None:
@@ -332,7 +344,7 @@ def build_exp(wb, ctx):
     selector(ws, 'B3', '年份', 'C3', 2026, YEARS)
     selector(ws, 'E3', '从几月', 'F3', 1, '"1,2,3,4,5,6,7,8,9,10,11,12"')
     selector(ws, 'H3', '到几月', 'I3', 12, '"1,2,3,4,5,6,7,8,9,10,11,12"')
-    per = f'{jr(J_DATE)},">="&DATE($C$3,$F$3,1),{jr(J_DATE)},"<"&DATE($C$3,$I$3+1,1)'
+    per = f'{jr(J_YM)},">="&($C$3*100+$F$3),{jr(J_YM)},"<="&($C$3*100+$I$3)'
     header(ws, 4, [('A', '类别'), ('B', '项目')] + [(c, f'=IF({SH_BASE}!$B${CO_R0 + i}="","",{SH_BASE}!$B${CO_R0 + i})')
                                                   for i, c in enumerate(CC)] + [('K', '合计')], C_RPT)
     ws['L4'] = '项目名'
@@ -343,7 +355,6 @@ def build_exp(wb, ctx):
     for cls, sign, col in ((CLS_IN, +1, C_IN), (CLS_VAR, -1, C_VAR), (CLS_FIX, -1, C_FIX), (CLS_OTH, -1, C_MISC)):
         g0 = r
         fl = fill(col)
-        a, b = (J_INV, J_OUTV) if sign > 0 else (J_OUTV, J_INV)
         names = items_by_cls[cls]
         last_other = names[-1] if names[-1] in ('其他收入', '其他成本') else None
         for it in [n for n in names if n != last_other] + ['__rest__']:
@@ -360,13 +371,13 @@ def build_exp(wb, ctx):
                 put(ws, f'B{r}', f'=IF(COUNTIFS({IT_CLSS},"{cls}",{IT_NAMES},"?*")>{len(names)},"其他（含新加项目）","其他")',
                     F_TXT, fl, align=AC)
             ws[f'L{r}'].font = F_HELP
-            for c in CC:
+            for k_, c in enumerate(CC):
                 if rest:
-                    base = f'{jr(J_CLS)},"{cls}",{jr(J_CO)},{c}$4,{per}'
-                    v = f'SUMIFS({jr(a)},{base})-SUMIFS({jr(b)},{base})-SUM({c}{g0}:{c}{r - 1})'
+                    base = f'{jr(J_CLS)},"{cls}",{jr(J_COI)},{k_ + 1},{per}'
+                    v = f'{net(base, sign)}-SUM({c}{g0}:{c}{r - 1})'
                 else:
-                    base = f'{jr(J_ITEM)},$L{r},{jr(J_CLS)},"{cls}",{jr(J_CO)},{c}$4,{per}'
-                    v = f'SUMIFS({jr(a)},{base})-SUMIFS({jr(b)},{base})'
+                    base = f'{jr(J_ITEM)},$L{r},{jr(J_CLS)},"{cls}",{jr(J_COI)},{k_ + 1},{per}'
+                    v = net(base, sign)
                 put(ws, f'{c}{r}', f'=IF({c}$4="","",ROUND({v},2))', F_AUTO, fl, MONEY, AR)
             put(ws, f'K{r}', f'=ROUND(SUM(C{r}:J{r}),2)', F_AUTOB, fl, MONEY, AR)
             r += 1
@@ -408,6 +419,7 @@ def build_cus(wb, ctx):
           '上面是每个月新增了几个客户、新增和续费各收了多少；下面每个客户一行：首次来款、今年新增/续费/其他项目、累计收款、开票和应收余额。')
     _sel_block(ws)
     cc, y = co_crit('$C$3'), '$F$3'
+    ci = coi_crit('$C$3')
     header(ws, 4, [('A', '')] + [(c, f'{i + 1}月') for i, c in enumerate(MC)] + [('N', '全年')], C_RPT)
     put(ws, 'A4', '项目', F_HDR, fill(C_RPT), align=AC)
     lines = [('新增客户数', 'cnt'), ('新增收入', '新增'), ('续费收入', '续费'), ('其他收入项目', 'oth'), ('收入合计', 'all')]
@@ -416,14 +428,15 @@ def build_cus(wb, ctx):
         put(ws, f'A{r}', lab, F_TXTB, FILL_SUB, align=AC)
         ws.column_dimensions['A'].width = 12
         for i, c in enumerate(MC + ['N']):
-            per = year_crit(y) if c == 'N' else month_crit(y, i + 1)
-            base = f'{jr(J_CO)},{cc},{per}'
-            if kind == 'cnt':
+            base = f'{jr(J_COI)},{ci},{ym_crit(y, i + 1)}' if c != 'N' else None
+            if c == 'N' and kind != 'oth':
+                v = f'=ROUND(SUM({MC[0]}{r}:{MC[-1]}{r}),2)'
+            elif kind == 'cnt':
                 v = f'=COUNTIFS({jr(J_ITEM)},"新增",{jr(J_INV)},">0",{base})'
             elif kind in ('新增', '续费'):
-                v = f'=ROUND(SUMIFS({jr(J_INV)},{jr(J_ITEM)},"{kind}",{base})-SUMIFS({jr(J_OUTV)},{jr(J_ITEM)},"{kind}",{base}),2)'
+                v = f'=ROUND({net(f"{jr(J_ITEM)},{Q}{kind}{Q},{base}")},2)'
             elif kind == 'all':
-                v = f'=ROUND(SUMIFS({jr(J_INV)},{jr(J_CLS)},"{CLS_IN}",{base})-SUMIFS({jr(J_OUTV)},{jr(J_CLS)},"{CLS_IN}",{base}),2)'
+                v = f'=ROUND({net(f"{jr(J_CLS)},{Q}{CLS_IN}{Q},{base}")},2)'
             else:
                 v = f'=ROUND({c}{5 + 4}-{c}{5 + 1}-{c}{5 + 2},2)'
             put(ws, f'{c}{r}', v, F_AUTOB if kind in ('cnt', 'all') else F_AUTO, FILL_NONE, INT if kind == 'cnt' else MONEY, AR)
@@ -450,22 +463,23 @@ def build_cus(wb, ctx):
         put(ws, f'B{r}', f'=IF({k}>{last},"",INDEX({pr(PT_NAME)},MATCH({k},$Q${CU_R0}:{last},0)))', F_AUTOB, align=AL)
         ws[f'O{r}'] = f'={esc(n)}'
         ws[f'O{r}'].font = F_HELP
-        pc = f'{jr(J_PARTY)},{ne},{jr(J_CO)},{cc}'
+        pc = f'{jr(J_PARTY)},{ne},{jr(J_COI)},{ci}'
         upto = f'{jr(J_DATE)},"<"&DATE({y}+1,1,1)'        # 看的是所选那年年底为止
-        put(ws, f'C{r}', f'=IF({n}="","",IF(COUNTIFS({pc},{jr(J_INV)},">0",{jr(J_CLS)},"{CLS_IN}",{upto})=0,"",'
-                         f'_xlfn.MINIFS({jr(J_DATE)},{pc},{jr(J_INV)},">0",{jr(J_CLS)},"{CLS_IN}",{upto})))', F_AUTO, fmt=DATE, align=AC)
-        put(ws, f'D{r}', f'=IF(OR({n}="",C{r}=""),"",_xlfn.MAXIFS({jr(J_DATE)},{pc},{jr(J_INV)},">0",{jr(J_CLS)},"{CLS_IN}",{upto}))',
+        # 没来过款时 MINIFS 得 0，格式里 0 不显示（少算一遍 COUNTIFS）
+        put(ws, f'C{r}', f'=IF({n}="","",_xlfn.MINIFS({jr(J_DATE)},{pc},{jr(J_INV)},">0",{jr(J_CLS)},"{CLS_IN}",{upto}))',
+            F_AUTO, fmt=DATE + ';;', align=AC)
+        put(ws, f'D{r}', f'=IF(OR({n}="",N(C{r})=0),"",_xlfn.MAXIFS({jr(J_DATE)},{pc},{jr(J_INV)},">0",{jr(J_CLS)},"{CLS_IN}",{upto}))',
             F_AUTO, fmt=DATE, align=AC)
         yc = f'{pc},{year_crit(y)}'
-        put(ws, f'E{r}', f'=IF({n}="","",ROUND(SUMIFS({jr(J_INV)},{yc},{jr(J_ITEM)},"新增")-SUMIFS({jr(J_OUTV)},{yc},{jr(J_ITEM)},"新增"),2))',
+        put(ws, f'E{r}', f'=IF({n}="","",ROUND({net(f"{yc},{jr(J_ITEM)},{Q}新增{Q}")},2))',
             F_AUTO, fmt=MONEY, align=AR)
-        put(ws, f'F{r}', f'=IF({n}="","",ROUND(SUMIFS({jr(J_INV)},{yc},{jr(J_ITEM)},"续费")-SUMIFS({jr(J_OUTV)},{yc},{jr(J_ITEM)},"续费"),2))',
+        put(ws, f'F{r}', f'=IF({n}="","",ROUND({net(f"{yc},{jr(J_ITEM)},{Q}续费{Q}")},2))',
             F_AUTO, fmt=MONEY, align=AR)
-        put(ws, f'H{r}', f'=IF({n}="","",ROUND(SUMIFS({jr(J_INV)},{yc},{jr(J_CLS)},"{CLS_IN}")-SUMIFS({jr(J_OUTV)},{yc},{jr(J_CLS)},"{CLS_IN}"),2))',
+        put(ws, f'H{r}', f'=IF({n}="","",ROUND({net(f"{yc},{jr(J_CLS)},{Q}{CLS_IN}{Q}")},2))',
             F_AUTOB, fmt=MONEY, align=AR)
         put(ws, f'G{r}', f'=IF({n}="","",ROUND(H{r}-E{r}-F{r},2))', F_AUTO, fmt=MONEY, align=AR)
         tc = f'{pc},{jr(J_DATE)},"<"&{yend}'
-        put(ws, f'I{r}', f'=IF({n}="","",ROUND(SUMIFS({jr(J_INV)},{tc},{jr(J_CLS)},"{CLS_IN}")-SUMIFS({jr(J_OUTV)},{tc},{jr(J_CLS)},"{CLS_IN}"),2))',
+        put(ws, f'I{r}', f'=IF({n}="","",ROUND({net(f"{tc},{jr(J_CLS)},{Q}{CLS_IN}{Q}")},2))',
             F_AUTO, fmt=MONEY, align=AR)
         vc = f'{vr(V_PARTY)},{ne},{vr(V_CO)},{cc}'
         put(ws, f'J{r}', f'=IF({n}="","",ROUND(SUMIFS({vr(V_ARV)},{vc},{vr(V_DATE)},">="&DATE({y},1,1),{vr(V_DATE)},"<"&{yend}),2))',
@@ -474,7 +488,7 @@ def build_cus(wb, ctx):
         put(ws, f'K{r}', f'=IF({n}="","",ROUND({op}+SUMIFS({vr(V_ARV)},{vc},{vr(V_DATE)},"<"&{yend})-I{r},2))',
             F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'L{r}', f'=IF({n}="","",COUNTIFS({yc},{jr(J_INV)},">0",{jr(J_CLS)},"{CLS_IN}"))', F_AUTO, fmt=INT, align=AC)
-        put(ws, f'M{r}', f'=IF({n}="","",IF(C{r}="","还没来过款",IF(E{r}>0,"本年新客户",'
+        put(ws, f'M{r}', f'=IF({n}="","",IF(N(C{r})=0,"还没来过款",IF(E{r}>0,"本年新客户",'
                          f'IF(D{r}<DATE({y},1,1),"今年没来款",""))))', F_AUTO, align=AC)
         put(ws, f'N{r}', f'=IF({n}="","",IF(K{r}<0,"已收款未开票/预收",IF(K{r}>0,"开了票还没收齐","")))', F_NOTE, align=AL)
     hide(ws, 'O', 'P', 'Q')
@@ -492,6 +506,7 @@ def build_invs(wb, ctx):
           'J、K 两列是同月资金台帐里实际收到的收入类款项、付出的成本费用类款项（变动成本＋固定成本＋其他支出），对照看开票和收款的差。')
     _sel_block(ws)
     cc, y = co_crit('$C$3'), '$F$3'
+    ci = coi_crit('$C$3')
     header(ws, 4, [('A', '月份'), ('B', '销项张数'), ('C', '销项金额\n（不含税）'), ('D', '销项税额'), ('E', '销项价税合计'),
                    ('F', '进项张数'), ('G', '进项价税合计'), ('H', '其中计应付'), ('I', '其中报销票'),
                    ('J', '本月收入类收款'), ('K', '本月成本费用付款'), ('L', '自家公司之间的票\n（选单家时已含在\n销项/进项里）')], C_INV)
@@ -500,7 +515,7 @@ def build_invs(wb, ctx):
         r = 4 + m
         if m <= 12:
             vper = f'{vr(V_DATE)},">="&DATE({y},{m},1),{vr(V_DATE)},"<"&DATE({y},{m}+1,1)'
-            jper = month_crit(y, m)
+            jper = ym_crit(y, m)
             put(ws, f'A{r}', f'{m}月', F_TXTB, FILL_SUB, align=AC)
         else:
             vper = f'{vr(V_DATE)},">="&DATE({y},1,1),{vr(V_DATE)},"<"&DATE({y}+1,1,1)'
@@ -511,8 +526,7 @@ def build_invs(wb, ctx):
         si = f'{vr(V_DIR)},"内部",{vr(V_SCO)},$C$3,{vper}'        # 选单家：它开给自家另一家的票
         pi = f'{vr(V_DIR)},"内部",{vr(V_BCO)},$C$3,{vper}'        # 选单家：自家另一家开给它的票
         both = lambda f1, f2: f'{f1}+IF({one},{f2},0)'
-        cost_out = '+'.join(f'SUMIFS({jr(J_OUTV)},{jr(J_CLS)},"{k}",{jr(J_CO)},{cc},{jper})' for k in CLS_COST)
-        cost_in = '+'.join(f'SUMIFS({jr(J_INV)},{jr(J_CLS)},"{k}",{jr(J_CO)},{cc},{jper})' for k in CLS_COST)
+        cost = '+'.join(net(f'{jr(J_CLS)},"{k}",{jr(J_COI)},{ci},{jper}') for k in CLS_COST)
         vals = {'B': both(f'COUNTIFS({s_},{vr(V_EFF)},"<>0")', f'COUNTIFS({si},{vr(V_EFF)},"<>0")'),
                 'C': f'ROUND({both(f"SUMIFS({vr(V_EAMT)},{s_})", f"SUMIFS({vr(V_EAMT)},{si})")},2)',
                 'D': f'ROUND({both(f"SUMIFS({vr(V_ETAX)},{s_})", f"SUMIFS({vr(V_ETAX)},{si})")},2)',
@@ -521,8 +535,8 @@ def build_invs(wb, ctx):
                 'G': f'ROUND({both(f"SUMIFS({vr(V_EFF)},{p_})", f"SUMIFS({vr(V_EFF)},{pi})")},2)',
                 'H': f'ROUND(SUMIFS({vr(V_EFF)},{p_},{vr(V_USE)},"应付"),2)',
                 'I': f'ROUND(SUMIFS({vr(V_EFF)},{p_},{vr(V_USE)},"报销票"),2)',
-                'J': f'ROUND(SUMIFS({jr(J_INV)},{jr(J_CLS)},"{CLS_IN}",{jr(J_CO)},{cc},{jper})-SUMIFS({jr(J_OUTV)},{jr(J_CLS)},"{CLS_IN}",{jr(J_CO)},{cc},{jper}),2)',
-                'K': f'ROUND({cost_out}-({cost_in}),2)',
+                'J': f'ROUND({net(f"{jr(J_CLS)},{Q}{CLS_IN}{Q},{jr(J_COI)},{ci},{jper}")},2)',
+                'K': f'ROUND(-({cost}),2)',
                 'L': f'ROUND(IF({one},SUMIFS({vr(V_EFF)},{si})+SUMIFS({vr(V_EFF)},{pi}),SUMIFS({vr(V_EFF)},{vr(V_DIR)},"内部",{vper})),2)'}
         for c, v in vals.items():
             put(ws, f'{c}{r}', '=' + v, F_AUTOB if m == 13 else F_AUTO, FILL_TOT if m == 13 else FILL_NONE,

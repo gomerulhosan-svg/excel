@@ -20,7 +20,10 @@ def stmt_key(ws, r):
     per = (f'AND({g(J_PARTY)}={ST_PARTY},{g(J_PARTY)}<>"",OR({ST_CO}="全部",{g(J_CO)}={ST_CO}),'
            f'{g(J_DATE)}>={ST_S},{g(J_DATE)}<={ST_E},N({g(J_INV)})+N({g(J_OUTV)})<>0,N({g(J_ARF)})=1)')
     ws[f'{J_SKEY}{r}'] = f'=IF({per},{g(J_DATE)}*100000+50000+ROW(),"")'
-    ws[f'{J_SKEY}{r}'].font = F_HELP
+    # 年月（报表按月汇总用一个数比日期区间快）
+    ws[f'{J_YM}{r}'] = f'=IF(N({g(J_DATE)})=0,"",YEAR({g(J_DATE)})*100+MONTH({g(J_DATE)}))'
+    ws[f'{J_COI}{r}'] = f'=IF({g(J_CO)}="",0,IFERROR(MATCH({g(J_CO)},{CO_NAMES},0),0))'   # 公司序号
+    ws[f'{J_SKEY}{r}'].font = ws[f'{J_YM}{r}'].font = ws[f'{J_COI}{r}'].font = F_HELP
 
 
 def build_cash(wb, ctx, with_stmt=False):
@@ -41,7 +44,7 @@ def build_cash(wb, ctx, with_stmt=False):
     put(ws, 'E3', f'={AUX_TOTAL}', F_KPI_V, fill('FFD9E1F2'), INT, AC)
     put(ws, 'F3', '最后日期：', F_KPI_L, fill('FFD9E1F2'), align=AR)
     put(ws, 'G3', f'=IF(COUNT({jr(J_DATE)})=0,"",MAX({jr(J_DATE)}))', F_KPI_V, fill('FFD9E1F2'), DATE, AC)
-    put(ws, 'H3', f'="容量 "&TEXT({AUX_TOTAL}/{J_R1 - J_R0 + 1},"0%")&"（6000 笔）"', F_NOTE, fill('FFD9E1F2'), align=AL)
+    put(ws, 'H3', f'="容量 "&TEXT({AUX_TOTAL}/{J_R1 - J_R0 + 1},"0%")&"（{J_CAP} 笔）"', F_NOTE, fill('FFD9E1F2'), align=AL)
     put(ws, 'I3', '全部账户余额：', F_KPI_L, fill('FFD9E1F2'), align=AR)
     put(ws, 'J3', f'=ROUND(SUM({AC_OPENS})+SUM({jr(J_NET)}),2)', F_KPI_V, fill('FFD9E1F2'), MONEY, AC)
     bands = [('A', 'B', '账户', 'FF305496'), ('C', 'J', '← 从流水表取来的原样内容', 'FF5B9BD5'),
@@ -65,8 +68,9 @@ def build_cash(wb, ctx, with_stmt=False):
               (J_ARF, '算往来'), (J_TODO, '待登记名'), (J_TODO1, '首次'), (J_TODOC, '计数'), (J_DUPK, '查重键'),
               (J_BS, '块首行'), (J_BE, '块尾行'), (J_RIN, '原收入'), (J_ROUT, '原支出'), (J_RONE, '原金额'),
               (J_RFLAG, '原收支'), (J_RPAY, '原支付方式'), (J_RSTAT, '原状态'), (J_RNO, '原单号'), (J_RTIME, '原时间'),
-              (J_SKIP, '跳过原因'), (J_FDIR, '收支方向'), (J_CIN, '算出收入'), (J_COUT, '算出支出'), (J_RBAL, '原余额')] \
-        + ([(J_SKEY, '对账单键')] if with_stmt else [])
+              (J_SKIP, '跳过原因'), (J_FDIR, '收支方向'), (J_CIN, '算出收入'), (J_COUT, '算出支出'), (J_RBAL, '原余额'),
+              (J_BASE, '余额基数')] \
+        + ([(J_SKEY, '对账单键'), (J_YM, '年月'), (J_COI, '公司序号')] if with_stmt else [])
     for col, t in hidden:
         ws[f'{col}{J_HDR}'] = t
         ws[f'{col}{J_HDR}'].font = F_HELP
@@ -119,9 +123,11 @@ def build_cash(wb, ctx, with_stmt=False):
         wd = f'ISNUMBER(SEARCH("提现",{g(J_MEMO)}))'
         cz = f'ISNUMBER(SEARCH("充值",{g(J_MEMO)}))'
         one = num(g(J_RONE))
-        f[J_CIN] = (f'=IF({z}="",0,ROUND(IF({mode}=1,ABS({num(g(J_RIN))}),IF({mode}=2,IF({dr}=1,ABS({one}),'
+        flip = f'INDEX({aux_rng(AUX_FLIP)},{z})=1'          # 借方＝进账的银行：两列对调
+        rin, rout = f'IF({flip},{g(J_ROUT)},{g(J_RIN)})', f'IF({flip},{g(J_RIN)},{g(J_ROUT)})'
+        f[J_CIN] = (f'=IF({z}="",0,ROUND(IF({mode}=1,ABS({num(rin)}),IF({mode}=2,IF({dr}=1,ABS({one}),'
                     f'IF(AND({dr}=0,{cz},NOT({wd})),ABS({one}),0)),IF({mode}=3,MAX({one},0),0))),2))')
-        f[J_COUT] = (f'=IF({z}="",0,ROUND(IF({mode}=1,ABS({num(g(J_ROUT))}),IF({mode}=2,IF({dr}=-1,ABS({one}),'
+        f[J_COUT] = (f'=IF({z}="",0,ROUND(IF({mode}=1,ABS({num(rout)}),IF({mode}=2,IF({dr}=-1,ABS({one}),'
                      f'IF(AND({dr}=0,{wd}),ABS({one}),0)),IF({mode}=3,MAX(-{one},0),0))),2))')
         f[J_IN] = f'=IF(OR({z}="",{g(J_SKIP)}<>"",{g(J_CIN)}=0),"",{g(J_CIN)})'
         f[J_OUT] = f'=IF(OR({z}="",{g(J_SKIP)}<>"",{g(J_COUT)}=0),"",{g(J_COUT)})'
@@ -170,7 +176,7 @@ def build_cash(wb, ctx, with_stmt=False):
         cusin = f'AND({g(J_PTYPE)}="客户",{g(J_INV)}>0)'      # 客户来款：新增/续费优先于摘要关键词
         f[J_ITEM] = (f'=IF({g(J_MITEM)}<>"",{g(J_MITEM)},IF(OR({g(J_ACC)}="",{g(J_INV)}+{g(J_OUTV)}=0),"",'
                      f'IF({g(J_PTYPE)}="内部公司",IF({g(J_PARTY)}={g(J_CO)},"账户互转","内部划转"),'
-                     f'IF({bind}<>"",{bind},IF(AND({g(J_KW)}<>"",NOT({cusin})),{g(J_KW)},'
+                     f'IF(AND({bind}<>"",OR({g(J_PTYPE)}<>"税务银行",{g(J_KW)}="")),{bind},IF(AND({g(J_KW)}<>"",NOT({cusin})),{g(J_KW)},'
                      f'IF(AND({cusin},{g(J_DATE)}<>""),'
                      f'IF(OR({old}="是",{prior}>0),"续费","新增"),""))))))')
         f[J_CLS] = f'=IF({g(J_ITEM)}="","",IFERROR(INDEX({IT_CLSS},MATCH({g(J_ITEM)},{IT_NAMES},0))&"","？"))'
@@ -180,12 +186,22 @@ def build_cash(wb, ctx, with_stmt=False):
                     f'{g(J_PARTY)}<>""),IF(OR(AND({g(J_PTYPE)}="供应商",{apf}<>"否"),{apf}="是",'
                     f'COUNTIFS({vr(V_PARTY)},{pe},{vr(V_USE)},"应付")>0),1,0),0)')
         f[J_ARF] = f'=IF(OR({g(J_CLS)}="{CLS_IN}",{g(J_CLS)}="{CLS_WL}",{g(J_CLS)}="{CLS_INTRA}",{g(J_APF)}=1),1,0)'
-        # 即时余额：只在这个账户那一段里按时间先后算（倒序导出、后补的月份也对）
+        # 即时余额：只在这个账户那一段里按时间先后算（倒序导出、后补的月份也对）。
+        # 同一时刻有几笔（微信商户收款和手续费同一分钟、银行只有日期）：按导出顺序排（倒序导出就倒着排）；
+        # 带银行余额的，这一笔的余额等于「之前 ＋ 这一笔」或「之前 ＋ 同一时刻全部」都算对上（同一分钟里谁先谁后导出文件不一定按顺序）
         seg = lambda c: f'INDEX(${c}${J_R0}:${c}${J_R1},{g(J_BS)}-{J_R0 - 1})'
-        seg2 = lambda c: f'{seg(c)}:INDEX(${c}${J_R0}:${c}${J_R1},{g(J_BE)}-{J_R0 - 1})'
-        f[J_BAL] = (f'=IF(OR({g(J_ACC)}="",{g(J_TS)}=""),"",ROUND(IFERROR(INDEX({AC_OPENS},MATCH({g(J_ACC)},{AC_NAMES},0)),0)'
-                    f'+SUMIFS({seg2(J_NET)},{seg2(J_ACC)},{g(J_ACC)},{seg2(J_TS)},"<"&{g(J_TS)})'
-                    f'+SUMIFS({seg(J_NET)}:{g(J_NET)},{seg(J_ACC)}:{g(J_ACC)},{g(J_ACC)},{seg(J_TS)}:{g(J_TS)},{g(J_TS)}),2))')
+        segE = lambda c: f'INDEX(${c}${J_R0}:${c}${J_R1},{g(J_BE)}-{J_R0 - 1})'
+        seg2 = lambda c: f'{seg(c)}:{segE(c)}'
+        f[J_BASE] = (f'=IF(OR({g(J_ACC)}="",{g(J_TS)}=""),"",IFERROR(INDEX({AC_OPENS},MATCH({g(J_ACC)},{AC_NAMES},0)),0)'
+                     f'+SUMIFS({seg2(J_NET)},{seg2(J_ACC)},{g(J_ACC)},{seg2(J_TS)},"<"&{g(J_TS)}))')
+        base, ts, acc, bank = g(J_BASE), g(J_TS), g(J_ACC), g(J_BANKBAL)
+        desc = f'N({seg(J_TS)})>N({segE(J_TS)})'
+        pre = f'SUMIFS({seg(J_NET)}:{g(J_NET)},{seg(J_ACC)}:{acc},{acc},{seg(J_TS)}:{ts},{ts})'
+        suf = f'SUMIFS({g(J_NET)}:{segE(J_NET)},{acc}:{segE(J_ACC)},{acc},{ts}:{segE(J_TS)},{ts})'
+        dft = f'IF({desc},{suf},{pre})'
+        alltie = f'SUMIFS({seg2(J_NET)},{seg2(J_ACC)},{acc},{seg2(J_TS)},{ts})'
+        f[J_BAL] = (f'=IF({base}="","",ROUND({base}+IF({bank}="",{dft},IF(COUNTIFS({seg2(J_TS)},{ts},{seg2(J_ACC)},{acc})<2,{dft},'
+                    f'IF(ABS({base}+{g(J_NET)}-{bank})<0.005,{g(J_NET)},IF(ABS({base}+{alltie}-{bank})<0.005,{alltie},{dft})))),2))')
         f[J_BCHK] = (f'=IF(OR({g(J_BANKBAL)}="",{g(J_BAL)}="",{g(J_SKIP)}<>""),"",IF(ABS({g(J_BAL)}-{num(g(J_BANKBAL))})<0.005,"✓",'
                      f'"差 "&TEXT({g(J_BAL)}-{num(g(J_BANKBAL))},"#,##0.00")))')
         noparty_in = f'AND({g(J_PARTY)}="",{g(J_MITEM)}<>"",{g(J_CLS)}="{CLS_IN}")'
@@ -206,7 +222,7 @@ def build_cash(wb, ctx, with_stmt=False):
                     f'IF(LEFT({g(J_BCHK)},1)="差","⚠ 余额跟银行对不上（漏粘了流水，或期初余额不对？）",'
                     f'IF({g(J_PTYPE)}="未登记","⚠ 往来单位没在【往来单位】登记（统计照算）",'
                     f'IF({noparty_in},"⚠ 收入没选往来单位（客户统计、应收里算不到），点「去改」选一下",'
-                    f'IF(AND({g(J_PTYPE)}="税务银行",{g(J_MITEM)}="",{g(J_CLS)}="{CLS_VAR}",{g(J_OUTV)}>0),'
+                    f'IF(AND({g(J_PTYPE)}="税务银行",{g(J_MITEM)}="",{g(J_ITEM)}={SH_BASE}!$U${IT_ROW["税金"]},{g(J_OUTV)}>0),'
                     f'"⚠ 税务扣款默认算税金：是社保（挂靠）的点「去改」改",'
                     f'IF({g(J_ITEM)}="新增","√ 新客户首笔","√")))))))))))))))')
         f[J_GO] = (f'=IF({z}="","",HYPERLINK("#\'"&INDEX({aux_rng(AUX_SHEET)},{z})&"\'!"&ADDRESS({g(J_SROW)},'

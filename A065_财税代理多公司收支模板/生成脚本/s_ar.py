@@ -27,6 +27,7 @@ def build_ar(wb, ctx):
     selector(ws, 'B3', '公司', 'C3', '全部', f'={AUX_CO_ALL}')
     selector(ws, 'E3', '年份', 'F3', 2026, YEARS)
     cc, y = co_crit('$C$3'), '$F$3'
+    ci = coi_crit('$C$3')
     y0, y1 = f'DATE({y},1,1)', f'DATE({y}+1,1,1)'
     header(ws, 4, [('A', '序号'), ('B', '往来单位'), ('C', '类型'), ('D', '期初应收'), ('E', '本年开票'), ('F', '本年收款'),
                    ('G', '应收余额'), ('H', '期初应付'), ('I', '本年进项\n（计应付）'), ('J', '本年付款'), ('K', '应付余额'),
@@ -41,12 +42,10 @@ def build_ar(wb, ctx):
         """n：单位名单元格；返回 D..M 的公式"""
         jb = lambda: f'{jr(J_DATE)},"<"&{y0}'
         jy = f'{year_crit(y)}'
-        rec = lambda per: (f'SUMIFS({jr(J_INV)},{pc_cash},{jr(J_CLS)},"{CLS_IN}",{per})'
-                           f'-SUMIFS({jr(J_OUTV)},{pc_cash},{jr(J_CLS)},"{CLS_IN}",{per})')
-        pay = lambda per: (f'SUMIFS({jr(J_OUTV)},{pc_cash},{jr(J_APF)},1,{per})'
-                           f'-SUMIFS({jr(J_INV)},{pc_cash},{jr(J_APF)},1,{per})')
-        wl = (f'SUMIFS({jr(J_OUTV)},{pc_cash},{jr(J_CLS)},"{CLS_WL}",{jr(J_DATE)},"<"&{y1})'
-              f'-SUMIFS({jr(J_INV)},{pc_cash},{jr(J_CLS)},"{CLS_WL}",{jr(J_DATE)},"<"&{y1})')
+        # 净额（收 − 支）一次求和
+        rec = lambda per: f'SUMIFS({jr(J_NET)},{pc_cash},{jr(J_CLS)},"{CLS_IN}",{per})'
+        pay = lambda per: f'(-SUMIFS({jr(J_NET)},{pc_cash},{jr(J_APF)},1,{per}))'
+        wl = f'(-SUMIFS({jr(J_NET)},{pc_cash},{jr(J_CLS)},"{CLS_WL}",{jr(J_DATE)},"<"&{y1}))'
         vb = f'{vr(V_DATE)},"<"&{y0}'
         vy = f'{vr(V_DATE)},">="&{y0},{vr(V_DATE)},"<"&{y1}'
         return {
@@ -69,7 +68,7 @@ def build_ar(wb, ctx):
         ne = f'$P{r}'           # 隐藏：名字转义后当条件用
         ws[f'P{r}'] = f'={esc(n)}'
         ws[f'P{r}'].font = F_HELP
-        f = cols(ne, f'{jr(J_PARTY)},{ne},{jr(J_CO)},{cc}', f'{vr(V_PARTY)},{ne},{vr(V_CO)},{cc}')
+        f = cols(ne, f'{jr(J_PARTY)},{ne},{jr(J_COI)},{ci}', f'{vr(V_PARTY)},{ne},{vr(V_CO)},{cc}')
         for c, v in f.items():
             put(ws, f'{c}{r}', f'=IF({n}="","",ROUND({v},2))', F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'G{r}', f'=IF({n}="","",ROUND(D{r}+E{r}-F{r},2))', F_AUTOB, fmt=MONEY, align=AR)
@@ -81,7 +80,7 @@ def build_ar(wb, ctx):
     put(ws, f'A{r}', '', F_AUTO, align=AC)
     put(ws, f'B{r}', '（没登记的单位合计）', F_RED, FILL_AUTO, align=AL)
     put(ws, f'C{r}', '', F_AUTO, FILL_AUTO)
-    tot = cols(None, f'{jr(J_PARTY)},"?*",{jr(J_CO)},{cc}', f'{vr(V_PARTY)},"?*",{vr(V_CO)},{cc}')
+    tot = cols(None, f'{jr(J_PARTY)},"?*",{jr(J_COI)},{ci}', f'{vr(V_PARTY)},"?*",{vr(V_CO)},{cc}')
     def op_all(col):
         # 期初往来全部 − 对方是自家公司的（那些在【内部往来】里算）
         return (f'(SUMIFS({br(col, OP_R0, OP_R1)},{br(OP_CO, OP_R0, OP_R1)},{cc})'
@@ -126,6 +125,7 @@ def build_stmt(wb, ctx):
     for c in ('Q3', 'Q4', 'R3', 'R4'):
         ws[c].font = F_HELP
     cc = co_crit('$C$3')
+    ci = coi_crit('$C$3')
     n = '$F$3'
     ws['R5'] = f'={esc(n)}'
     ws['Q5'] = '单位(转义)'
@@ -139,7 +139,7 @@ def build_stmt(wb, ctx):
         put(ws, f'{c}4', t, F_KPI_L, fill('FFD9E1F2'), align=ACW)
     ws.row_dimensions[4].height = 30
     e = '$R$4'
-    pc = f'{jr(J_PARTY)},{ne},{jr(J_CO)},{cc},{jr(J_ARF)},1'
+    pc = f'{jr(J_PARTY)},{ne},{jr(J_COI)},{ci},{jr(J_ARF)},1'
     opening = (f'SUMIFS({br(OP_AR, OP_R0, OP_R1)},{br(OP_PARTY, OP_R0, OP_R1)},{ne},{br(OP_CO, OP_R0, OP_R1)},{cc})'
                f'-SUMIFS({br(OP_AP, OP_R0, OP_R1)},{br(OP_PARTY, OP_R0, OP_R1)},{ne},{br(OP_CO, OP_R0, OP_R1)},{cc})'
                f'+SUMIFS({br(OP_OTH, OP_R0, OP_R1)},{br(OP_PARTY, OP_R0, OP_R1)},{ne},{br(OP_CO, OP_R0, OP_R1)},{cc})'
