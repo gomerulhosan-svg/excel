@@ -110,11 +110,13 @@ RT_HDR = 3
 RT_R0, RT_R1 = 4, 303           # 300 条
 RT_SEQ, RT_NAME, RT_DATE, RT_DAY, RT_MON, RT_NOTE, RT_CHK = 'A', 'B', 'C', 'D', 'E', 'F', 'G'
 RT_DN = 'H'                     # 隐藏：从哪天起（数字；不是日期＝0）
+RT_KEY = 'I'                    # 隐藏：姓名|这个人的第几条（按日期排，1 起）——查「某天有效的那条」用 COUNTIFS＋MATCH，WPS 也能算
 RT_NAMES = rng(SH_RATE, RT_NAME, RT_R0, RT_R1)
 RT_DATES = rng(SH_RATE, RT_DATE, RT_R0, RT_R1)
 RT_DAYS = rng(SH_RATE, RT_DAY, RT_R0, RT_R1)
 RT_MONS = rng(SH_RATE, RT_MON, RT_R0, RT_R1)
 RT_DNS = rng(SH_RATE, RT_DN, RT_R0, RT_R1)
+RT_KEYS = rng(SH_RATE, RT_KEY, RT_R0, RT_R1)
 
 # ─────────────────────────── 资金流水 ───────────────────────────
 J_HDR = 5
@@ -125,9 +127,11 @@ J_R0, J_R1 = 6, 2005            # 2000 笔
 # 隐藏：R 净额 S 年月 T 认项目 U 认类别 V 认单位 W 分摊归类 X 报表项目 Y 单位有应付 Z 单位类型 AA 走考勤的人 AB 代X付
 #       AC 认对方账户 AD 对方账户（用的） AE 账户类型 AF 对方账户类型 AG 关键词类别 AH 收支（报表用：收/支） AI 项目命中词 AJ 别的项目命中数
 (J_NET, J_YM, J_APJ, J_ACT, J_AUN, J_ALLOC, J_LINE, J_HANG, J_UTYPE, J_WKIND, J_DAI, J_ATO, J_TO, J_ATYPE, J_TOTYPE, J_KWC,
- J_IO, J_PKW, J_PKN, J_PKH, J_UMH, J_UDH, J_DN) = 'R S T U V W X Y Z AA AB AC AD AE AF AG AH AI AJ AK AL AM AN'.split()
+ J_IO, J_PKW, J_PKN, J_PKH, J_UMH, J_UDH, J_DN, J_RK1, J_RK2, J_RK3) = \
+    'R S T U V W X Y Z AA AB AC AD AE AF AG AH AI AJ AK AL AM AN AO AP AQ'.split()
 # AN 隐藏：日期（数字；不是日期＝0，给「最后一次」这类公式用）
-# AK～AM 隐藏：项目关键词、单位（摘要里）、单位（代X付里）最长匹配的编码（只算一遍）
+# AK～AM 隐藏：项目关键词、单位（摘要里）、单位（代X付里）在按长短排好的关键词表（_辅助）里第几个对上（只算一遍）
+# AO～AQ 隐藏：「最后一次」用的排号：项目|第几次收工程款、单位|第几次付款、人|第几笔保证金押金（按日期，COUNTIFS 算，WPS 也能算）
 J_CAP = J_R1 - J_R0 + 1
 
 
@@ -152,6 +156,17 @@ AX_PKP_R = rng(SH_AUX, AX_PKP, 1, AX_PKW_N)
 AX_UKW_R = rng(SH_AUX, AX_UKW, 1, AX_UKW_N)
 AX_UKN_R = rng(SH_AUX, AX_UKN, 1, AX_UKW_N)
 AX_ALL_R = f"{SH_AUX}!${AX_ALL}$1:${AX_ALL}${AX_ALL_N}"
+# P～X：上面三张关键词表按「长的在前（一样长表里靠前的在前）」排好，空的放 AX_NONE（摘要里不会有）。
+#   流水认项目/单位/对方账户＝MATCH(1, INDEX(ISNUMBER(SEARCH(排好的词, 摘要))*1, 0), 0)：第一个对上的就是最长的（WPS 也能算）
+AX_NONE = '‡‡'
+AX_PW, AX_PI, AX_PS, AX_PN = 'P', 'Q', 'R', 'S'      # 项目：权重、排第几的是哪行、词、项目
+AX_UW, AX_UI, AX_US, AX_UN = 'T', 'U', 'V', 'W'      # 单位
+AX_AW, AX_AI, AX_AS, AX_AN = 'X', 'Y', 'Z', 'AA'     # 账户
+AX_KWI, AX_KWO = 'AB', 'AC'                          # 收支类别关键词：收款能用的、付款能用的（不能用的放 AX_NONE），跟【基础资料】③ 一行对一行
+AX_PS_R = rng(SH_AUX, AX_PS, 1, AX_PKW_N)
+AX_PN_R = rng(SH_AUX, AX_PN, 1, AX_PKW_N)
+AX_US_R = rng(SH_AUX, AX_US, 1, AX_UKW_N)
+AX_UN_R = rng(SH_AUX, AX_UN, 1, AX_UKW_N)
 
 # ─────────────────────────── 应付登记（材料 · 分包 · 机械运输 · 其他直接费） ───────────────────────────
 AP_HDR = 4
@@ -178,7 +193,8 @@ def rvr(col):
 # ─────────────────────────── 代发抵账（没经过我们账户的收付） ───────────────────────────
 OF_HDR = 4
 OF_R0, OF_R1 = 5, 304
-(OF_SEQ, OF_DATE, OF_PJ, OF_TYPE, OF_WHO, OF_AMT, OF_NOTE, OF_YM, OF_WTYPE, OF_CHK, OF_DN) = [CL(i) for i in range(1, 12)]   # K 隐藏：日期（数字）
+(OF_SEQ, OF_DATE, OF_PJ, OF_TYPE, OF_WHO, OF_AMT, OF_NOTE, OF_YM, OF_WTYPE, OF_CHK, OF_DN, OF_RK) = [CL(i) for i in range(1, 13)]
+# K 隐藏：日期（数字）；L 隐藏：项目|第几次代发代付（按日期，应收账龄「最后回款」用）
 OF_TYPES = ['总包代发工资', '总包代付材料分包款', '甲供材扣款', '甲方扣款']
 
 
@@ -231,6 +247,8 @@ def oo(i):
     return f"{SH_OPEN}!${OO_VAL}${OO_R0 + i}"
 AX_AKW_R = rng(SH_AUX, AX_AKW, 1, AX_AKW_N)
 AX_AKA_R = rng(SH_AUX, AX_AKA, 1, AX_AKW_N)
+AX_AS_R = rng(SH_AUX, AX_AS, 1, AX_AKW_N)
+AX_AN_R = rng(SH_AUX, AX_AN, 1, AX_AKW_N)
 
 # ─────────────────────────── 考勤工资（每人每月一行：项目＋天数成对填，一行 4 对，多了再加一行） ───────────────────────────
 AT_HDR = 4

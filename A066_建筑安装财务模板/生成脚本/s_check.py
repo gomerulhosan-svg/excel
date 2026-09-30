@@ -31,7 +31,7 @@ def build_chk(wb, ctx):
     used = lambda r: f'SUMPRODUCT(--({r}<>""))'
     wild = lambda r: f'SUMPRODUCT(--((ISNUMBER(FIND("*",{r}))+ISNUMBER(FIND("?",{r}))+ISNUMBER(FIND("~",{r})))>0))'
     # 插进来的行没有公式：有内容、校验格却是空的
-    ins = lambda sh, r0, r1, cols, chk: (f'SUMPRODUCT(((' + '&'.join(f'{sh}!${c}${r0}:${c}${r1}' for c in cols) + ')<>"")*'
+    ins = lambda sh, r0, r1, cols, chk: (f'SUMPRODUCT(((' + '+'.join(f'({sh}!${c}${r0}:${c}${r1}<>"")' for c in cols) + ')>0)*'
                                           f'({sh}!${chk}${r0}:${chk}${r1}=""))')
     items = [
         # (检查项, 结果公式, 状态公式（用 C 格）, 处理, 表)

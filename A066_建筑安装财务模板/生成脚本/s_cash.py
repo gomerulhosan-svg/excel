@@ -6,22 +6,15 @@ from common import *
 from layout import *
 
 
-def lhash(text, kw_rng):
-    """一遍扫完：摘要里能对上的关键词里最长的那个（一样长取表里靠前的）的编码＝长度×10000＋(10000−行号)；没对上＝0。关键词区域从第 1 行开始"""
-    return f'SUMPRODUCT(MAX(ISNUMBER(SEARCH({kw_rng},{text}))*({kw_rng}<>"")*(LEN({kw_rng})*10000+10000-ROW({kw_rng}))))'
+def hit(text, sorted_rng):
+    """摘要里对上的第一个关键词在排好的关键词表（长的在前）里是第几个，没对上＝#N/A。
+       只用 MATCH(1, INDEX(ISNUMBER(SEARCH(区域, 文字))*1, 0), 0)：Excel、WPS、LibreOffice 都按数组算"""
+    return f'MATCH(1,INDEX(ISNUMBER(SEARCH({sorted_rng},{text}))*1,0),0)'
 
 
-def ldecode(h, val_rng):
-    return f'IF(N({h})=0,"",INDEX({val_rng},10000-MOD({h},10000)))'
-
-
-def longest(text, kw_rng, val_rng):
-    h = lhash(text, kw_rng)
-    return f'IF({h}=0,"",INDEX({val_rng},10000-MOD({h},10000)))'
-
-
-def longest_kw(text, kw_rng):
-    return longest(text, kw_rng, kw_rng)
+def first_hit(text, sorted_rng):
+    """同上，没对上＝0（用的地方先判断 0，别让 INDEX(区域,0) 取到整列）"""
+    return f'IFERROR({hit(text, sorted_rng)},0)'
 
 
 FA_NAMES = rng(SH_BASE, FA_NAME, FA_R0, FA_R1)
@@ -64,7 +57,8 @@ def build_cash(wb, ctx):
     hidden = [(J_NET, '净额'), (J_YM, '年月'), (J_APJ, '认项目'), (J_ACT, '认类别'), (J_AUN, '认单位'), (J_ALLOC, '分摊归类'),
               (J_LINE, '报表项目'), (J_HANG, '有应付'), (J_UTYPE, '单位类型'), (J_WKIND, '走考勤的人'), (J_DAI, '代X付'),
               (J_ATO, '认对方账户'), (J_TO, '对方账户'), (J_ATYPE, '账户类型'), (J_TOTYPE, '对方类型'), (J_KWC, '关键词类别'),
-              (J_IO, '收支'), (J_PKW, '项目命中词'), (J_PKN, '别的项目'), (J_PKH, '项目码'), (J_UMH, '单位码'), (J_UDH, '代付单位码'), (J_DN, '日期数')]
+              (J_IO, '收支'), (J_PKW, '项目命中词'), (J_PKN, '别的项目'), (J_PKH, '项目码'), (J_UMH, '单位码'), (J_UDH, '代付单位码'), (J_DN, '日期数'),
+              (J_RK1, '收款排号'), (J_RK2, '付款排号'), (J_RK3, '押金排号')]
     for col, t in hidden:
         ws[f'{col}{J_HDR}'] = t
         ws[f'{col}{J_HDR}'].font = F_HELP
@@ -81,17 +75,17 @@ def build_cash(wb, ctx):
         f[J_BAL] = (f'=IF({g(J_ACC)}="","",ROUND(IFERROR(INDEX({AC_OPENS},MATCH({g(J_ACC)},{AC_NAMES},0)),0)'
                     f'+SUMIFS(${J_NET}${J_R0}:{g(J_NET)},${J_ACC}${J_R0}:{g(J_ACC)},{g(J_ACC)})'
                     f'-SUMIFS(${J_NET}${J_R0}:{g(J_NET)},${J_TO}${J_R0}:{g(J_TO)},{g(J_ACC)},${J_LINE}${J_R0}:{g(J_LINE)},"账户互转"),2))')
-        f[J_PKH] = f'=IF({memo}="",0,{lhash(memo, AX_PKW_R)})'
-        f[J_PKW] = f'={ldecode(g(J_PKH), AX_PKW_R)}'
-        f[J_APJ] = f'=IF({g(J_PKW)}="","",INDEX({AX_PKP_R},MATCH({g(J_PKW)},{AX_PKW_R},0)))'
-        f[J_PKN] = (f'=IF(OR({g(J_PKW)}="",{g(J_MPJ)}<>""),0,SUMPRODUCT(({AX_PKW_R}<>"")*ISNUMBER(SEARCH({AX_PKW_R},{memo}))'
-                    f'*ISERROR(SEARCH({AX_PKW_R},{g(J_PKW)}))*({AX_PKP_R}<>{g(J_APJ)})))')
+        f[J_PKH] = f'=IF({memo}="",0,{first_hit(memo, AX_PS_R)})'
+        f[J_PKW] = f'=IF(N({g(J_PKH)})=0,"",INDEX({AX_PS_R},{g(J_PKH)}))'
+        f[J_APJ] = f'=IF(N({g(J_PKH)})=0,"",INDEX({AX_PN_R},{g(J_PKH)}))'
+        f[J_PKN] = (f'=IF(OR({g(J_PKW)}="",{g(J_MPJ)}<>""),0,SUMPRODUCT(ISNUMBER(SEARCH({AX_PS_R},{memo}))'
+                    f'*ISERROR(SEARCH({AX_PS_R},{g(J_PKW)}))*({AX_PN_R}<>{g(J_APJ)})))')
         f[J_DAI] = (f'=IF(ISERROR(FIND("代",{memo})),"",IFERROR(MID({memo},FIND("代",{memo})+1,'
                     f'FIND("付",{memo},FIND("代",{memo}))-FIND("代",{memo})-1),""))')
         dai = g(J_DAI)
-        f[J_UMH] = f'=IF({memo}="",0,{lhash(memo, AX_UKW_R)})'
-        f[J_UDH] = f'=IF({dai}="",0,{lhash(dai, AX_UKW_R)})'
-        um, ud = ldecode(g(J_UMH), AX_UKN_R), ldecode(g(J_UDH), AX_UKN_R)
+        f[J_UMH] = f'=IF({memo}="",0,{first_hit(memo, AX_US_R)})'
+        f[J_UDH] = f'=IF({dai}="",0,{first_hit(dai, AX_US_R)})'
+        um, ud = (f'IF(N({g(h)})=0,"",INDEX({AX_UN_R},{g(h)}))' for h in (J_UMH, J_UDH))
         f[J_AUN] = f'=IF({memo}="","",IF(N({g(J_UDH)})>0,{ud},{um}))'
         f[J_PJ] = f'=IF({g(J_MPJ)}<>"",{g(J_MPJ)},{g(J_APJ)})'
         f[J_UN] = f'=IF({g(J_MUN)}<>"",{g(J_MUN)},{g(J_AUN)})'
@@ -99,8 +93,9 @@ def build_cash(wb, ctx):
         f[J_WKIND] = f'=IF(OR({ut}="管理人员",{ut}="工人"),1,0)'
         f[J_HANG] = f'=IF({un}="",0,IF(COUNTIF({AP_UNITS},{un})+COUNTIF({OAP_UNITS},{un})>0,1,0))'
         dirn = f'IF({g(J_OUT)}<>"","支","收")'
-        kw = (f'IFERROR(INDEX({KW_CATS},MATCH(1,INDEX(ISNUMBER(SEARCH({KW_WORDS},{memo}))*({KW_WORDS}<>"")'
-              f'*((({KW_DIRS}="全")+({KW_DIRS}={dirn}))>0),0),0)),"")')
+        nkw = KW_R1 - KW_R0 + 1
+        kh = lambda col: hit(memo, rng(SH_AUX, col, 1, nkw))
+        kw = f'IFERROR(INDEX({KW_CATS},IF({dirn}="收",{kh(AX_KWI)},{kh(AX_KWO)}))&"","")'
         f[J_KWC] = f'=IF(OR({memo}="",{g(J_NET)}=0),"",{kw})'
         k = g(J_KWC)
         dflt = (f'IF({g(J_WKIND)}=1,"工资",IF({ut}="临时工","临时工工资",IF({ut}="甲方/总包","工程款",'
@@ -113,7 +108,8 @@ def build_cash(wb, ctx):
         f[J_ALLOC] = f'=IF({ct}="","",IFERROR(INDEX({CT_ALLOCS},MATCH({ct},{CT_NAMES},0))&"","？"))'
         cdir = f'IFERROR(INDEX({CT_DIRS},MATCH({ct},{CT_NAMES},0))&"","")'
         f[J_IO] = f'=IF({g(J_NET)}=0,"",IF(OR({cdir}="收",{cdir}="支"),{cdir},IF({g(J_NET)}>0,"收","支")))'
-        am = longest(memo, AX_AKW_R, AX_AKA_R)
+        ah = first_hit(memo, AX_AS_R)
+        am = f'IF({ah}=0,"",INDEX({AX_AN_R},{ah}))'
         f[J_ATO] = f'=IF({ct}<>"账户互转","",IF({un}<>"",IFERROR(INDEX({AX_AKA_R},MATCH({un},{AX_AKW_R},0)),{am}),{am}))'
         f[J_TO] = f'=IF({g(J_TOACC)}<>"",{g(J_TOACC)},{g(J_ATO)})'
         f[J_ATYPE] = f'=IF({g(J_ACC)}="","",IFERROR(INDEX({AC_TYPES_R},MATCH({g(J_ACC)},{AC_NAMES},0))&"",""))'
@@ -121,6 +117,15 @@ def build_cash(wb, ctx):
         apl = f'IF({ut}="材料供应商","应付材料款",IF({ut}="分包","应付分包款",IF({ut}="机械运输","应付机械运输费","应付其他款")))'
         lk = f'IFERROR(INDEX({CT_LINES},MATCH({ct},{CT_NAMES},0))&"","")'
         f[J_LINE] = (f'=IF({g(J_NET)}=0,"",IF(OR({ct}="",{lk}=""),"待分类",IF(OR({ct}="付应付款",{lk}="应付款"),{apl},{lk})))')
+        # 「最后一次」排号：这一笔是这个项目/单位/人的第几次（按日期，同一天的算同一号）
+        dn = g(J_DN)
+        upto = f'{jr(J_DN)},">0",{jr(J_DN)},"<="&{dn}'
+        f[J_RK1] = (f'=IF(AND({g(J_LINE)}="应收账款",{g(J_NET)}>0,{dn}>0,{g(J_PJ)}<>""),{g(J_PJ)}&"|"&'
+                    f'COUNTIFS({jr(J_PJ)},{g(J_PJ)},{jr(J_LINE)},"应收账款",{jr(J_NET)},">0",{upto}),"")')
+        f[J_RK2] = (f'=IF(AND({un}<>"",{g(J_NET)}<0,{dn}>0,OR({ut}="材料供应商",{ut}="分包",{ut}="机械运输",{ut}="其他")),{un}&"|"&'
+                    f'COUNTIFS({jr(J_UN)},{un},{jr(J_NET)},"<0",{upto}),"")')
+        f[J_RK3] = (f'=IF(AND({g(J_LINE)}="其他应收款",{dn}>0,{un}<>""),{un}&"|"&'
+                    f'COUNTIFS({jr(J_UN)},{un},{jr(J_LINE)},"其他应收款",{upto}),"")')
         need = f'IFERROR(INDEX({CT_NEEDS},MATCH({ct},{CT_NAMES},0))&"","")'
         ln = g(J_LINE)
         direct = f'OR({ln}="材料费",{ln}="人工费",{ln}="分包费",{ln}="机械运输费",{ln}="其他直接费",{ln}="票据贴息",{ln}="应收账款")'
@@ -151,7 +156,7 @@ def build_cash(wb, ctx):
                     f'IF(N({g(J_IN)})<0,"⚠ 收入填了负数，已按支出算",'
                     f'IF(N({g(J_OUT)})<0,"↩ 冲回（退款）",'
                     f'IF(AND({g(J_NET)}<0,{ct}<>"固定资产购置",{ct}<>"付应付款",ISNUMBER({g(J_DATE)}),'
-                    f'IFERROR(SUMPRODUCT(ISNUMBER(SEARCH({FA_NAMES},{memo}))*({FA_NAMES}<>"")*(ABS({g(J_DN)}-{FA_DATES})<=30)),0)>0),'
+                    f'IFERROR(SUMPRODUCT(ISNUMBER(SEARCH({FA_NAMES},{memo}))*({FA_NAMES}<>"")*(({g(J_DN)}-{FA_DATES})<=30)*(({g(J_DN)}-{FA_DATES})>=-30)),0)>0),'
                     f'"⚠ 像是在买【基础资料】⑥ 登记的车/设备：类别改成「固定资产购置」，不然成本算两遍",'
                     f'IF(AND(OR({ct}="材料费",{ct}="分包费",{ct}="机械运输费",{ct}="其他直接费"),{un}="",{g(J_PJ)}<>"",'
                     f'COUNTIFS({apr(AP_PJ)},{g(J_PJ)},{apr(AP_AMT)},-{g(J_NET)})>0),'

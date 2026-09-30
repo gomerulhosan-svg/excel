@@ -54,11 +54,11 @@ def fa_dep(ym0, ym1, pj=None, company=False):
     M = rng(SH_BASE, FA_DEP_M, FA_R0, FA_R1)
     P = rng(SH_BASE, FA_PJ, FA_R0, FA_R1)
     a, b = _idx(ym0), _idx(ym1)
-    hi = f'(({E}+{b})-ABS({E}-{b}))/2'          # MIN(E, b)
-    lo = f'(({S}+{a})+ABS({S}-{a}))/2'          # MAX(S, a)
+    hi = f'({E}+({b}-{E})*({b}<{E}))'          # MIN(E, b)（只用加减乘和比较，WPS 也按数组算）
+    lo = f'({S}+({a}-{S})*({a}>{S}))'          # MAX(S, a)
     n = f'({hi}-{lo}+1)'
     cond = f'*({P}={pj})' if pj else (f'*({P}="")' if company else '')
-    return f'SUMPRODUCT({M}*(({n}+ABS({n}))/2){cond})'
+    return f'SUMPRODUCT({M}*{n}*({n}>0){cond})'
 
 
 def vat_out(ym0, ym1, pj=None):

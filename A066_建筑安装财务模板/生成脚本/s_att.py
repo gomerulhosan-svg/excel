@@ -46,7 +46,10 @@ def build_att(wb, ctx):
         ws[g(AT_YM)] = f'=IF(ISNUMBER({mon}),YEAR({mon})*100+MONTH({mon}),"")'
         ws[g(AT_DAYS)] = f'=IF({nm}="","",' + '+'.join(f'N({g(c)})' for c in AT_DDS) + ')'
         ok = f'AND({nm}<>"",ISNUMBER({mon}))'
-        ws[g(AT_EFF)] = f'=IF({ok},SUMPRODUCT(MAX(({RT_NAMES}={nm})*({RT_DNS}<=EOMONTH({mon},0))*{RT_DNS})),0)'
+        # 这个月最后一天有效的那条：他有几条是这天以前（含）起的＝c，就是他的第 c 条
+        c1 = f'COUNTIFS({RT_NAMES},{nm},{RT_DNS},">0",{RT_DNS},"<="&EOMONTH({mon},0))'
+        nth = lambda c: f'IFERROR(INDEX({RT_DNS},MATCH({nm}&"|"&{c},{RT_KEYS},0)),0)'
+        ws[g(AT_EFF)] = f'=IF({ok},IF({c1}=0,0,{nth(c1)}),0)'
         ws[g(AT_SDAY)] = f'=IF(N({g(AT_EFF)})=0,0,SUMIFS({RT_DAYS},{RT_NAMES},{nm},{RT_DNS},{g(AT_EFF)}))'
         ws[g(AT_SMON)] = f'=IF(N({g(AT_EFF)})=0,0,SUMIFS({RT_MONS},{RT_NAMES},{nm},{RT_DNS},{g(AT_EFF)}))'
         ws[g(AT_WAY)] = f'=IF({nm}="","",IF({g(AT_SMON)}>0,"月薪","日薪"))'
@@ -61,8 +64,9 @@ def build_att(wb, ctx):
             ws[g(ac)] = f'=IF(OR({g(pc)}="",N({g(dc)})=0,N({g(AT_DAYS)})=0),0,ROUND(N({g(AT_PAY)})*{g(dc)}/{g(AT_DAYS)},2))'
         proj_part = '+'.join(f'{g(ac)}*({g(pc)}<>"{CO_PSEUDO}")' for pc, ac in zip(AT_PJS, AT_AMTS))
         ws[g(AT_COAMT)] = f'=IF({nm}="",0,ROUND(N({g(AT_PAY)})-({proj_part}),2))'
-        ws[g(AT_MIDRAISE)] = (f'=IF(NOT({ok}),0,IF(COUNTIFS({RT_NAMES},{nm},{RT_DNS},">0",{RT_DNS},"<="&({mon}-DAY({mon})+1))=0,0,SUMPRODUCT(MAX(({RT_NAMES}={nm})*({RT_DNS}>{mon}-DAY({mon})+1)'
-                              f'*({RT_DNS}<=EOMONTH({mon},0))*{RT_DNS}))))')
+        # 月中调价：1 号已经有单价，而且 2 号～月底又有新的一条（取最后那条的日期）
+        c0 = f'COUNTIFS({RT_NAMES},{nm},{RT_DNS},">0",{RT_DNS},"<="&({mon}-DAY({mon})+1))'
+        ws[g(AT_MIDRAISE)] = f'=IF(NOT({ok}),0,IF(OR({c0}=0,{c1}<={c0}),0,{nth(c1)}))'
         ws[g(AT_KIND)] = f'=IF({nm}="","",IFERROR(INDEX({UN_TYPES_R},MATCH({nm},{UN_NAMES},0))&"",""))'
         badpj = 'OR(' + ','.join(f'AND({g(pc)}<>"",{g(pc)}<>"{CO_PSEUDO}",COUNTIF({PJ_NAMES},{g(pc)})=0)' for pc in AT_PJS) + ')'
         daynopj = 'OR(' + ','.join(f'AND({g(pc)}="",N({g(dc)})<>0)' for pc, dc in zip(AT_PJS, AT_DDS)) + ')'

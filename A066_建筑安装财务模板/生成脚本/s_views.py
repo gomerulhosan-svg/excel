@@ -391,10 +391,15 @@ def build_ar(wb, ctx):
         ws[f'M{r}'] = f'=IF({nm}="","",ROUND(E{r}*N({P(PJ_RET)}),2))'
         ws[f'N{r}'] = f'=IF(OR({nm}="",NOT(ISNUMBER({P(PJ_RETD)}))),"",{P(PJ_RETD)})'
         ws[f'O{r}'] = f'=IF({nm}="","",MAX(0,I{r}-IF(AND(ISNUMBER(N{r}),N{r}<={Ed}),0,MIN(MAX(I{r},0),M{r}))))'
-        last_j = f'SUMPRODUCT(MAX(({jr(J_PJ)}={nm})*({jr(J_LINE)}="应收账款")*({jr(J_NET)}>0)*({jr(J_DN)}<={Ed})*{jr(J_DN)}))'
-        last_o = (f'SUMPRODUCT(MAX(({ofr(OF_PJ)}={nm})*(({ofr(OF_TYPE)}="总包代发工资")+({ofr(OF_TYPE)}="总包代付材料分包款"))'
-                  f'*({ofr(OF_DN)}<={Ed})*{ofr(OF_DN)}))')
-        ws[f'P{r}'] = f'=IF({nm}="","",IF(MAX({last_j},{last_o})=0,"",MAX({last_j},{last_o})))'
+        # 最后回款日：截止日以前收了几次＝c，第 c 次那天（流水、代发抵账各取一个，取晚的）
+        cj = f'COUNTIFS({jr(J_PJ)},{nm},{jr(J_LINE)},"应收账款",{jr(J_NET)},">0",{jr(J_DN)},">0",{jr(J_DN)},"<="&{Ed})'
+        co = '+'.join(f'COUNTIFS({ofr(OF_PJ)},{nm},{ofr(OF_TYPE)},"{t}",{ofr(OF_DN)},">0",{ofr(OF_DN)},"<="&{Ed})'
+                      for t in ('总包代发工资', '总包代付材料分包款'))
+        last_j = f'IF({cj}=0,0,IFERROR(INDEX({jr(J_DN)},MATCH({nm}&"|"&{cj},{jr(J_RK1)},0)),0))'
+        last_o = f'IF(({co})=0,0,IFERROR(INDEX({ofr(OF_DN)},MATCH({nm}&"|"&({co}),{ofr(OF_RK)},0)),0))'
+        ws[f'AX{r}'] = f'=IF({nm}="",0,MAX({last_j},{last_o}))'
+        ws[f'AX{r}'].font = F_HELP
+        ws[f'P{r}'] = f'=IF(N($AX{r})=0,"",$AX{r})'
         ws[f'Q{r}'] = f'=IF(OR({nm}="",N(I{r})<=0),"",IF(P{r}="","建账后没收过",{Ed}-P{r}))'
         win = lambda days: (f'SUMIFS({rvr(RV_AMT)},{rvr(RV_PJ)},{nm},{rvr(RV_AMT)},">0",{rvr(RV_DATE)},">"&({Ed}-{days}),{rvr(RV_DATE)},"<="&{Ed})')
         B = f'MAX(I{r},0)'
@@ -430,6 +435,7 @@ def build_ar(wb, ctx):
         put(ws, f'{c}4', None, fill_=FILL_TOT)
     ws.freeze_panes = f'C{AR_R0}'
     ws.auto_filter.ref = f'A{AR_R0 - 1}:Y{R1}'
+    hide(ws, 'AX')
     return ws
 
 
@@ -489,8 +495,10 @@ def build_aps(wb, ctx):
         ws[f'G{r}'] = f'=IF(OR({ix}=0,N(D{r})=0),"",E{r}/D{r})'
         ws[f'H{r}'] = f'=IF({ix}=0,"",{b(BX_INVIN)})'
         ws[f'I{r}'] = f'=IF({ix}=0,"",D{r}-H{r})'
-        lp = f'SUMPRODUCT(MAX(({jr(J_UN)}={nm})*({jr(J_NET)}<0)*({jr(J_DN)}<={AX_E})*{jr(J_DN)}))'
-        ws[f'J{r}'] = f'=IF({ix}=0,"",IF({lp}=0,"",{lp}))'
+        c = f'COUNTIFS({jr(J_UN)},{nm},{jr(J_NET)},"<0",{jr(J_DN)},">0",{jr(J_DN)},"<="&{AX_E})'
+        ws[f'AX{r}'] = f'=IF({ix}=0,0,IF({c}=0,0,IFERROR(INDEX({jr(J_DN)},MATCH({nm}&"|"&{c},{jr(J_RK2)},0)),0)))'
+        ws[f'AX{r}'].font = F_HELP
+        ws[f'J{r}'] = f'=IF(OR({ix}=0,N($AX{r})=0),"",$AX{r})'
         pcols = []
         for j in range(APS_PJ):
             c = CL(12 + j)
@@ -739,12 +747,12 @@ def build_per(wb, ctx):
         ws[f'Q{r}'] = f'=IF({ix}=0,"",-SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"其他应收款",{jr(J_NET)},"<0",{rj}))'
         ws[f'R{r}'] = f'=IF({ix}=0,"",SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"其他应收款",{jr(J_NET)},">0",{rj}))'
         ws[f'S{r}'] = f'=IF({ix}=0,"",Q{r}-R{r})'
-        lp = (f'SUMPRODUCT(MAX(({jr(J_UN)}={nm})*({jr(J_LINE)}="其他应收款")*({jr(J_DN)}>0)*({jr(J_DN)}<={AX_E})'
-              f'*({jr(J_DN)}*10000+ROW({jr(J_DN)}))))')
-        ws[f'U{r}'] = f'=IF({ix}=0,0,{lp})'
+        # 最后一笔：截止日以前他有几笔＝c，第 c 笔在流水第几行
+        c = f'COUNTIFS({jr(J_UN)},{nm},{jr(J_LINE)},"其他应收款",{jr(J_DN)},">0",{jr(J_DN)},"<="&{AX_E})'
+        ws[f'U{r}'] = f'=IF({ix}=0,0,IF({c}=0,0,IFERROR(MATCH({nm}&"|"&{c},{jr(J_RK3)},0),0)))'
         ws[f'U{r}'].font = F_HELP
-        ws[f'T{r}'] = f'=IF(N(U{r})=0,"",INT(U{r}/10000))'
-        ws[f'V{r}'] = f'=IF(N(U{r})=0,"",INDEX({SH_CASH}!${J_PJ}:${J_PJ},MOD(U{r},10000))&"")'
+        ws[f'T{r}'] = f'=IF(N(U{r})=0,"",INDEX({jr(J_DN)},U{r}))'
+        ws[f'V{r}'] = f'=IF(N(U{r})=0,"",INDEX({jr(J_PJ)},U{r})&"")'
     r = b0 + BN
     put(ws, f'P{r}', '建账前没退的（期初）', F_TXT, align=AL)
     put(ws, f'S{r}', f'=N({oo(1)})', F_AUTO, fmt=MONEY, align=AR)

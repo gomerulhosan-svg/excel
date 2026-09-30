@@ -136,6 +136,13 @@ def build_off(wb, ctx):
         ws[g(OF_YM)] = _ym(g(OF_DATE))
         ws[g(OF_DN)] = f'=IF(ISNUMBER({g(OF_DATE)}),INT({g(OF_DATE)}),0)'
         ws[g(OF_DN)].font = F_HELP
+        # 项目|第几次代发代付（按日期）：应收账龄里「最后回款日」用
+        pay2 = f'OR({g(OF_TYPE)}="总包代发工资",{g(OF_TYPE)}="总包代付材料分包款")'
+        upto = f'{ofr(OF_DN)},">0",{ofr(OF_DN)},"<="&{g(OF_DN)}'
+        ws[g(OF_RK)] = (f'=IF(AND({pay2},{g(OF_DN)}>0,{g(OF_PJ)}<>""),{g(OF_PJ)}&"|"&'
+                        f'(COUNTIFS({ofr(OF_PJ)},{g(OF_PJ)},{ofr(OF_TYPE)},"总包代发工资",{upto})'
+                        f'+COUNTIFS({ofr(OF_PJ)},{g(OF_PJ)},{ofr(OF_TYPE)},"总包代付材料分包款",{upto})),"")')
+        ws[g(OF_RK)].font = F_HELP
         ws[g(OF_WTYPE)] = f'=IF({g(OF_WHO)}="","",IFERROR(INDEX({UN_TYPES_R},MATCH({g(OF_WHO)},{UN_NAMES},0))&"",""))'
         wt = g(OF_WTYPE)
         ws[g(OF_CHK)] = (f'=IF({blank},"",IF(NOT(ISNUMBER({g(OF_DATE)})),"✗ 日期要填成日期",'
@@ -156,7 +163,7 @@ def build_off(wb, ctx):
     dv_list(ws, f'{OF_PJ}{OF_R0}:{OF_PJ}{OF_R1}', f'={PJ_NAMES}')
     dv_list(ws, f'{OF_TYPE}{OF_R0}:{OF_TYPE}{OF_R1}', '"' + ','.join(OF_TYPES) + '"')
     dv_list(ws, f'{OF_WHO}{OF_R0}:{OF_WHO}{OF_R1}', f'={UN_NAMES}', stop=False)
-    hide(ws, OF_DN)
+    hide(ws, OF_DN, OF_RK)
     ws.freeze_panes = f'D{OF_R0}'
     for i, row in enumerate(ctx.get('off_rows', [])):
         r = OF_R0 + i

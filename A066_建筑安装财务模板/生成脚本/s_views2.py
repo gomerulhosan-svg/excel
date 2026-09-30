@@ -191,7 +191,11 @@ def build_pays(wb, ctx):
         ws[f'A{r}'] = f'=IF({ix}=0,"",{k + 1})'
         ws[f'B{r}'] = f'=IF({ix}=0,"",INDEX({UN_NAMES},{ix}))'
         ws[f'C{r}'] = f'=IF({ix}=0,"",INDEX({UN_TYPES_R},{ix}))'
-        eff = f'SUMPRODUCT(MAX(({RT_NAMES}={nm})*({RT_DNS}<={AX_E})*{RT_DNS}))'
+        # 截止日有效的那条（他的第 c 条，c＝截止日以前起的条数）
+        c = f'COUNTIFS({RT_NAMES},{nm},{RT_DNS},">0",{RT_DNS},"<="&{AX_E})'
+        ws[f'AG{r}'] = f'=IF({ix}=0,0,IF({c}=0,0,IFERROR(INDEX({RT_DNS},MATCH({nm}&"|"&{c},{RT_KEYS},0)),0)))'
+        ws[f'AG{r}'].font = F_HELP
+        eff = f'$AG{r}'
         ws[f'D{r}'] = (f'=IF({ix}=0,"",IF({eff}=0,"",SUMIFS({RT_DAYS},{RT_NAMES},{nm},{RT_DNS},{eff})'
                        f'+SUMIFS({RT_MONS},{RT_NAMES},{nm},{RT_DNS},{eff})))')
         ws[f'E{r}'] = f'=IF({ix}=0,"",{b(BX_WG_B)})'
@@ -213,8 +217,7 @@ def build_pays(wb, ctx):
             ws[f'{c}{r}'] = f'=IF({ix}=0,"",SUMIFS({atr(AT_PAY)},{atr(AT_NAME)},{nm},{atr(AT_YM)},{ym}))'
         # 月薪的人：从「入职」（没填就用工资标准最早那天、建账月）到截止月，哪个月应发是 0 就算漏录（离职以后的不算）
         u = lambda col: f'INDEX({rng(SH_UNIT, col, UN_R0, UN_R1)},{ix})'
-        rt0x = f'SUMPRODUCT(MAX(({RT_NAMES}={nm})*({RT_DNS}>0)*(99999-{RT_DNS})))'
-        rt0 = f'IF({rt0x}=0,0,99999-{rt0x})'
+        rt0 = f'IFERROR(INDEX({RT_DNS},MATCH({nm}&"|1",{RT_KEYS},0)),0)'        # 工资标准里他最早那条
         st = f'IF(ISNUMBER({u(UN_IN)}),{u(UN_IN)},{rt0})'
         ws[f'AE{r}'] = f'=IF({ix}=0,0,MAX({y0},IF(N({st})=0,0,YEAR({st})*100+MONTH({st}))))'
         ws[f'AF{r}'] = f'=IF({ix}=0,999912,IF(ISNUMBER({u(UN_OUT)}),YEAR({u(UN_OUT)})*100+MONTH({u(UN_OUT)}),999912))'
@@ -237,7 +240,7 @@ def build_pays(wb, ctx):
         put(ws, f'{c}4', None, fill_=FILL_TOT)
     put(ws, 'AD4', f'=IF(COUNTIF(AD{R0}:AD{R1},"⚠*")>0,COUNTIF(AD{R0}:AD{R1},"⚠*")&"个管理人员有月份没录考勤","")', F_RED, FILL_TOT)
     put(ws, 'E3', f'=IF({cnt(HC, 1, nu)}>{PAYS_ROWS},"⚠ 有"&{cnt(HC, 1, nu)}&"人，只列前{PAYS_ROWS}人","")', F_RED, border=False)
-    hide(ws, 'AZ', HC, 'AE', 'AF')
+    hide(ws, 'AZ', HC, 'AE', 'AF', 'AG')
     ws.freeze_panes = f'C{R0}'
     ws.auto_filter.ref = f'A{H0}:{last}{R1}'
     print_setup(ws, f'{H0}:{H0}')

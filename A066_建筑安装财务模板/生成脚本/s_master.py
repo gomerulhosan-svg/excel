@@ -110,7 +110,11 @@ def build_rate(wb, ctx):
             F_AUTO, FILL_AUTO, align=AL)
         ws[g(RT_DN)] = f'=IF(ISNUMBER({g(RT_DATE)}),INT({g(RT_DATE)}),0)'
         ws[g(RT_DN)].font = F_HELP
-    hide(ws, RT_DN)
+        # 姓名|第几条（按日期排；同一天两条按上下顺序）：查某天有效的单价、最早那条
+        ws[g(RT_KEY)] = (f'=IF(OR({g(RT_NAME)}="",{g(RT_DN)}=0),"",{g(RT_NAME)}&"|"&(COUNTIFS({RT_NAMES},{g(RT_NAME)},{RT_DNS},">0",{RT_DNS},"<"&{g(RT_DN)})'
+                         f'+COUNTIFS(${RT_NAME}${RT_R0}:{g(RT_NAME)},{g(RT_NAME)},${RT_DN}${RT_R0}:{g(RT_DN)},{g(RT_DN)})))')
+        ws[g(RT_KEY)].font = F_HELP
+    hide(ws, RT_DN, RT_KEY)
     for i, (n, d, day, mon, note) in enumerate(ctx['rates']):
         r = RT_R0 + i
         ws[f'{RT_NAME}{r}'], ws[f'{RT_DATE}{r}'] = n, d

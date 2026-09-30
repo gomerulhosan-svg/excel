@@ -136,7 +136,8 @@ def build_base(wb, ctx):
 
 
 def build_aux(wb, ctx):
-    """_辅助：A/B 项目关键词 → 项目；C/D 单位人员名字和别名 → 标准名；E 公司管理＋项目（考勤下拉）；F/G 账户关键词 → 账户；H 报表项目清单"""
+    """_辅助：A/B 项目关键词 → 项目；C/D 单位人员名字和别名 → 标准名；E 公司管理＋项目（考勤下拉）；F/G 账户关键词 → 账户；H 报表项目清单；
+       P～AA 上面三张关键词表按长短排好"""
     ws = wb.create_sheet(SH_AUX)
     n = PJ_R1 - PJ_R0 + 1
     for i in range(n):
@@ -163,6 +164,21 @@ def build_aux(wb, ctx):
         ws[f'{AX_AKA}{i + 1}'] = f'={SH_BASE}!${AC_NAME}${a}&""'
         ws[f'{AX_AKW}{na + i + 1}'] = f'=IF({SH_BASE}!${AC_TYPE}${a}="个人户",TRIM({SH_BASE}!${AC_OWNER}${a}&""),"")'
         ws[f'{AX_AKA}{na + i + 1}'] = f'={SH_BASE}!${AC_NAME}${a}&""'
+    # P～AA：三张关键词表按长短排好（流水认项目、单位、对方账户用：排在前面的先对上＝最长的）
+    for W, I, S, N, kw, val, n_ in ((AX_PW, AX_PI, AX_PS, AX_PN, AX_PKW, AX_PKP, AX_PKW_N),
+                                    (AX_UW, AX_UI, AX_US, AX_UN, AX_UKW, AX_UKN, AX_UKW_N),
+                                    (AX_AW, AX_AI, AX_AS, AX_AN, AX_AKW, AX_AKA, AX_AKW_N)):
+        wr = f'${W}$1:${W}${n_}'
+        for r in range(1, n_ + 1):
+            ws[f'{W}{r}'] = f'=IF({kw}{r}="",0,LEN({kw}{r})*10000+{10000 - r})'
+            ws[f'{I}{r}'] = f'=IF(LARGE({wr},{r})=0,0,MATCH(LARGE({wr},{r}),{wr},0))'
+            ws[f'{S}{r}'] = f'=IF({I}{r}=0,"{AX_NONE}",INDEX(${kw}$1:${kw}${n_},{I}{r}))'
+            ws[f'{N}{r}'] = f'=IF({I}{r}=0,"",INDEX(${val}$1:${val}${n_},{I}{r}))'
+    for i in range(KW_R1 - KW_R0 + 1):
+        k = KW_R0 + i
+        w, d = f'{SH_BASE}!${KW_WORD}${k}', f'{SH_BASE}!${KW_DIR}${k}'
+        for col, io in ((AX_KWI, '收'), (AX_KWO, '支')):
+            ws[f'{col}{i + 1}'] = f'=IF(AND({w}<>"",OR({d}="全",{d}="{io}")),{w}&"","{AX_NONE}")'
     lines = [n for n in cats.IS_NAMES if n not in ('营业收入', '税金估算')] + ['应收账款', '应付款', '应付职工薪酬', '短期借款', '其他应收款', '应交税费', '应付设备款', '实收资本',
                              '账户互转']
     for i, l in enumerate(lines):
