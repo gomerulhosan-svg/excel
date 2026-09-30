@@ -8,8 +8,8 @@ from layout import *
 
 def hit(text, sorted_rng):
     """摘要里对上的第一个关键词在排好的关键词表（长的在前）里是第几个，没对上＝#N/A。
-       只用 MATCH(1, INDEX(ISNUMBER(SEARCH(区域, 文字))*1, 0), 0)：Excel、WPS、LibreOffice 都按数组算"""
-    return f'MATCH(1,INDEX(ISNUMBER(SEARCH({sorted_rng},{text}))*1,0),0)'
+       只用 MATCH(1, INDEX(ISNUMBER(SEARCH(区域, 文字))*(区域<>""), 0), 0)：Excel、WPS、LibreOffice 都按数组算"""
+    return f'MATCH(1,INDEX(ISNUMBER(SEARCH({sorted_rng},{text}))*({sorted_rng}<>""),0),0)'
 
 
 def first_hit(text, sorted_rng):
@@ -78,8 +78,8 @@ def build_cash(wb, ctx):
         f[J_PKH] = f'=IF({memo}="",0,{first_hit(memo, AX_PS_R)})'
         f[J_PKW] = f'=IF(N({g(J_PKH)})=0,"",INDEX({AX_PS_R},{g(J_PKH)}))'
         f[J_APJ] = f'=IF(N({g(J_PKH)})=0,"",INDEX({AX_PN_R},{g(J_PKH)}))'
-        f[J_PKN] = (f'=IF(OR({g(J_PKW)}="",{g(J_MPJ)}<>""),0,SUMPRODUCT(ISNUMBER(SEARCH({AX_PS_R},{memo}))'
-                    f'*ISERROR(SEARCH({AX_PS_R},{g(J_PKW)}))*({AX_PN_R}<>{g(J_APJ)})))')
+        f[J_PKN] = (f'=IF(OR({g(J_PKW)}="",{g(J_MPJ)}<>""),0,SUMPRODUCT(ISNUMBER(SEARCH({AX_PS_R},{memo}))*({AX_PS_R}<>"")'
+                    f'*(1-ISNUMBER(SEARCH({AX_PS_R},{g(J_PKW)})))*({AX_PN_R}<>{g(J_APJ)})))')
         f[J_DAI] = (f'=IF(ISERROR(FIND("代",{memo})),"",IFERROR(MID({memo},FIND("代",{memo})+1,'
                     f'FIND("付",{memo},FIND("代",{memo}))-FIND("代",{memo})-1),""))')
         dai = g(J_DAI)
@@ -122,10 +122,12 @@ def build_cash(wb, ctx):
         upto = f'{jr(J_DN)},">0",{jr(J_DN)},"<="&{dn}'
         f[J_RK1] = (f'=IF(AND({g(J_LINE)}="应收账款",{g(J_NET)}>0,{dn}>0,{g(J_PJ)}<>""),{g(J_PJ)}&"|"&'
                     f'COUNTIFS({jr(J_PJ)},{g(J_PJ)},{jr(J_LINE)},"应收账款",{jr(J_NET)},">0",{upto}),"")')
-        f[J_RK2] = (f'=IF(AND({un}<>"",{g(J_NET)}<0,{dn}>0,OR({ut}="材料供应商",{ut}="分包",{ut}="机械运输",{ut}="其他")),{un}&"|"&'
+        f[J_RK2] = (f'=IF(AND({un}<>"",{g(J_NET)}<0,{dn}>0),{un}&"|"&'
                     f'COUNTIFS({jr(J_UN)},{un},{jr(J_NET)},"<0",{upto}),"")')
+        # 押金按行取项目：同一天几笔再按上下排（取最下面那笔）
         f[J_RK3] = (f'=IF(AND({g(J_LINE)}="其他应收款",{dn}>0,{un}<>""),{un}&"|"&'
-                    f'COUNTIFS({jr(J_UN)},{un},{jr(J_LINE)},"其他应收款",{upto}),"")')
+                    f'(COUNTIFS({jr(J_UN)},{un},{jr(J_LINE)},"其他应收款",{jr(J_DN)},">0",{jr(J_DN)},"<"&{dn})'
+                    f'+COUNTIFS(${J_UN}${J_R0}:{un},{un},${J_LINE}${J_R0}:{g(J_LINE)},"其他应收款",${J_DN}${J_R0}:{dn},{dn})),"")')
         need = f'IFERROR(INDEX({CT_NEEDS},MATCH({ct},{CT_NAMES},0))&"","")'
         ln = g(J_LINE)
         direct = f'OR({ln}="材料费",{ln}="人工费",{ln}="分包费",{ln}="机械运输费",{ln}="其他直接费",{ln}="票据贴息",{ln}="应收账款")'

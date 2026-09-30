@@ -156,13 +156,12 @@ AX_PKP_R = rng(SH_AUX, AX_PKP, 1, AX_PKW_N)
 AX_UKW_R = rng(SH_AUX, AX_UKW, 1, AX_UKW_N)
 AX_UKN_R = rng(SH_AUX, AX_UKN, 1, AX_UKW_N)
 AX_ALL_R = f"{SH_AUX}!${AX_ALL}$1:${AX_ALL}${AX_ALL_N}"
-# P～X：上面三张关键词表按「长的在前（一样长表里靠前的在前）」排好，空的放 AX_NONE（摘要里不会有）。
-#   流水认项目/单位/对方账户＝MATCH(1, INDEX(ISNUMBER(SEARCH(排好的词, 摘要))*1, 0), 0)：第一个对上的就是最长的（WPS 也能算）
-AX_NONE = '‡‡'
+# P～AA：上面三张关键词表按「长的在前（一样长表里靠前的在前）」排好，空的排在最后。
+#   流水认项目/单位/对方账户＝MATCH(1, INDEX(ISNUMBER(SEARCH(排好的词, 摘要))*(排好的词<>""), 0), 0)：第一个对上的就是最长的（WPS 也能算）
 AX_PW, AX_PI, AX_PS, AX_PN = 'P', 'Q', 'R', 'S'      # 项目：权重、排第几的是哪行、词、项目
 AX_UW, AX_UI, AX_US, AX_UN = 'T', 'U', 'V', 'W'      # 单位
 AX_AW, AX_AI, AX_AS, AX_AN = 'X', 'Y', 'Z', 'AA'     # 账户
-AX_KWI, AX_KWO = 'AB', 'AC'                          # 收支类别关键词：收款能用的、付款能用的（不能用的放 AX_NONE），跟【基础资料】③ 一行对一行
+AX_KWI, AX_KWO = 'AB', 'AC'                          # 收支类别关键词：收款能用的、付款能用的（不能用的放空），跟【基础资料】③ 一行对一行
 AX_PS_R = rng(SH_AUX, AX_PS, 1, AX_PKW_N)
 AX_PN_R = rng(SH_AUX, AX_PN, 1, AX_PKW_N)
 AX_US_R = rng(SH_AUX, AX_US, 1, AX_UKW_N)

@@ -29,7 +29,7 @@ def build_chk(wb, ctx):
     RT_CHKS = rng(SH_RATE, RT_CHK, RT_R0, RT_R1)
     dup = lambda r: f'SUMPRODUCT(({r}<>"")*(COUNTIF({r},{r})>1))'
     used = lambda r: f'SUMPRODUCT(--({r}<>""))'
-    wild = lambda r: f'SUMPRODUCT(--((ISNUMBER(FIND("*",{r}))+ISNUMBER(FIND("?",{r}))+ISNUMBER(FIND("~",{r})))>0))'
+    wild = lambda r: f'(COUNTIF({r},"*~**")+COUNTIF({r},"*~?*")+COUNTIF({r},"*~~*"))'
     # 插进来的行没有公式：有内容、校验格却是空的
     ins = lambda sh, r0, r1, cols, chk: (f'SUMPRODUCT(((' + '+'.join(f'({sh}!${c}${r0}:${c}${r1}<>"")' for c in cols) + ')>0)*'
                                           f'({sh}!${chk}${r0}:${chk}${r1}=""))')

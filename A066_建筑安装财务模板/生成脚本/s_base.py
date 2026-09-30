@@ -172,13 +172,13 @@ def build_aux(wb, ctx):
         for r in range(1, n_ + 1):
             ws[f'{W}{r}'] = f'=IF({kw}{r}="",0,LEN({kw}{r})*10000+{10000 - r})'
             ws[f'{I}{r}'] = f'=IF(LARGE({wr},{r})=0,0,MATCH(LARGE({wr},{r}),{wr},0))'
-            ws[f'{S}{r}'] = f'=IF({I}{r}=0,"{AX_NONE}",INDEX(${kw}$1:${kw}${n_},{I}{r}))'
+            ws[f'{S}{r}'] = f'=IF({I}{r}=0,"",INDEX(${kw}$1:${kw}${n_},{I}{r})&"")'
             ws[f'{N}{r}'] = f'=IF({I}{r}=0,"",INDEX(${val}$1:${val}${n_},{I}{r}))'
     for i in range(KW_R1 - KW_R0 + 1):
         k = KW_R0 + i
         w, d = f'{SH_BASE}!${KW_WORD}${k}', f'{SH_BASE}!${KW_DIR}${k}'
         for col, io in ((AX_KWI, '收'), (AX_KWO, '支')):
-            ws[f'{col}{i + 1}'] = f'=IF(AND({w}<>"",OR({d}="全",{d}="{io}")),{w}&"","{AX_NONE}")'
+            ws[f'{col}{i + 1}'] = f'=IF(OR({d}="全",{d}="{io}"),{w}&"","")'
     lines = [n for n in cats.IS_NAMES if n not in ('营业收入', '税金估算')] + ['应收账款', '应付款', '应付职工薪酬', '短期借款', '其他应收款', '应交税费', '应付设备款', '实收资本',
                              '账户互转']
     for i, l in enumerate(lines):
