@@ -38,6 +38,36 @@ def _balanced(f):
     return depth == 0 and not q
 
 
+def _fit_widths(wb):
+    """日期、金额列放宽，免得 Excel/WPS 里显示成 ####（微软雅黑的数字比默认字体宽）"""
+    from openpyxl.utils import get_column_letter
+    for ws in wb.worksheets:
+        need = {}
+        anchors = {(m.min_row, m.min_col) for m in ws.merged_cells.ranges if m.max_col > m.min_col}
+        for row in ws.iter_rows():
+            for c in row:
+                if (c.row, c.column) in anchors:
+                    continue
+                fmt = c.number_format or ''
+                sz = (c.font.sz or 10) if c.font is not None else 10
+                if c.value is None or ws.column_dimensions[c.column_letter].hidden:
+                    continue
+                w = 0
+                if 'yy' in fmt:
+                    w = 12.5 if 'm/d' not in fmt or 'yyyy' in fmt else 8
+                elif '#,##0.00' in fmt:
+                    w = 13.5
+                elif '#,##0' in fmt:
+                    w = 11
+                if w:
+                    w = w * max(1.0, sz / 10.0) + (1.5 if (c.font is not None and c.font.b) else 0)
+                    need[c.column_letter] = max(need.get(c.column_letter, 0), w)
+        for col, w in need.items():
+            cd = ws.column_dimensions[col]
+            if (cd.width or 8.43) < w:
+                cd.width = w
+
+
 def _check_formulas(wb):
     bad = []
     for ws in wb.worksheets:
@@ -104,6 +134,7 @@ def build(scenario=None):
                 rows_, land = PRINT[n]
                 print_setup(ws, rows_, landscape=land)
     _check_formulas(wb)
+    _fit_widths(wb)
     for ws in wb.worksheets:
         ws.sheet_view.tabSelected = False
     wb.active = 0
