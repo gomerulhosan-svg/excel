@@ -34,7 +34,7 @@ def build_pay(wb, ctx):
     ws = _sheet(wb, SH_PAY, C_HOME, '工 资 表（选月份 · 每人在各工地的天数和工资 · 本月发了多少、还欠多少）',
                 '💡 黄格子选月份（空着＝最近录了考勤的那个月）。全部从【考勤工资】自动来：每人一行，各工地天数、日工资、各工地小计，跟你原来的工资表一个样。'
                 '右边是这个人的欠薪账：上月底欠他的 ＋ 本月实发应付 − 本月发放（【资金流水】这个月发给他的，类别「工资」，不管发的是哪个月的）'
-                '− 总包代发（【代发抵账】）＋ 已退回（工人多拿了退回来的）＝ 月底欠薪（负数＝多发了，他欠公司）。打印：筛掉空行，已设好横向一页宽。',
+                '− 总包代发（【代发抵账】）＋ 已退回（工人多拿了退回来的）＝ 月底欠薪（负数＝多发了，他欠公司）。这里只列这个月有考勤的人，所有人的欠薪看【工资汇总】。打印：筛掉空行，已设好横向一页宽。',
                 last, {'A': 5, 'B': 9, 'C': 18, 'D': 12, 'E': 20, 'F': 12, **{c: 8 for c in PD}, C_DAYS: 7, C_RATE: 8,
                        **{c: 12 for c in PA}, C_BASE: 12, C_ALW: 10, C_ADJ: 10, C_PAY: 12, C_TAX: 9, C_SOC: 9, C_NET: 12,
                        C_PREV: 12, C_PAID: 12, C_OFF: 11, C_REF: 10, C_OWE: 12, C_SIGN: 8, C_NOTE: 16})
@@ -63,7 +63,7 @@ def build_pay(wb, ctx):
     heads = [('A', '序号'), ('B', '姓名'), ('C', '身份证号'), ('D', '手机号'), ('E', '银行账号'), ('F', '开户行'),
              (C_DAYS, '合计\n天数'), (C_RATE, '日工资\n(月工资)'), (C_BASE, '基本工资'), (C_ALW, '补贴'), (C_ADJ, '其他加减'),
              (C_PAY, '应发工资'), (C_TAX, '代扣\n个税'), (C_SOC, '代扣\n社保'), (C_NET, '实发应付'), (C_PREV, '上月底\n欠薪'), (C_PAID, '本月发放'),
-             (C_OFF, '总包代发'), (C_REF, '已退回'), (C_OWE, '月底欠薪'), (C_SIGN, '签字'), (C_NOTE, '备注')]
+             (C_OFF, '总包代发'), (C_REF, '已退回'), (C_OWE, '月底欠薪\n（这个人）'), (C_SIGN, '签字'), (C_NOTE, '备注')]
     header(ws, H0, heads, C_HOME, height=40)
     for j in range(PAY_PJ):
         nm = f'IFERROR(INDEX({AX_ALL_R},MATCH({j + 1},${HP}$1:${HP}${cand},0)),"")'
@@ -192,8 +192,8 @@ def build_pays(wb, ctx):
         ws[f'B{r}'] = f'=IF({ix}=0,"",INDEX({UN_NAMES},{ix}))'
         ws[f'C{r}'] = f'=IF({ix}=0,"",INDEX({UN_TYPES_R},{ix}))'
         eff = f'SUMPRODUCT(MAX(({RT_NAMES}={nm})*({RT_DNS}<={AX_E})*{RT_DNS}))'
-        ws[f'D{r}'] = (f'=IF({ix}=0,"",IF({eff}=0,"",SUMIFS({RT_DAYS},{RT_NAMES},{nm},{RT_DATES},{eff})'
-                       f'+SUMIFS({RT_MONS},{RT_NAMES},{nm},{RT_DATES},{eff})))')
+        ws[f'D{r}'] = (f'=IF({ix}=0,"",IF({eff}=0,"",SUMIFS({RT_DAYS},{RT_NAMES},{nm},{RT_DNS},{eff})'
+                       f'+SUMIFS({RT_MONS},{RT_NAMES},{nm},{RT_DNS},{eff})))')
         ws[f'E{r}'] = f'=IF({ix}=0,"",{b(BX_WG_B)})'
         sa = lambda col: f'SUMIFS({atr(col)},{atr(AT_NAME)},{nm},{ya})'
         ws[f'F{r}'] = f'=IF({ix}=0,"",{sa(AT_DAYS)})'
@@ -371,13 +371,13 @@ def build_invs(wb, ctx):
     for m in range(1, 13):
         r = M0 + 1 + m
         ym = f'{AX_Y}*100+{m}'
-        crit = lambda d: f'{ivr(IV_DIR)},"{d}",{ivr(IV_YM)},{ym}'
+        crit = lambda d: f'{ivr(IV_DIR)},"{d}",{ivr(IV_YM)},{ym},{ivr(IV_YM)},">="&{AX_OYM}'
         put(ws, f'A{r}', f'{m}月', F_TXT, align=AC)
-        ws[f'B{r}'] = f'=COUNTIFS({crit("销项")})'
+        ws[f'B{r}'] = f'=COUNTIFS({crit("销项")},{ivr(IV_TOTU)},"<>0")'
         ws[f'D{r}'] = f'=SUMIFS({ivr(IV_TAXU)},{crit("销项")})'
         ws[f'E{r}'] = f'=SUMIFS({ivr(IV_TOTU)},{crit("销项")})'
         ws[f'C{r}'] = f'=E{r}-D{r}'
-        ws[f'F{r}'] = f'=COUNTIFS({crit("进项")})'
+        ws[f'F{r}'] = f'=COUNTIFS({crit("进项")},{ivr(IV_TOTU)},"<>0")'
         ws[f'G{r}'] = f'=SUMIFS({ivr(IV_TOTU)},{crit("进项")})'
         ws[f'H{r}'] = f'=SUMIFS({ivr(IV_TAXU)},{crit("进项")},{ivr(IV_SPEC)},1)'
         ws[f'I{r}'] = f'=D{r}-H{r}'

@@ -106,7 +106,7 @@ def build_rate(wb, ctx):
         put(ws, g(RT_CHK), f'=IF(AND({g(RT_NAME)}="",{g(RT_DATE)}=""),"",IF(COUNTIF({UN_NAMES},{g(RT_NAME)})=0,"✗ 没在【往来单位】登记",'
                            f'IF(NOT(ISNUMBER({g(RT_DATE)})),"✗ 从哪天起要填日期",'
                            f'IF((N({g(RT_DAY)})<>0)=(N({g(RT_MON)})<>0),"✗ 日薪、月薪只填一个",'
-                           f'IF(COUNTIFS({RT_NAMES},{g(RT_NAME)},{RT_DATES},{g(RT_DATE)})>1,"✗ 同一天有两条，单价会算重","√")))))',
+                           f'IF(COUNTIFS({RT_NAMES},{g(RT_NAME)},{RT_DNS},{g(RT_DN)})>1,"✗ 同一天有两条，单价会算重","√")))))',
             F_AUTO, FILL_AUTO, align=AL)
         ws[g(RT_DN)] = f'=IF(ISNUMBER({g(RT_DATE)}),INT({g(RT_DATE)}),0)'
         ws[g(RT_DN)].font = F_HELP

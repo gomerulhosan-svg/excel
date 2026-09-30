@@ -28,7 +28,7 @@ def build_base(wb, ctx):
         put(ws, f'B{r}', lab, F_KPI_L, fill('FFD9E1F2'), align=AC)
         put(ws, cell, val, F_IN, FILL_IN, fmt, AC)
     put(ws, 'B10', '建账日期填某个月的 1 号：这天以前的账在【期初余额】一次性录，这天起每一笔按实际日期录。'
-                   '小规模纳税人：⑤ 销项税率改成 3%（或 1%），进项票不抵扣（自动）。', F_NOTE, align=ALW, border=False)
+                   '小规模纳税人：⑤ 销项税率改成 3%（或 1%），项目里填的 9% 自动不算，进项票不抵扣（自动）。', F_NOTE, align=ALW, border=False)
     ws.merge_cells('B10:C14')
     dv_list(ws, CO_TYPE, '"一般纳税人,小规模纳税人"')
     # ② 资金账户

@@ -24,6 +24,10 @@ def longest_kw(text, kw_rng):
     return longest(text, kw_rng, kw_rng)
 
 
+FA_NAMES = rng(SH_BASE, FA_NAME, FA_R0, FA_R1)
+FA_DATES = rng(SH_BASE, FA_DATE, FA_R0, FA_R1)
+
+
 def build_cash(wb, ctx):
     ws = wb.create_sheet(SH_CASH)
     widths(ws, {'A': 6, 'B': 11, 'C': 11, 'D': 34, 'E': 14, 'F': 14, 'G': 13, 'H': 12, 'I': 11, 'J': 11, 'K': 30, 'L': 12,
@@ -146,7 +150,13 @@ def build_cash(wb, ctx):
                     f'IF(AND(N({g(J_OUT)})<0,{g(J_IO)}="收"),"⚠ 这是收款，以后请记在收入栏",'
                     f'IF(N({g(J_IN)})<0,"⚠ 收入填了负数，已按支出算",'
                     f'IF(N({g(J_OUT)})<0,"↩ 冲回（退款）",'
-                    f'"√"))))))))))))))))))))))))))')
+                    f'IF(AND({g(J_NET)}<0,{ct}<>"固定资产购置",{ct}<>"付应付款",ISNUMBER({g(J_DATE)}),'
+                    f'IFERROR(SUMPRODUCT(ISNUMBER(SEARCH({FA_NAMES},{memo}))*({FA_NAMES}<>"")*(ABS({g(J_DN)}-{FA_DATES})<=30)),0)>0),'
+                    f'"⚠ 像是在买【基础资料】⑥ 登记的车/设备：类别改成「固定资产购置」，不然成本算两遍",'
+                    f'IF(AND(OR({ct}="材料费",{ct}="分包费",{ct}="机械运输费",{ct}="其他直接费"),{un}="",{g(J_PJ)}<>"",'
+                    f'COUNTIFS({apr(AP_PJ)},{g(J_PJ)},{apr(AP_AMT)},-{g(J_NET)})>0),'
+                    f'"⚠ 这个项目有同样金额的应付登记：是付那家的，改类别选「付应付款」、改单位选那家（不然成本算两遍）",'
+                    f'"√"))))))))))))))))))))))))))))')
         for col, v in f.items():
             ws[f'{col}{r}'] = v
     cols = [J_SEQ, J_DATE, J_ACC, J_MEMO, J_IN, J_OUT, J_BAL, J_PJ, J_CT, J_UN, J_CHK, J_MPJ, J_MCT, J_MUN, J_TOACC, J_NOTE]

@@ -68,7 +68,7 @@ def build_ctx():
     for n in ('陈德银', '邓付贞', '桂木生', '雷友才', '占善庆'):
         if n not in wk:
             add(name=n, type='工人', note='流水/工资汇总里有，日工资请补' if n not in d.RATES else None)
-    add(name='张洪林', type='临时工', note='7/31 邹桥屋面保温棉搬运（已扣 80 个税）')
+    add(name='张洪林', type='工人', note='7/31 邹桥屋面保温棉搬运 1 天 1,200（代扣个税 80，实发 1,120）：要代扣个税的走考勤')
     for n in ('九江财小保', ):
         add(name=n, type='其他', note='代账公司')
     ctx['units'] = units
@@ -117,6 +117,7 @@ def build_ctx():
     # 演示：几笔原表里看不出对象的，替你在「改…」列选好（其余的保持自动认，✗ 的留给你看怎么改）
     fixes = {'汇款退回': {'N': '杭州行消物资贸易'},
              # 机械费表里 2026 年这 3 笔登记在【应付登记】，付款那天选上单位＝付应付款（冲应付），不然会算两遍
+             '邹桥派出所屋面保温棉搬运费 张洪林（已扣80个税）': {'M': '工资', 'N': '张洪林'},
              '邹桥派出所设备运输费': {'N': '章德吉货运'}, '邹桥派出所挖机费': {'N': '航帆增辉'}, '德安农商行挖机费': {'N': '德安县恒建工程部'}}
     J = [row + ((fixes[row[2]],) if row[2] in fixes else ()) for row in J]
     ctx['journal'] = J
@@ -148,17 +149,19 @@ def build_ctx():
     for name, full, total, per, paid in d.MAT_SUP:
         items = d.split_rest(total, per)
         p0 = round(paid - paid26.get(name, 0), 2)
+        ps = _spread(p0, [amt for _, amt in items])
         for k, (pj, amt) in enumerate(items):
-            oap.append(dict(unit=name, pj=pj or None, amt=amt, paid=p0 if k == 0 else None,
-                            note=('累计已付 − 2026 年流水付的' + (f'（{paid26[name]:,.2f}）' if paid26.get(name) else '')) if k == 0 else
+            oap.append(dict(unit=name, pj=pj or None, amt=amt, paid=ps[k],
+                            note=('累计已付（按各项目应付比例分）− 2026 年 3 月起流水付的' + (f'（{paid26[name]:,.2f}）' if paid26.get(name) else '')) if k == 0 else
                             ('应付总表里各项目栏合计比应付总额少的部分，项目请补' if not pj else None)))
     for name, total, per, paid in d.SUB:
         uname = '张小朋（分包）' if name == '张小朋' else name
         items = d.split_rest(total, per)
         p0 = round(paid - paid26.get(uname, 0), 2)
+        ps = _spread(p0, [amt for _, amt in items])
         for k, (pj, amt) in enumerate(items):
-            oap.append(dict(unit=uname, pj=pj or None, amt=amt, paid=p0 if k == 0 else None,
-                            note=('累计已付 − 2026 年流水付的' + (f'（{paid26[uname]:,.2f}）' if paid26.get(uname) else '')) if k == 0 else
+            oap.append(dict(unit=uname, pj=pj or None, amt=amt, paid=ps[k],
+                            note=('累计已付（按各项目应付比例分）− 2026 年 3 月起流水付的' + (f'（{paid26[uname]:,.2f}）' if paid26.get(uname) else '')) if k == 0 else
                             ('分包表里各项目栏合计比应付总额少的部分，项目请补' if not pj else None)))
     for (dd, team, pj, amt, paid0, payee, inv, rate, note) in d.MACH:
         if dd < OPEN_DATE:
@@ -189,6 +192,8 @@ def build_ctx():
                         note=None if pairs else ('月薪，没填天数＝全部算公司管理费' if a['name'] in managers else None)))
     for n, days in d.FEB_MAR:
         att.append(dict(mon=D(2026, 3, 1), name=n, pairs=list(days.items()), note='2、3 月合在一起的（截图）'))
+    att.append(dict(mon=D(2026, 7, 1), name='张洪林', pairs=[('邹桥派出所', 1)], urate=1200, tax=80,
+                    note='搬运保温棉 1 天（流水 7/31 实发 1,120）'))
     ctx['att_rows'] = att
     ctx['fixed_assets'] = []
     ctx['pl_default'] = '德安农商行总部'          # 项目账默认打开你发来的样例项目
@@ -196,6 +201,17 @@ def build_ctx():
                         '2026 年只有德安农商行总部录了产值确认，其他项目 3 月以后的产值确认、5～8 月的考勤都还没录，'
                         '所以本年利润表只有成本、收入很少，工人显示「多发了」。补录【收入确认】【考勤工资】后就准了。正式用之前，看说明里「开始用自己的账」清空这几张表。')
     return ctx
+
+
+def _spread(total, weights):
+    """把一家的累计已付按各项目应付的比例分到各行（最后一行拿尾差）"""
+    s = sum(weights) or 1
+    out, acc = [], 0
+    for k, w in enumerate(weights):
+        v = round(total - acc, 2) if k == len(weights) - 1 else round(total * w / s, 2)
+        acc += v
+        out.append(v or None)
+    return out
 
 
 def _journal_2026(J, projects, units):

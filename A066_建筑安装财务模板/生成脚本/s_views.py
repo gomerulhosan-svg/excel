@@ -126,7 +126,7 @@ def build_acc(wb, ctx):
 # ═══════════════════════════ 资金报表（周报 / 月报 / 自定义） ═══════════════════════════
 def build_fund(wb, ctx):
     ws = _sheet(wb, '资金报表', C_CASH, '资 金 周 报 / 月 报（各账户余额 · 分段收支 · 回款 · 付款 · 收支分类）',
-                '💡 黄格子选「周报」「月报」或「自定义」，再选哪一天（空着＝最后一笔流水那天）：周报＝那天所在的周一到周日，月报＝那天所在的月；'
+                '💡 黄格子选「周报」「月报」或「自定义」，再选哪一天（空着＝首页选的截止月份，没选就是最后一笔流水那天）：周报＝那天所在的周一到周日，月报＝那天所在的月；'
                 '自定义＝自己填起止日期。① 各账户期初、收入、支出、期末（老板个人户是负数＝公司欠他的）；② 月报按周分、周报按天分；'
                 '③ 收了哪些项目的工程款；④ 付给谁最多；⑤ 这段时间的钱按收支类别分。①里含账户之间的互转，②～⑤不含（自己账户之间倒钱不算收支）。',
                 'K', {'A': 7, 'B': 18, 'C': 13, 'D': 14, 'E': 14, 'F': 14, 'G': 14, 'H': 14, 'I': 11, 'J': 12, 'K': 20})
@@ -142,7 +142,7 @@ def build_fund(wb, ctx):
     put(ws, 'I3', None, F_SEL, FILL_SEL, DATE, AC)
     dv_date(ws, 'G3')
     dv_date(ws, 'I3')
-    d = f'IF(ISNUMBER($E$3),$E$3,IF(YEAR({AX_LAST})={AX_Y},{AX_LAST},{AX_E}))'
+    d = f'IF(ISNUMBER($E$3),$E$3,IF(ISNUMBER({SEL_E}),{SEL_E},IF(YEAR({AX_LAST})={AX_Y},{AX_LAST},{AX_E})))'
     _lbl(ws, 'B4', '期间')
     _val(ws, 'C4', f'=IF($C$3="周报",{d}-WEEKDAY({d},2)+1,IF($C$3="自定义",IF(ISNUMBER($G$3),$G$3,DATE({AX_Y},1,1)),DATE(YEAR({d}),MONTH({d}),1)))',
          DATE, F_AUTOB)
@@ -197,8 +197,9 @@ def build_fund(wb, ctx):
     # ② 分段
     G0 = A1 + len(groups) + 3
     section(ws, G0, 'A', 'K', '② 分段（月报按周 · 周报按天 · 自定义长的按月；不含账户互转）', C_RPT)
-    header(ws, G0 + 1, [('A', '段'), ('B', '起'), ('C', '止'), ('D', '收到的钱'), ('E', '付出的钱'), ('F', '净额'),
-                        ('G', '银行＋现金\n段末余额'), ('H', '其中老板个人户\n代收付净额')], C_RPT, height=40)
+    header(ws, G0 + 1, [('A', '段'), ('B', '起'), ('C', '止'), ('D', '收到的钱'), ('E', '付出的钱'), ('F', '净额\n（不含互转）'),
+                        ('G', '银行＋现金\n段末余额'), ('H', '其中老板个人户\n代收付净额'), ('I', '银行现金跟个人户、\n票据互转（净）')],
+           C_RPT, height=40)
     kind = f'IF($C$3="周报","日",IF({E}-{S}<=31,"周","月"))'
     bank_bal = lambda d: (f'SUMIFS({SH_BASE}!${AC_OPEN}${AC_R0}:${AC_OPEN}${AC_R1},{AC_TYPES_R},"银行")'
                           f'+SUMIFS({SH_BASE}!${AC_OPEN}${AC_R0}:${AC_OPEN}${AC_R1},{AC_TYPES_R},"现金")'
@@ -220,12 +221,14 @@ def build_fund(wb, ctx):
         ws[f'F{r}'] = f'=IF(B{r}="","",D{r}-E{r})'
         ws[f'G{r}'] = f'=IF(B{r}="","",ROUND({bank_bal(f"C{r}")},2))'
         ws[f'H{r}'] = f'=IF(B{r}="","",SUMIFS({jr(J_NET)},{jr(J_ATYPE)},"个人户",{jr(J_LINE)},"<>账户互转",{sd}))'
+        prevg = f'$D${A1 + 1}' if k == 0 else f'G{r - 1}'
+        ws[f'I{r}'] = f'=IF(B{r}="","",ROUND(G{r}-{prevg}-(F{r}-H{r}),2))'
     s1 = s0 + 11
-    style_rows(ws, s0, s1, list('ABCDEFGH'), auto=list('ABCDEFGH'), fmts={'B': 'm/d', 'C': 'm/d', **{c: MONEY for c in 'DEFGH'}},
-               aligns={c: AR for c in 'DEFGH'})
+    style_rows(ws, s0, s1, list('ABCDEFGHI'), auto=list('ABCDEFGHI'), fmts={'B': 'm/d', 'C': 'm/d', **{c: MONEY for c in 'DEFGHI'}},
+               aligns={c: AR for c in 'DEFGHI'})
     r = s1 + 1
     put(ws, f'B{r}', '合计', F_TXTB, FILL_TOT, align=AC)
-    for c in 'DEFH':
+    for c in 'DEFHI':
         put(ws, f'{c}{r}', f'=SUM({c}{s0}:{c}{s1})', F_AUTOB, FILL_TOT, MONEY, AR)
     for c in 'ACG':
         put(ws, f'{c}{r}', None, F_AUTO, FILL_TOT)
@@ -341,7 +344,7 @@ def build_fund(wb, ctx):
         put(ws, f'{c}{r}', None, fill_=FILL_TOT)
     hide(ws, 'W', HP, HPC, HU, HUK)
     ws.freeze_panes = 'A6'
-    print_setup(ws, '5:5', landscape=False)
+    print_setup(ws, None, landscape=False)
     return ws
 
 
@@ -543,15 +546,15 @@ def build_aps(wb, ctx):
     na_ = AP_R1 - AP_R0 + 1
     nj = J_R1 - J_R0 + 1
     nf = OF_R1 - OF_R0 + 1
-    counter(ws, HA, 1, no, lambda i: f'{SH_OPEN}!${OAP_UNIT}${OAP_R0 + i}={U}')
-    counter(ws, HB, 1, na_, lambda i: (f'({SH_AP}!${AP_UNIT}${AP_R0 + i}={U})*ISNUMBER({SH_AP}!${AP_YM}${AP_R0 + i})'
+    counter(ws, HA, 1, no, lambda i: f'AND({U}<>"",{SH_OPEN}!${OAP_UNIT}${OAP_R0 + i}={U})')
+    counter(ws, HB, 1, na_, lambda i: (f'({U}<>"")*({SH_AP}!${AP_UNIT}${AP_R0 + i}={U})*ISNUMBER({SH_AP}!${AP_YM}${AP_R0 + i})'
                                         f'*({SH_AP}!${AP_YM}${AP_R0 + i}>={AX_OYM})*({SH_AP}!${AP_YM}${AP_R0 + i}<={AX_YM1})'))
-    NCC = skey(ws, HC_, 2, nj, lambda i: (f'AND({jc(J_UN, J_R0 + i)}={U},ISNUMBER({jc(J_DATE, J_R0 + i)}),ISNUMBER({jc(J_YM, J_R0 + i)}),'
+    NCC = skey(ws, HC_, 2, nj, lambda i: (f'AND({U}<>"",{jc(J_UN, J_R0 + i)}={U},ISNUMBER({jc(J_DATE, J_R0 + i)}),ISNUMBER({jc(J_YM, J_R0 + i)}),'
                                            f'{jc(J_YM, J_R0 + i)}>={AX_OYM},{jc(J_YM, J_R0 + i)}<={AX_YM1},'
                                            f'OR({jc(J_LINE, J_R0 + i)}="应付材料款",{jc(J_LINE, J_R0 + i)}="应付分包款",'
                                            f'{jc(J_LINE, J_R0 + i)}="应付机械运输费",{jc(J_LINE, J_R0 + i)}="应付其他款"))'),
                lambda i: f'INT({jc(J_DATE, J_R0 + i)})')
-    counter(ws, HD, 1, nf, lambda i: (f'({SH_OFF}!${OF_WHO}${OF_R0 + i}={U})*({SH_OFF}!${OF_TYPE}${OF_R0 + i}="总包代付材料分包款")'
+    counter(ws, HD, 1, nf, lambda i: (f'({U}<>"")*({SH_OFF}!${OF_WHO}${OF_R0 + i}={U})*({SH_OFF}!${OF_TYPE}${OF_R0 + i}="总包代付材料分包款")'
                                        f'*ISNUMBER({SH_OFF}!${OF_YM}${OF_R0 + i})*({SH_OFF}!${OF_YM}${OF_R0 + i}<={AX_YM1})'))
     ca, cb, cc, cd = cnt(HA, 1, no), cnt(HB, 1, na_), NCC, cnt(HD, 1, nf)
     for k in range(STMT_CAP):

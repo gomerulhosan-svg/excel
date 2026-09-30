@@ -26,7 +26,7 @@ def build_is(wb, ctx):
                 '税金＝按产值估算的增值税（扣了进项专票）＋附加＋印花；间接费用＝公司日常开支和管理人员在公司那部分工资，在【费用分摊】摊到项目。'
                 '这是给老板看赚没赚钱的管理报表，报税用的报表以代账会计的为准。',
                 C_PREV, {'A': 30, **{c: 12 for c in MC}, C_YTD: 14, C_PCT: 8, C_PREV: 14})
-    put(ws, 'A3', f'={AX_Y}&"年  截止 "&TEXT({AX_E},"m月d日")&"（灰色的月份还没到）"', F_KPI_L, align=AL, border=False)
+    put(ws, 'A3', f'={AX_Y}&"年  截止 "&TEXT({AX_E},"m月d日")&"（灰色的月份：还没到，或者在建账日之前——那些数在期初里）"', F_KPI_L, align=AL, border=False)
     H = 5
     header(ws, H, [('A', '项  目'), (C_YTD, '本年累计'), (C_PCT, '占收入'), (C_PREV, '以前年度\n(建账起)')], C_RPT, height=36)
     for i, c in enumerate(MC):
@@ -81,7 +81,7 @@ def build_is(wb, ctx):
         else:
             put(ws, f'{C_PCT}{r}', None, fill_=fl)
     last = R['净利率']
-    ws.conditional_formatting.add(f'B{H}:M{last}', FormulaRule(formula=[f'{AX_Y}*100+COLUMN(B{H})-1>{AX_YM1}'], font=GREY))
+    ws.conditional_formatting.add(f'B{H}:M{last}', FormulaRule(formula=[f'OR({AX_Y}*100+COLUMN(B{H})-1>{AX_YM1},{AX_Y}*100+COLUMN(B{H})-1<{AX_OYM})'], font=GREY))
     for lab in ('净利润', '项目毛利（一 − 二 − 三 − 四）', '利润总额'):
         rr = R[lab]
         ws.conditional_formatting.add(f'B{rr}:{C_PREV}{rr}', FormulaRule(formula=[f'N(B{rr})<0'], font=F_RED))
@@ -274,7 +274,8 @@ def build_be(wb, ctx):
                 '💡 ① 公司保本：一年的固定开支（管理费、利息等）÷（1 − 变动成本率）＝保本产值；变动成本率默认用已完工项目的（材料人工分包机械税金占产值的比例），'
                 '没有完工项目就用本年的，也可以在黄格子手填。② 在建项目：总价扣掉税金和管理费，还能花多少直接成本不亏。③ 报价计算器：填预算成本，算保本价和建议报价。',
                 'J', {'A': 5, 'B': 30, 'C': 15, 'D': 15, 'E': 14, 'F': 14, 'G': 14, 'H': 14, 'I': 9, 'J': 26})
-    put(ws, 'B3', f'={AX_Y}&"年  截止 "&TEXT({AX_E},"m月d日")&"（已过 "&{AX_MON}&" 个月）"', F_KPI_L, align=AL, border=False)
+    put(ws, 'B3', f'={AX_Y}&"年  截止 "&TEXT({AX_E},"m月d日")&"（本年有数的月份："&MAX(1,{AX_MON}-IF({AX_Y}={AX_Y0},MONTH({OPEN_DATE})-1,0))&" 个月）"',
+        F_KPI_L, align=AL, border=False)
     Y = lambda n: ms(n, MS_YTD)
     PPL = lambda c: f'{SH_PPL}!${c}${sp.PPL_R0}:${c}${sp.PPL_R0 + sp.NPJ - 1}'
     done = f'(({PPL(sp.P_STAT)}="完工未结算")+({PPL(sp.P_STAT)}="已结算")+({PPL(sp.P_STAT)}="质保期")+({PPL(sp.P_STAT)}="已完结"))'
@@ -328,7 +329,7 @@ def build_be(wb, ctx):
                         ('G', '还能花'), ('H', '已花占上限'), ('I', '状态'), ('J', '提示')], C_RPT, height=40)
     tax_rate = (f'IF(AND(SUM({PPL(sp.C_REV)})>0,SUM({PPL(sp.C_TAX)})>SUM({PPL(sp.C_REV)})*0.005),'
                 f'SUM({PPL(sp.C_TAX)})/SUM({PPL(sp.C_REV)}),{PA_TAXB})')
-    put(ws, f'B{p0 - 3}', f'="税金按产值的 "&TEXT({tax_rate},"0.0%")&" 估，管理费率按今年的 "&TEXT(N(INDEX({SH_ALLOC}!$F${sp.AL_Y0}:$F${sp.AL_Y0 + NYEARS - 1},{AX_Y}-{AX_Y0}+1)),"0.0%")',
+    put(ws, f'B{p0 - 3}', f'="税金按各项目自己的税负估（没有就按 "&TEXT({tax_rate},"0.0%")&"），管理费率按今年的 "&TEXT(N(INDEX({SH_ALLOC}!$F${sp.AL_Y0}:$F${sp.AL_Y0 + NYEARS - 1},{AX_Y}-{AX_Y0}+1)),"0.0%")&"；已经摊到的管理费先扣掉"',
         F_NOTE, align=AL, border=False)
     ws.merge_cells(f'B{p0 - 3}:J{p0 - 3}')
     rate_y = f'N(INDEX({SH_ALLOC}!$F${sp.AL_Y0}:$F${sp.AL_Y0 + NYEARS - 1},{AX_Y}-{AX_Y0}+1))'
@@ -350,8 +351,13 @@ def build_be(wb, ctx):
         ws[f'D{r}'] = f'=IF({ix}=0,"",{g(sp.C_REV)})'
         ws[f'E{r}'] = f'=IF({ix}=0,"",{direct})'
         # 还能花＝（总价扣税 − 已花直接成本 − 已经摊到的管理费）÷（1＋以后每花 1 元要摊的管理费率）
-        ws[f'G{r}'] = f'=IF({ix}=0,"",ROUND((C{r}*(1-{tax_rate})-E{r}-{g(sp.C_ALLOC)})/(1+{r_eff}),2))'
+        t_p = (f'IF(AND(N({g(sp.C_REV)})>0,N({g(sp.C_TAX)})>0),{g(sp.C_TAX)}/{g(sp.C_REV)},{tax_rate})')
+        ws[f'G{r}'] = f'=IF({ix}=0,"",ROUND((C{r}*(1-{t_p})-E{r}-{g(sp.C_ALLOC)})/(1+{r_eff}),2))'
         ws[f'F{r}'] = f'=IF({ix}=0,"",E{r}+G{r})'
+        ws[f'H{r}'] = f'=IF(OR({ix}=0,N(F{r})<=0),"",E{r}/F{r})'
+        ws[f'I{r}'] = f'=IF({ix}=0,"",{g(sp.P_STAT)}&"")'
+        ws[f'J{r}'] = (f'=IF({ix}=0,"",IF(N(G{r})<0,"已经超了，这个项目要亏",IF(AND(ISNUMBER(H{r}),H{r}>0.9,N(D{r})<C{r}*0.9),'
+                       f'"快花完了，产值还没确认完，注意控制成本","")))')
     R1 = p0 + BE_ROWS - 1
     style_rows(ws, p0, R1, list('ABCDEFGHIJ'), auto=list('ABCDEFGHIJ'), fmts={**{c: MONEY for c in 'CDEFG'}, 'H': PCT},
                aligns={'B': AL, 'J': AL, **{c: AR for c in 'CDEFG'}})

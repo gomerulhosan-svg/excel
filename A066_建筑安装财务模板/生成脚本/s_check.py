@@ -2,6 +2,7 @@
 """【数据校验】哪里录错了、漏了、快满了；【首页】选年度/截止日、关键数、项目盈亏前后 5 名、提醒、各表入口。"""
 import datetime as dt
 from openpyxl.formatting.rule import FormulaRule
+from openpyxl.styles import Protection
 from common import *
 from layout import *
 import s_agg
@@ -28,6 +29,10 @@ def build_chk(wb, ctx):
     RT_CHKS = rng(SH_RATE, RT_CHK, RT_R0, RT_R1)
     dup = lambda r: f'SUMPRODUCT(({r}<>"")*(COUNTIF({r},{r})>1))'
     used = lambda r: f'SUMPRODUCT(--({r}<>""))'
+    wild = lambda r: f'SUMPRODUCT(--((ISNUMBER(FIND("*",{r}))+ISNUMBER(FIND("?",{r}))+ISNUMBER(FIND("~",{r})))>0))'
+    # 插进来的行没有公式：有内容、校验格却是空的
+    ins = lambda sh, r0, r1, cols, chk: (f'SUMPRODUCT(((' + '&'.join(f'{sh}!${c}${r0}:${c}${r1}' for c in cols) + ')<>"")*'
+                                          f'({sh}!${chk}${r0}:${chk}${r1}=""))')
     items = [
         # (检查项, 结果公式, 状态公式（用 C 格）, 处理, 表)
         ('资金流水：要改的（✗）', _cnt_mark(jr(J_CHK), '✗'), 'x', '按「校验」列筛选 ✗，照提示改（多数是在「改类别/改项目/改单位」选一下）', SH_CASH),
@@ -65,8 +70,15 @@ def build_chk(wb, ctx):
          'w0', '买车买设备在【基础资料】⑥ 登记；建账前赊购没付完的在【期初余额】③ 填', SH_BASE),
         ('收入确认：要看一下的（⚠）', _cnt_mark(rvr(RV_CHK), '⚠'), 'w', '累计确认超过总价（结算额整笔又录了一遍？）、没选类型', SH_REV),
         ('项目简称重名', dup(PJ_NAMES), 'x', '项目简称不能重名（加个字区分）', SH_PROJ),
+        ('名称里有半角 * ? ~（会被当成通配符，统计会串）', '+'.join(wild(r) for r in (PJ_NAMES, UN_NAMES, AC_NAMES)), 'x',
+         '项目、单位、账户名称里别用半角的 * ? ~（全角的＊？～没事）', SH_UNIT),
         ('往来单位/人重名', dup(UN_NAMES), 'x', '同名的人名字后面加括号区分，比如 张伟(电工)', SH_UNIT),
         ('资金账户重名', dup(AC_NAMES), 'x', '', SH_BASE),
+        ('插进来的行（没有公式，不会算）', '+'.join([
+            ins(SH_CASH, J_R0, J_R1, (J_DATE, J_MEMO, J_IN, J_OUT), J_CHK), ins(SH_AP, AP_R0, AP_R1, (AP_DATE, AP_UNIT, AP_AMT), AP_CHK),
+            ins(SH_ATT, AT_R0, AT_R1, (AT_MON, AT_NAME), AT_CHK), ins(SH_INV, IV_R0, IV_R1, (IV_SELLER, IV_BUYER, IV_TOTAL), IV_CHK),
+            ins(SH_REV, RV_R0, RV_R1, (RV_DATE, RV_PJ, RV_AMT), RV_CHK), ins(SH_OFF, OF_R0, OF_R1, (OF_DATE, OF_PJ, OF_AMT), OF_CHK)]), 'x',
+         '录入表里插了行：把那几行内容剪下来粘到最下面的空行，再把插的行删掉（校验列是空的就是插的行）', SH_CASH),
         ('资金流水用了多少行（共 2000）', used(jr(J_DATE)), 'cap2000', '快满了请联系做表的人加行（或者一年一本）', SH_CASH),
         ('应付登记用了多少行（共 1000）', used(apr(AP_DATE)), 'cap1000', '', SH_AP),
         ('考勤工资用了多少行（共 1000）', used(atr(AT_MON)), 'cap1000', '', SH_ATT),
@@ -141,7 +153,7 @@ def build_home(wb, ctx):
     widths(ws, {'A': 2, 'B': 16, 'C': 15, 'D': 3, 'E': 16, 'F': 15, 'G': 3, 'H': 16, 'I': 15, 'J': 3, 'K': 16, 'L': 15})
     title(ws, '建 筑 安 装 财 务 模 板（消防改造 · 水电安装 · 强弱电）', 'L', C_HOME,
           '💡 平时只录蓝色那几张（资金流水、应付登记、考勤工资、发票、收入确认、代发抵账），其余全是自动的。'
-          '下面黄格子选报表年度和截止日（截止日空着＝最后一笔流水那天），所有报表跟着变。')
+          '下面黄格子选报表年度和截止月份（选那个月任意一天，报表都算到月底；空着＝最后一笔流水那个月），所有报表跟着变。')
     ws['A1'].value = f'={SH_BASE}!${CO_NAME[0]}${CO_NAME[1:]}&" · 建筑安装财务模板（消防改造 · 水电安装 · 强弱电）"'
     _lbl(ws, 'B4', '报表年度')
     put(ws, 'C4', ctx['open_date'].year, F_SEL, FILL_SEL, '0', AC)
@@ -158,6 +170,7 @@ def build_home(wb, ctx):
     if ctx.get('demo_note'):
         put(ws, 'B5', ctx['demo_note'], Font(name=YH, sz=10, bold=True, color='FFC00000'), fill('FFFFF2CC'), align=ALW)
         ws.merge_cells('B5:L5')
+        ws['B5'].protection = Protection(locked=False)        # 正式用时选中按 Delete 就能删
         ws.row_dimensions[5].height = 64
     # 关键数
     section(ws, 6, 'B', 'L', '关键数（到截止月底）', C_HOME)

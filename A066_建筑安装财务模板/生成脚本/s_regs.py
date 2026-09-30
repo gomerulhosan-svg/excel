@@ -84,7 +84,10 @@ def build_rev(wb, ctx):
         ws[g(RV_CUS)] = f'=IF({g(RV_PJ)}="","",IFERROR(INDEX({rng(SH_PROJ, PJ_CUS, PJ_R0, PJ_R1)},MATCH({g(RV_PJ)},{PJ_NAMES},0))&"",""))'
         ws[g(RV_YM)] = _ym(g(RV_DATE))
         prate = f'IFERROR(INDEX({rng(SH_PROJ, PJ_TAX, PJ_R0, PJ_R1)},MATCH({g(RV_PJ)},{PJ_NAMES},0)),"")'
-        rate = f'IF(ISNUMBER({prate}),{prate},{PA_VATR})'
+        me_type = f"{SH_BASE}!${CO_TYPE[0]}${CO_TYPE[1:]}"
+        # 小规模纳税人：项目填的 9% 不算，用⑤的征收率（3% 或 1%）；项目本身填了 3%/1% 的照用
+        rate = (f'IF({me_type}="小规模纳税人",IF(AND(ISNUMBER({prate}),N({prate})<0.05),{prate},{PA_VATR}),'
+                f'IF(ISNUMBER({prate}),{prate},{PA_VATR}))')
         tot = f'IFERROR(INDEX({rng(SH_PROJ, PJ_TOTAL, PJ_R0, PJ_R1)},MATCH({g(RV_PJ)},{PJ_NAMES},0)),0)'
         ws[g(RV_VAT)] = f'=IF(N({g(RV_AMT)})=0,0,ROUND({g(RV_AMT)}/(1+{rate})*{rate},2))'
         ws[g(RV_VAT)].font = F_HELP
@@ -168,8 +171,9 @@ def build_inv(wb, ctx):
     widths(ws, {'A': 6, 'B': 13, 'C': 11, 'D': 22, 'E': 20, 'F': 26, 'G': 20, 'H': 26, 'I': 18, 'J': 12, 'K': 11, 'L': 13,
                 'M': 10, 'N': 16, 'O': 8, 'P': 8, 'Q': 8, 'R': 8, 'S': 20, 'T': 14, 'U': 7, 'V': 16, 'W': 34})
     title(ws, '发 票 登 记（开出去的销项 · 收到的进项 · A～S 跟电子税务局导出的一模一样）', IV_CHK, C_INV,
-          '💡 电子税务局「发票业务 → 发票查询统计 → 全量发票查询」，开票和收票各查一次、点「导出 → 发票基础信息」，'
-          '打开导出的表，从「序号」那一格起连表头下面的数据整块复制，粘到本表 A5（往下接着粘也行），列就对上了（A～S）。'
+          '💡 电子税务局「我要办税 → 税务数字账户 → 发票查询统计 → 全量发票查询」，开票、收票各查一次，点「导出」；'
+          '打开导出的表里「发票基础信息」那一页，从第一张票（序号 1）那一行的序号格起，选到最后一张票（不要表头、不要合计行），复制，'
+          '粘到本表 A 列第一个空行（第一次是 A5），列就对上了（A～S）。不小心带上了表头行、合计行也没关系，自动不算。'
           'T 列选项目（建筑服务发票备注里有项目名；收到的材料、分包、机械的票也要选项目，不然项目税负、欠票算不准）。'
           '销方是自家公司（税号或名称对上【基础资料】①）＝销项，购方是自家公司＝进项；作废的不算；票种带「专用」的才能抵扣进项税'
           '（小规模纳税人、简易计税 3% 的项目不抵扣）。手工录也照这几列填，至少要有开票日期、销方、购方、价税合计。')
@@ -190,7 +194,8 @@ def build_inv(wb, ctx):
     UT = rng(SH_UNIT, UN_ID, UN_R0, UN_R1)
     for r in range(IV_R0, IV_R1 + 1):
         g = lambda c: f'{c}{r}'
-        blank = f'AND({g(IV_SELLER)}="",{g(IV_BUYER)}="",{g(IV_TOTAL)}="",{g(IV_NET)}="")'
+        blank = (f'OR(AND({g(IV_SELLER)}="",{g(IV_BUYER)}="",{g(IV_TOTAL)}="",{g(IV_NET)}=""),{g(IV_SEQ)}&""="序号",'
+                 f'ISNUMBER(SEARCH("合计",{g(IV_SEQ)}&"")),{g(IV_TIME)}&""="开票日期")')
         isme = lambda nm, tx: f'OR(AND({tx}<>"",TRIM({tx}&"")=TRIM({me_tax}&"")),{norm(nm)}={norm(me_full)},TRIM({nm})={me_short})'
         ws[g(IV_DIR)] = f'=IF({blank},"",IF({isme(g(IV_SELLER), g(IV_STAX))},"销项",IF({isme(g(IV_BUYER), g(IV_BTAX))},"进项","？")))'
         other = f'IF({g(IV_DIR)}="销项",{g(IV_BUYER)},{g(IV_SELLER)})'

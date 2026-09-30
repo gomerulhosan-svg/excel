@@ -20,8 +20,8 @@ GROUPS = [
 HIDDEN = [SH_MS, SH_PS, SH_BALX, SH_AUX]
 # 打印：表头行（每页重复）、横向/竖向
 PRINT = {SH_CASH: ('5:5', True), SH_ATT: ('4:4', True), SH_AP: ('4:4', True), SH_INV: ('4:4', True), SH_ACC: ('7:7', True),
-         SH_AR: ('5:5', True), SH_APS: ('6:6', True), SH_PER: ('5:5', True), SH_PAYS: ('5:5', True), SH_LAB: ('5:5', True),
-         SH_INVS: ('5:5', True), SH_PL: (None, True), SH_PPL: ('4:5', True), SH_ALLOC: (None, True), SH_IS: ('5:5', True),
+         SH_AR: ('5:5', True), SH_APS: (None, True), SH_PER: (None, True), SH_PAYS: ('5:5', True), SH_LAB: ('5:5', True),
+         SH_INVS: (None, True), SH_PL: (None, True), SH_PPL: ('4:5', True), SH_ALLOC: (None, True), SH_IS: ('5:5', True),
          SH_BS: ('5:5', False), SH_BE: (None, False), SH_CHK: ('4:4', False), SH_HOME: (None, False)}
 KEEP_OPEN = {'FFFFFF00', 'FFFFF7E0', 'FFEAF1FB'}      # 黄色选择格、淡黄手填格、淡蓝粘贴格：保护时不锁
 
