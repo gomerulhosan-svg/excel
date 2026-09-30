@@ -24,7 +24,7 @@ def build_ms(wb, ctx):
         ws[f'{MS_NAME}{r}'] = name
         ws[f'{MS_PREV}{r}'] = f'={calc.line(name, AX_OYM, AX_PYM)}'
         for c in MS_MCOLS:
-            ws[f'{c}{r}'] = f'={calc.line(name, f"MAX({c}${MS_YMROW},{AX_OYM})", f"{c}${MS_YMROW}")}'
+            ws[f'{c}{r}'] = f'=IF({c}${MS_YMROW}>{AX_YM1},0,{calc.line(name, f"MAX({c}${MS_YMROW},{AX_OYM})", f"{c}${MS_YMROW}")})'
         ws[f'{MS_YTD}{r}'] = f'=SUMPRODUCT(({MS_MCOLS[0]}${MS_YMROW}:{MS_MCOLS[-1]}${MS_YMROW}<={AX_YM1})*{MS_MCOLS[0]}{r}:{MS_MCOLS[-1]}{r})'
     ws.sheet_state = 'hidden'
     return ws

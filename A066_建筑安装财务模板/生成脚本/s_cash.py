@@ -6,9 +6,17 @@ from common import *
 from layout import *
 
 
+def lhash(text, kw_rng):
+    """一遍扫完：摘要里能对上的关键词里最长的那个（一样长取表里靠前的）的编码＝长度×10000＋(10000−行号)；没对上＝0。关键词区域从第 1 行开始"""
+    return f'SUMPRODUCT(MAX(ISNUMBER(SEARCH({kw_rng},{text}))*({kw_rng}<>"")*(LEN({kw_rng})*10000+10000-ROW({kw_rng}))))'
+
+
+def ldecode(h, val_rng):
+    return f'IF(N({h})=0,"",INDEX({val_rng},10000-MOD({h},10000)))'
+
+
 def longest(text, kw_rng, val_rng):
-    """一遍扫完：摘要里能对上的关键词里最长的那个（一样长取表里靠前的），返回对应的值。关键词区域从第 1 行开始"""
-    h = f'SUMPRODUCT(MAX(ISNUMBER(SEARCH({kw_rng},{text}))*({kw_rng}<>"")*(LEN({kw_rng})*10000+10000-ROW({kw_rng}))))'
+    h = lhash(text, kw_rng)
     return f'IF({h}=0,"",INDEX({val_rng},10000-MOD({h},10000)))'
 
 
@@ -18,7 +26,7 @@ def longest_kw(text, kw_rng):
 
 def build_cash(wb, ctx):
     ws = wb.create_sheet(SH_CASH)
-    widths(ws, {'A': 6, 'B': 11, 'C': 11, 'D': 34, 'E': 12, 'F': 12, 'G': 13, 'H': 12, 'I': 11, 'J': 11, 'K': 30, 'L': 12,
+    widths(ws, {'A': 6, 'B': 11, 'C': 11, 'D': 34, 'E': 14, 'F': 14, 'G': 13, 'H': 12, 'I': 11, 'J': 11, 'K': 30, 'L': 12,
                 'M': 11, 'N': 11, 'O': 11, 'P': 14})
     title(ws, '资 金 流 水（所有账户一张表 · 每天录 · 自动认项目、类别、单位）', J_NOTE, C_CASH,
           '💡 左边照原来录：日期、账户、摘要、收入、支出（收款记「收入」，付款记「支出」；银行退回来的钱在支出栏记负数也行，自动当冲回）。'
@@ -26,7 +34,8 @@ def build_cash(wb, ctx):
           '几条规矩：①「代X付」（代老叶付佩力材料款）：单位是 X（冲 X 的账），真正收钱的写备注；'
           '② 一笔钱是几个项目的（隆世光伏/共青办公楼/德祥工地工程款），拆成几行分别记；'
           '③ 自己账户之间转钱（银行↔银行、银行↔老板个人户：借款、还款、报销、备用金）类别是「账户互转」，只记一边，对方账户自动认或在 O 列选；'
-          '④ 老板、负责人替公司花的钱，记在他的个人户里（账户选他的个人户）。G 列是这个账户记到这一笔为止的余额。')
+          '④ 老板、负责人替公司花的钱，记在他的个人户里（账户选他的个人户）。G 列是这个账户记到这一笔为止的余额。'
+          '⑤ 记错的行清空内容就行，不要删整行、也不要插行（别的表按行取数）。')
     put(ws, 'A3', '笔数', F_KPI_L, fill('FFD9E1F2'), align=AC)
     put(ws, 'B3', f'=COUNT({jr(J_DATE)})', F_KPI_V, fill('FFD9E1F2'), INT, AC)
     put(ws, 'C3', '收入合计', F_KPI_L, fill('FFD9E1F2'), align=AC)
@@ -51,7 +60,7 @@ def build_cash(wb, ctx):
     hidden = [(J_NET, '净额'), (J_YM, '年月'), (J_APJ, '认项目'), (J_ACT, '认类别'), (J_AUN, '认单位'), (J_ALLOC, '分摊归类'),
               (J_LINE, '报表项目'), (J_HANG, '有应付'), (J_UTYPE, '单位类型'), (J_WKIND, '走考勤的人'), (J_DAI, '代X付'),
               (J_ATO, '认对方账户'), (J_TO, '对方账户'), (J_ATYPE, '账户类型'), (J_TOTYPE, '对方类型'), (J_KWC, '关键词类别'),
-              (J_IO, '收支'), (J_PKW, '项目命中词'), (J_PKN, '别的项目')]
+              (J_IO, '收支'), (J_PKW, '项目命中词'), (J_PKN, '别的项目'), (J_PKH, '项目码'), (J_UMH, '单位码'), (J_UDH, '代付单位码'), (J_DN, '日期数')]
     for col, t in hidden:
         ws[f'{col}{J_HDR}'] = t
         ws[f'{col}{J_HDR}'].font = F_HELP
@@ -64,18 +73,22 @@ def build_cash(wb, ctx):
         f[J_SEQ] = f'=IF({empty},"",ROW()-{J_HDR})'
         f[J_NET] = f'=ROUND(N({g(J_IN)})-N({g(J_OUT)}),2)'
         f[J_YM] = f'=IF(ISNUMBER({g(J_DATE)}),YEAR({g(J_DATE)})*100+MONTH({g(J_DATE)}),"")'
+        f[J_DN] = f'=IF(ISNUMBER({g(J_DATE)}),INT({g(J_DATE)}),0)'
         f[J_BAL] = (f'=IF({g(J_ACC)}="","",ROUND(IFERROR(INDEX({AC_OPENS},MATCH({g(J_ACC)},{AC_NAMES},0)),0)'
                     f'+SUMIFS(${J_NET}${J_R0}:{g(J_NET)},${J_ACC}${J_R0}:{g(J_ACC)},{g(J_ACC)})'
                     f'-SUMIFS(${J_NET}${J_R0}:{g(J_NET)},${J_TO}${J_R0}:{g(J_TO)},{g(J_ACC)},${J_LINE}${J_R0}:{g(J_LINE)},"账户互转"),2))')
-        f[J_PKW] = f'=IF({memo}="","",{longest_kw(memo, AX_PKW_R)})'
+        f[J_PKH] = f'=IF({memo}="",0,{lhash(memo, AX_PKW_R)})'
+        f[J_PKW] = f'={ldecode(g(J_PKH), AX_PKW_R)}'
         f[J_APJ] = f'=IF({g(J_PKW)}="","",INDEX({AX_PKP_R},MATCH({g(J_PKW)},{AX_PKW_R},0)))'
         f[J_PKN] = (f'=IF(OR({g(J_PKW)}="",{g(J_MPJ)}<>""),0,SUMPRODUCT(({AX_PKW_R}<>"")*ISNUMBER(SEARCH({AX_PKW_R},{memo}))'
                     f'*ISERROR(SEARCH({AX_PKW_R},{g(J_PKW)}))*({AX_PKP_R}<>{g(J_APJ)})))')
         f[J_DAI] = (f'=IF(ISERROR(FIND("代",{memo})),"",IFERROR(MID({memo},FIND("代",{memo})+1,'
                     f'FIND("付",{memo},FIND("代",{memo}))-FIND("代",{memo})-1),""))')
         dai = g(J_DAI)
-        um, ud = longest(memo, AX_UKW_R, AX_UKN_R), longest(dai, AX_UKW_R, AX_UKN_R)
-        f[J_AUN] = f'=IF({memo}="","",IF({dai}<>"",IF({ud}<>"",{ud},{um}),{um}))'
+        f[J_UMH] = f'=IF({memo}="",0,{lhash(memo, AX_UKW_R)})'
+        f[J_UDH] = f'=IF({dai}="",0,{lhash(dai, AX_UKW_R)})'
+        um, ud = ldecode(g(J_UMH), AX_UKN_R), ldecode(g(J_UDH), AX_UKN_R)
+        f[J_AUN] = f'=IF({memo}="","",IF(N({g(J_UDH)})>0,{ud},{um}))'
         f[J_PJ] = f'=IF({g(J_MPJ)}<>"",{g(J_MPJ)},{g(J_APJ)})'
         f[J_UN] = f'=IF({g(J_MUN)}<>"",{g(J_MUN)},{g(J_AUN)})'
         f[J_UTYPE] = f'=IF({un}="","",IFERROR(INDEX({UN_TYPES_R},MATCH({un},{UN_NAMES},0))&"",""))'
@@ -90,7 +103,8 @@ def build_cash(wb, ctx):
                 f'IF(AND(OR({ut}="材料供应商",{ut}="分包",{ut}="机械运输"),{g(J_HANG)}=1),"付应付款",""))))')
         hangable = (f'AND({g(J_HANG)}=1,OR({ut}="材料供应商",{ut}="分包",{ut}="机械运输",{ut}="其他"),'
                     f'OR({k}="材料费",{k}="分包费",{k}="机械运输费",{k}="其他直接费",{k}="工资",{k}="临时工工资"))')
-        f[J_ACT] = f'=IF(OR({memo}="",{g(J_NET)}=0),"",IF({k}="",{dflt},IF({hangable},"付应付款",{k})))'
+        f[J_ACT] = (f'=IF(OR({memo}="",{g(J_NET)}=0),"",IF(AND({ut}="临时工",{g(J_NET)}<0),"临时工工资",'
+                    f'IF({k}="",{dflt},IF({hangable},"付应付款",{k}))))')
         f[J_CT] = f'=IF({g(J_MCT)}<>"",{g(J_MCT)},{g(J_ACT)})'
         f[J_ALLOC] = f'=IF({ct}="","",IFERROR(INDEX({CT_ALLOCS},MATCH({ct},{CT_NAMES},0))&"","？"))'
         cdir = f'IFERROR(INDEX({CT_DIRS},MATCH({ct},{CT_NAMES},0))&"","")'
@@ -124,15 +138,15 @@ def build_cash(wb, ctx):
                     f'IF(AND({ct}="账户互转",{g(J_TO)}=""),"✗ 账户互转要在「对方账户」选（借款、报销选那个人的个人户）",'
                     f'IF(AND({ct}="账户互转",{g(J_TOTYPE)}=""),"✗ 对方账户不在【基础资料】② 里",'
                     f'IF(AND({ct}="账户互转",{g(J_TO)}={g(J_ACC)}),"✗ 对方账户不能是自己",'
-                    f'IF(AND({ct}="账户互转",COUNTIFS({jr(J_ACC)},{g(J_TO)},{jr(J_TO)},{g(J_ACC)},{jr(J_CT)},"账户互转",{jr(J_NET)},-{g(J_NET)})>0),'
-                    f'"✗ 对方账户那边也记了这笔互转（只记一边，删掉一行）",'
+                    f'IF(IF({ct}="账户互转",COUNTIFS({jr(J_ACC)},{g(J_TO)},{jr(J_TO)},{g(J_ACC)},{jr(J_CT)},"账户互转",{jr(J_NET)},-{g(J_NET)})>0,FALSE),'
+                    f'"✗ 对方账户那边也记了这笔互转（只记一边：清空其中一行的内容）",'
                     f'IF({g(J_PKN)}>0,"⚠ 摘要里有两个项目：拆成几行，或在「改项目」选",'
                     f'IF(AND({ct}<>"账户互转",{g(J_TOACC)}<>""),"⚠ 填了对方账户但类别不是账户互转（对方账户不起作用）",'
-                    f'IF(AND({un}<>"",{ut}=""),"⚠ 单位/人没在【往来单位及人员】登记",'
+                    f'IF(AND({un}<>"",{ut}=""),"⚠ 单位/人没在【往来单位】登记",'
                     f'IF(AND(N({g(J_OUT)})<0,{g(J_IO)}="收"),"⚠ 这是收款，以后请记在收入栏",'
                     f'IF(N({g(J_IN)})<0,"⚠ 收入填了负数，已按支出算",'
                     f'IF(N({g(J_OUT)})<0,"↩ 冲回（退款）",'
-                    f'"√")))))))))))))))))))))))))')
+                    f'"√"))))))))))))))))))))))))))')
         for col, v in f.items():
             ws[f'{col}{r}'] = v
     cols = [J_SEQ, J_DATE, J_ACC, J_MEMO, J_IN, J_OUT, J_BAL, J_PJ, J_CT, J_UN, J_CHK, J_MPJ, J_MCT, J_MUN, J_TOACC, J_NOTE]

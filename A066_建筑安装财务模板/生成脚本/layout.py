@@ -60,10 +60,9 @@ PARAMS = [('销项税率（工程款）', 0.09, '0%', '一般计税 9%；简易�
           ('印花税率（按确认产值）', 0.0003, '0.00%', '建筑安装合同万分之三'),
           ('异地预缴增值税率', 0.02, '0%', '一般计税 2%、简易计税 3%（只在【项目账】税负测算里显示，预缴的钱冲应交税费）'),
           ('管理费分摊依据', '施工费', '@', '施工费＝人工＋分包＋机械（默认）；直接成本＝再加材料和其他直接费'),
-          ('利息分摊', '不分摊', '@', '不分摊：利息留在公司；按未收款：按各项目甲方欠款多少分利息'),
           ('收入确认落后提醒', 0.3, '0%', '直接成本占总价的比例比确认产值的比例高出这么多，就提醒补录产值确认'),
           ('税金占产值（估，没数据时用）', 0.03, '0.0%', '【盈亏平衡表】【报价计算器】估税金用；有了项目数据就自动按实际比例算')]
-PA_VATR, PA_SURR, PA_STAMP, PA_PRE, PA_DRV, PA_INT, PA_LAG, PA_TAXB = [f"{SH_BASE}!${PA_VAL}${PA_R0 + i}" for i in range(8)]
+PA_VATR, PA_SURR, PA_STAMP, PA_PRE, PA_DRV, PA_LAG, PA_TAXB = [f"{SH_BASE}!${PA_VAL}${PA_R0 + i}" for i in range(7)]
 # ⑥ 固定资产：名称 购入日期 原值 月数 残值率 使用项目（空＝公司） 建账前已提折旧 月折旧(自动) 备注
 FA_R0, FA_R1 = 5, 34
 FA_SEQ, FA_NAME, FA_DATE, FA_COST, FA_MON, FA_RES, FA_PJ, FA_DEP_M, FA_NOTE, FA_S, FA_E = \
@@ -110,10 +109,12 @@ SH_RATE = '工资标准'
 RT_HDR = 3
 RT_R0, RT_R1 = 4, 303           # 300 条
 RT_SEQ, RT_NAME, RT_DATE, RT_DAY, RT_MON, RT_NOTE, RT_CHK = 'A', 'B', 'C', 'D', 'E', 'F', 'G'
+RT_DN = 'H'                     # 隐藏：从哪天起（数字；不是日期＝0）
 RT_NAMES = rng(SH_RATE, RT_NAME, RT_R0, RT_R1)
 RT_DATES = rng(SH_RATE, RT_DATE, RT_R0, RT_R1)
 RT_DAYS = rng(SH_RATE, RT_DAY, RT_R0, RT_R1)
 RT_MONS = rng(SH_RATE, RT_MON, RT_R0, RT_R1)
+RT_DNS = rng(SH_RATE, RT_DN, RT_R0, RT_R1)
 
 # ─────────────────────────── 资金流水 ───────────────────────────
 J_HDR = 5
@@ -124,7 +125,9 @@ J_R0, J_R1 = 6, 2005            # 2000 笔
 # 隐藏：R 净额 S 年月 T 认项目 U 认类别 V 认单位 W 分摊归类 X 报表项目 Y 单位有应付 Z 单位类型 AA 走考勤的人 AB 代X付
 #       AC 认对方账户 AD 对方账户（用的） AE 账户类型 AF 对方账户类型 AG 关键词类别 AH 收支（报表用：收/支） AI 项目命中词 AJ 别的项目命中数
 (J_NET, J_YM, J_APJ, J_ACT, J_AUN, J_ALLOC, J_LINE, J_HANG, J_UTYPE, J_WKIND, J_DAI, J_ATO, J_TO, J_ATYPE, J_TOTYPE, J_KWC,
- J_IO, J_PKW, J_PKN) = 'R S T U V W X Y Z AA AB AC AD AE AF AG AH AI AJ'.split()
+ J_IO, J_PKW, J_PKN, J_PKH, J_UMH, J_UDH, J_DN) = 'R S T U V W X Y Z AA AB AC AD AE AF AG AH AI AJ AK AL AM AN'.split()
+# AN 隐藏：日期（数字；不是日期＝0，给「最后一次」这类公式用）
+# AK～AM 隐藏：项目关键词、单位（摘要里）、单位（代X付里）最长匹配的编码（只算一遍）
 J_CAP = J_R1 - J_R0 + 1
 
 
@@ -165,7 +168,7 @@ def apr(col):
 RV_HDR = 4
 RV_R0, RV_R1 = 5, 204
 (RV_SEQ, RV_DATE, RV_PJ, RV_TYPE, RV_AMT, RV_NOTE, RV_CUS, RV_YM, RV_CHK, RV_VAT) = [CL(i) for i in range(1, 11)]   # J 隐藏：销项税额
-RV_TYPES = ['进度确认', '竣工结算', '签证变更', '结算调整']
+RV_TYPES = ['进度确认', '签证变更', '结算调整']
 
 
 def rvr(col):
@@ -175,7 +178,7 @@ def rvr(col):
 # ─────────────────────────── 代发抵账（没经过我们账户的收付） ───────────────────────────
 OF_HDR = 4
 OF_R0, OF_R1 = 5, 304
-(OF_SEQ, OF_DATE, OF_PJ, OF_TYPE, OF_WHO, OF_AMT, OF_NOTE, OF_YM, OF_WTYPE, OF_CHK) = [CL(i) for i in range(1, 11)]
+(OF_SEQ, OF_DATE, OF_PJ, OF_TYPE, OF_WHO, OF_AMT, OF_NOTE, OF_YM, OF_WTYPE, OF_CHK, OF_DN) = [CL(i) for i in range(1, 12)]   # K 隐藏：日期（数字）
 OF_TYPES = ['总包代发工资', '总包代付材料分包款', '甲供材扣款', '甲方扣款']
 
 
@@ -183,12 +186,16 @@ def ofr(col):
     return rng(SH_OFF, col, OF_R0, OF_R1)
 
 
-# ─────────────────────────── 发票登记（列跟电子税务局「发票查询导出」一样，导出后整块粘） ───────────────────────────
+# ─────────────────────────── 发票登记（A～S 跟电子税务局「发票查询 → 导出 → 发票基础信息」一模一样，整块粘） ───────────────────────────
 IV_HDR = 4
 IV_R0, IV_R1 = 5, 1004          # 1000 张
-(IV_SEQ, IV_NO, IV_DATE, IV_SELLER, IV_BUYER, IV_NET, IV_TAX, IV_TOTAL, IV_RATE, IV_KIND, IV_PJ, IV_NOTE,
- IV_DIR, IV_UNIT, IV_CHK, IV_YM, IV_SPEC, IV_TAXU, IV_TOTU) = [CL(i) for i in range(1, 20)]
-# M～O 自动：方向、对方单位、校验；P～S 隐藏：年月、专票?、税额（用的）、价税合计（用的）
+IV_RAW = ['序号', '发票代码', '发票号码', '数电发票号码', '销方识别号', '销方名称', '购方识别号', '购买方名称', '开票日期',
+          '金额', '税额', '价税合计', '发票来源', '发票票种', '发票状态', '是否正数发票', '发票风险等级', '开票人', '备注']
+(IV_SEQ, IV_CODE, IV_NO, IV_ENO, IV_STAX, IV_SELLER, IV_BTAX, IV_BUYER, IV_TIME, IV_NET, IV_TAX, IV_TOTAL,
+ IV_SRC, IV_KIND, IV_STAT, IV_POS, IV_RISK, IV_ISSUER, IV_NOTE) = [CL(i) for i in range(1, 20)]
+IV_PJ, IV_DIR, IV_UNIT, IV_CHK = 'T', 'U', 'V', 'W'          # T 手选项目；U～W 自动：方向、对方单位、校验
+IV_DATE, IV_YM, IV_SPEC, IV_TAXU, IV_TOTU, IV_RATE = 'X', 'Y', 'Z', 'AA', 'AB', 'AC'
+# X～AC 隐藏：开票日期（认出来的）、年月、可抵扣（专票·一般纳税人·一般计税项目＝1）、税额（用的）、价税合计（用的，作废＝0）、税率
 
 
 def ivr(col):
@@ -208,7 +215,8 @@ OAP_R0, OAP_R1 = 5, 204
 OO_R0 = OPJ_R1 + 4
 OO_LBL, OO_VAL, OO_NOTE = 'B', 'C', 'D'
 OO_ITEMS = ['短期借款', '保证金押金（付出去还没退的）', '其他应收款（别的）', '应交税费（欠税为正、多交为负）', '其他应付款（别的）',
-            '实收资本（实缴）', '老板确认的期初未分配利润（可不填）']
+            '实收资本（实缴）', '应付设备款（建账前赊购、还没付完的）', '老板确认的期初未分配利润（可不填）']
+OO_BOSS = 7                      # 老板确认值是第几项（0 起）
 
 
 def opr(col):
@@ -284,7 +292,7 @@ PS_AR_E, PS_AR_B, PS_OPEN = CL(_c), CL(_c + 1), CL(_c + 2)   # 应收余额（�
 _c += 3
 PS_LAST = CL(_c - 1)
 SH_BALX = '_余额'               # 每个单位/人、每个账户在截止月末和年初的余额
-BX_R0 = 3                        # 第 3～302 行对应【往来单位及人员】
+BX_R0 = 3                        # 第 3～302 行对应【往来单位】
 (BX_NAME, BX_TYPE, BX_AP_E, BX_AP_B, BX_WG_E, BX_WG_B, BX_APAMT, BX_PAID, BX_INVIN, BX_NETPAY, BX_WPAID, BX_OFFW, BX_REFUND) = \
     [CL(i) for i in range(1, 14)]
 BA_R0 = 3                        # 右边：第 3～22 行对应【基础资料】② 资金账户

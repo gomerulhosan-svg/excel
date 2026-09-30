@@ -110,6 +110,7 @@ BS_DIFF = None       # 差额格（数据校验用）
 def _bs_parts(which):
     """which＝'E' 截止月末 / 'B' 年初。返回各项目的公式（字符串，不带 =）"""
     b = AX_YM1 if which == 'E' else AX_PYM
+    bfa = AX_YM1 if which == 'E' else f'IF({AX_PYM}<{AX_OYM},{AX_OYM}-1,{AX_PYM})'   # 年初在建账日之前：固定资产取建账日那天的
     arc, apc, wgc, bac = (PS_AR_E, BX_AP_E, BX_WG_E, BA_E) if which == 'E' else (PS_AR_B, BX_AP_B, BX_WG_B, BA_B)
     yr = f'{jr(J_YM)},">="&{AX_OYM},{jr(J_YM)},"<="&{b}'
     JN = lambda line: f'SUMIFS({jr(J_NET)},{jr(J_LINE)},"{line}",{yr})'
@@ -145,11 +146,11 @@ def _bs_parts(which):
     p['保证金'] = f'N({oo(1)})-{JN("其他应收款")}'
     p['其他应收别的'] = f'N({oo(2)})'
     p['其他应付别的'] = f'N({oo(4)})'
-    idxb = f'({calc._idx(b)})'
+    idxb = f'({calc._idx(bfa)})'
     FAC, FAS, FAD = (rng(SH_BASE, c, FA_R0, FA_R1) for c in (FA_COST, FA_S, FA_DATE))
     p['固定资产原值'] = f'SUMIFS({FAC},{FAS},">0",{FAS},"<="&({idxb}+1))'
-    p['累计折旧'] = calc.fa_dep('190001', b)
-    p['应付设备款'] = f'SUMIFS({FAC},{FAS},">0",{FAS},"<="&({idxb}+1),{FAD},">="&{OPEN_DATE})+{JN("应付设备款")}'
+    p['累计折旧'] = calc.fa_dep('190001', bfa)
+    p['应付设备款'] = f'N({oo(6)})+SUMIFS({FAC},{FAS},">0",{FAS},"<="&({idxb}+1),{FAD},">="&{OPEN_DATE})+{JN("应付设备款")}'
     p['实收资本'] = f'N({oo(5)})+{JN("实收资本")}'
     allj = f'SUMIFS({jr(J_NET)},{yr})'
     p['待查'] = (f'{JN("待分类")}+({JN("账户互转")}-SUMIFS({jr(J_NET)},{jr(J_LINE)},"账户互转",{jr(J_TOTYPE)},"?*",{yr}))'
@@ -177,7 +178,7 @@ def build_bs(wb, ctx):
     plug = (f'SUMIFS({AC_OPENS},{AC_NAMES},"?*")+SUM({opr(OPJ_REV)})-SUM({opr(OPJ_REC)})'
             f'+SUMIFS({FAC},{FAS},">0",{FAD},"<"&{OPEN_DATE})-{calc.fa_dep("190001", f"({AX_OYM}-1)")}'
             f'-(SUM({oapr(OAP_AMT)})-SUM({oapr(OAP_PAID)}))-SUM({rng(SH_UNIT, UN_OWE0, UN_R0, UN_R1)})'
-            f'-N({oo(0)})+N({oo(1)})+N({oo(2)})-N({oo(3)})-N({oo(4)})-N({oo(5)})')
+            f'-N({oo(0)})+N({oo(1)})+N({oo(2)})-N({oo(3)})-N({oo(4)})-N({oo(5)})-N({oo(6)})')
     left = [('货币资金（银行＋现金）', 'v', '货币资金'), ('应收票据（在手的承兑汇票）', 'v', '票据'), ('应收账款（甲方还欠的）', 'v', '应收账款'),
             ('预付账款（多付给材料商、分包的）', 'v', '预付账款'), ('其他应收款', 'sum', ['个人正', '保证金', '多发工资', '其他应收别的']),
             ('　其中：老板/负责人手上的备用金', 'v2', '个人正'), ('　　　　保证金、押金', 'v2', '保证金'), ('　　　　工人多发的工资', 'v2', '多发工资'),
@@ -230,8 +231,10 @@ def build_bs(wb, ctx):
     for c, (ca, cr) in (('B', ('B', 'F')), ('C', ('C', 'G'))):
         put(ws, f'{c}{d}', f'=ROUND({ca}{rows_l["资产合计"]}-{cr}{rows_r["负债和所有者权益合计"]},2)', F_AUTOB, FILL_TOT, MONEY, AR)
     ws.conditional_formatting.add(f'B{d}:C{d}', FormulaRule(formula=[f'ABS(N(B{d}))>0.01'], fill=FILL_WARN, font=F_RED))
-    global BS_DIFF, BS_PEND, BS_PLUG
+    global BS_DIFF, BS_DIFF_B, BS_PEND, BS_PLUG, BS_ROWS
     BS_DIFF = f"{SH_BS}!$B${d}"
+    BS_DIFF_B = f"{SH_BS}!$C${d}"
+    BS_ROWS = {**{k: ('B', v) for k, v in rows_l.items()}, **{k: ('F', v) for k, v in rows_r.items()}}
     BS_PEND = f"{SH_BS}!$F${rows_r['待查（流水里没分类、没选对账户的）']}"
     # 期初未分配利润：跟老板/会计认的数对比
     k = d + 2
@@ -239,7 +242,7 @@ def build_bs(wb, ctx):
     _lbl(ws, f'A{k + 1}', '倒算的（建账日资产 − 负债 − 实收资本）')
     _val(ws, f'B{k + 1}', f'=F{rows_r["　其中：期初（建账日，倒算）"]}')
     _lbl(ws, f'A{k + 2}', '老板/会计认的（【期初余额】③ 最后一项）')
-    _val(ws, f'B{k + 2}', f'=IF({oo(6)}="","没填",{oo(6)})')
+    _val(ws, f'B{k + 2}', f'=IF({oo(OO_BOSS)}="","没填",{oo(OO_BOSS)})')
     _lbl(ws, f'A{k + 3}', '差多少')
     _val(ws, f'B{k + 3}', f'=IF(ISNUMBER(B{k + 2}),ROUND(B{k + 1}-B{k + 2},2),"")')
     put(ws, f'C{k + 1}', '差得多：说明建账日的数没填全，常见的是银行期初余额、老板借给公司的钱、欠材料商的、甲方欠的、工人期初欠薪。',
@@ -259,7 +262,7 @@ def build_bs(wb, ctx):
     return ws
 
 
-BS_PEND = BS_PLUG = None
+BS_PEND = BS_PLUG = BS_DIFF_B = BS_ROWS = None
 
 
 # ═══════════════════════════ 盈亏平衡表 ═══════════════════════════
@@ -282,7 +285,7 @@ def build_be(wb, ctx):
     var_y = '+'.join(Y(n) for n in DIRECT + ['税金估算', '票据贴息'])
     section(ws, 5, 'A', 'J', '① 公司保本（全年）', C_RPT)
     fin = f'{Y("利息支出")}+{Y("手续费")}+{Y("利息收入")}+{Y("其他支出")}+{Y("其他税费")}-{Y("其他收入")}'
-    items = [('本年已过几个月', f'={AX_MON}', INT, ''),
+    items = [('本年已过几个月（建账那年从建账月算）', f'=MAX(1,{AX_MON}-IF({AX_Y}={AX_Y0},MONTH({OPEN_DATE})-1,0))', INT, ''),
              ('本年间接费用（管理费）', '=' + '+'.join(Y(n) for n in POOL), MONEY, '管理人员在公司的工资、社保、办公、招待、车辆、伙食、折旧等'),
              ('本年利息、手续费、其他收支（净）', f'={fin}', MONEY, '公司不分摊的'),
              ('本年固定开支合计', '=C8+C9', MONEY, ''),
@@ -321,7 +324,7 @@ def build_be(wb, ctx):
     # ② 在建项目
     p0 = r + 4
     section(ws, p0 - 2, 'A', 'J', '② 在建项目：总价扣掉税金和管理费，直接成本最多能花多少', C_RPT)
-    header(ws, p0 - 1, [('A', '序号'), ('B', '项目'), ('C', '总价'), ('D', '已确认产值'), ('E', '已花直接成本'), ('F', '不亏的\n成本上限'),
+    header(ws, p0 - 1, [('A', '序号'), ('B', '项目'), ('C', '总价'), ('D', '已确认产值'), ('E', '已花直接成本\n（含贴息）'), ('F', '不亏的\n成本上限'),
                         ('G', '还能花'), ('H', '已花占上限'), ('I', '状态'), ('J', '提示')], C_RPT, height=40)
     tax_rate = (f'IF(AND(SUM({PPL(sp.C_REV)})>0,SUM({PPL(sp.C_TAX)})>SUM({PPL(sp.C_REV)})*0.005),'
                 f'SUM({PPL(sp.C_TAX)})/SUM({PPL(sp.C_REV)}),{PA_TAXB})')
@@ -338,7 +341,7 @@ def build_be(wb, ctx):
         ws[ix] = f'={kth(k + 1, HC, 1, sp.NPJ)}'
         ws[ix].font = F_HELP
         g = lambda c: f'INDEX({PPL(c)},{ix})'
-        direct = '+'.join(g(c) for c in (sp.C_MAT, sp.C_LAB, sp.C_SUB, sp.C_MACH, sp.C_OTH))
+        direct = '+'.join(g(c) for c in (sp.C_MAT, sp.C_LAB, sp.C_SUB, sp.C_MACH, sp.C_OTH, sp.C_INT))
         drv = '+'.join(g(c) for c in (sp.C_LAB, sp.C_SUB, sp.C_MACH))
         r_eff = f'IF(OR({PA_DRV}="直接成本",({direct})=0),{rate_y},{rate_y}*({drv})/({direct}))'
         ws[f'A{r}'] = f'=IF({ix}=0,"",{k + 1})'
@@ -346,11 +349,9 @@ def build_be(wb, ctx):
         ws[f'C{r}'] = f'=IF({ix}=0,"",{g(sp.P_TOTAL)})'
         ws[f'D{r}'] = f'=IF({ix}=0,"",{g(sp.C_REV)})'
         ws[f'E{r}'] = f'=IF({ix}=0,"",{direct})'
-        ws[f'F{r}'] = f'=IF({ix}=0,"",ROUND(C{r}*(1-{tax_rate})/(1+{r_eff}),2))'
-        ws[f'G{r}'] = f'=IF({ix}=0,"",F{r}-E{r})'
-        ws[f'H{r}'] = f'=IF(OR({ix}=0,N(F{r})=0),"",E{r}/F{r})'
-        ws[f'I{r}'] = f'=IF({ix}=0,"",{g(sp.P_STAT)})'
-        ws[f'J{r}'] = (f'=IF({ix}=0,"",IF(G{r}<0,"已经超了，这个项目要亏",IF(AND(ISNUMBER(H{r}),H{r}>0.9,N(D{r})<C{r}*0.9),"快花完了，产值还没确认完，注意控制成本","")))')
+        # 还能花＝（总价扣税 − 已花直接成本 − 已经摊到的管理费）÷（1＋以后每花 1 元要摊的管理费率）
+        ws[f'G{r}'] = f'=IF({ix}=0,"",ROUND((C{r}*(1-{tax_rate})-E{r}-{g(sp.C_ALLOC)})/(1+{r_eff}),2))'
+        ws[f'F{r}'] = f'=IF({ix}=0,"",E{r}+G{r})'
     R1 = p0 + BE_ROWS - 1
     style_rows(ws, p0, R1, list('ABCDEFGHIJ'), auto=list('ABCDEFGHIJ'), fmts={**{c: MONEY for c in 'CDEFG'}, 'H': PCT},
                aligns={'B': AL, 'J': AL, **{c: AR for c in 'CDEFG'}})

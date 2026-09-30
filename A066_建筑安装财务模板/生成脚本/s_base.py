@@ -27,8 +27,9 @@ def build_base(wb, ctx):
         r = int(cell[1:])
         put(ws, f'B{r}', lab, F_KPI_L, fill('FFD9E1F2'), align=AC)
         put(ws, cell, val, F_IN, FILL_IN, fmt, AC)
-    put(ws, 'B10', '建账日期：这天以前的账在【期初余额】一次性录，这天起每一笔按实际日期录。', F_NOTE, align=ALW, border=False)
-    ws.merge_cells('B10:C12')
+    put(ws, 'B10', '建账日期填某个月的 1 号：这天以前的账在【期初余额】一次性录，这天起每一笔按实际日期录。'
+                   '小规模纳税人：⑤ 销项税率改成 3%（或 1%），进项票不抵扣（自动）。', F_NOTE, align=ALW, border=False)
+    ws.merge_cells('B10:C14')
     dv_list(ws, CO_TYPE, '"一般纳税人,小规模纳税人"')
     # ② 资金账户
     section(ws, 3, AC_SEQ, AC_NOTE, '② 资金账户（银行 · 现金 · 个人户 · 票据）', C_CASH)
@@ -54,19 +55,26 @@ def build_base(wb, ctx):
     dv_date(ws, f'{AC_RDATE}{AC_R0}:{AC_RDATE}{AC_R1}')
     dv_list(ws, f'{AC_TYPE}{AC_R0}:{AC_TYPE}{AC_R1}', '"' + ','.join(AC_TYPES) + '"',
             '个人户：老板/负责人替公司收付钱用的（余额为负＝公司欠他）；票据：在手的承兑汇票')
-    dv_list(ws, f'{AC_OWNER}{AC_R0}:{AC_OWNER}{AC_R1}', f'={UN_NAMES}', '个人户填是谁的（【往来单位及人员】里的人）', stop=False)
+    dv_list(ws, f'{AC_OWNER}{AC_R0}:{AC_OWNER}{AC_R1}', f'={UN_NAMES}', '个人户填是谁的（【往来单位】里的人）', stop=False)
     # ③ 收支类别
     section(ws, 3, CT_SEQ, CT_NOTE, '③ 收支类别（每一类记到报表哪一行、要不要摊到项目）', C_RPT)
-    header(ws, B_HDR, [(CT_SEQ, '序号'), (CT_NAME, '收支类别'), (CT_DIR, '方向'), (CT_LINE, '报表项目'), (CT_ALLOC, '分摊归类'),
+    header(ws, B_HDR, [(CT_SEQ, '序号'), (CT_NAME, '收支类别'), (CT_DIR, '方向'), (CT_LINE, '报表项目'), (CT_ALLOC, '分摊归类\n（自动）'),
                        (CT_PROJ, '要选'), (CT_NOTE, '什么钱记这一类')], C_RPT)
     allcats = cats.CATS + cats.ACCRUAL_CATS
+    direct = [n for n, g in cats.IS_LINES if g in ('直接成本', '项目财务费')]
+    pool = [n for n, g in cats.IS_LINES if g == '间接费用']
+    other = [n for n, g in cats.IS_LINES if g not in ('直接成本', '项目财务费', '间接费用', '收入', '税金')]
+    inl = lambda x, names: 'OR(' + ','.join(f'{x}="{n}"' for n in names) + ')'
     for i, r in enumerate(range(CT_R0, CT_R1 + 1)):
         put(ws, f'{CT_SEQ}{r}', i + 1, F_AUTO, FILL_AUTO, align=AC)
-        for c in (CT_NAME, CT_DIR, CT_LINE, CT_ALLOC, CT_PROJ, CT_NOTE):
+        for c in (CT_NAME, CT_DIR, CT_LINE, CT_PROJ, CT_NOTE):
             put(ws, f'{c}{r}', None, F_IN, FILL_IN, align=AL if c == CT_NOTE else AC)
+        ln = f'{CT_LINE}{r}'
+        put(ws, f'{CT_ALLOC}{r}', f'=IF({CT_NAME}{r}="","",IF({inl(ln, direct)},"{cats.AL_DIRECT}",IF({inl(ln, pool)},"{cats.AL_POOL}",'
+                                  f'IF({inl(ln, other)},"{cats.AL_NOALLOC}","{cats.AL_BS}"))))', F_AUTO, FILL_AUTO, align=AC)
         if i < len(allcats):
             n, dr, line, al, need, note = allcats[i]
-            ws[f'{CT_NAME}{r}'], ws[f'{CT_DIR}{r}'], ws[f'{CT_LINE}{r}'], ws[f'{CT_ALLOC}{r}'] = n, dr, line, al
+            ws[f'{CT_NAME}{r}'], ws[f'{CT_DIR}{r}'], ws[f'{CT_LINE}{r}'] = n, dr, line
             if need:
                 ws[f'{CT_PROJ}{r}'] = need
             ws[f'{CT_NOTE}{r}'] = note
@@ -74,9 +82,9 @@ def build_base(wb, ctx):
                 for c in (CT_NAME, CT_DIR, CT_LINE, CT_PROJ):
                     ws[f'{c}{r}'].fill = FILL_AUTO
     dv_list(ws, f'{CT_DIR}{CT_R0}:{CT_DIR}{CT_R1}', '"收,支,双向"', '支：支出栏填负数＝冲回；双向：借进借出、互转、保证金')
-    dv_list(ws, f'{CT_ALLOC}{CT_R0}:{CT_ALLOC}{CT_R1}', '"' + ','.join(cats.ALLOC_KINDS) + '"',
-            '项目直接成本：要选项目；公司间接费：年底按管理费率摊到项目；公司不分摊：留在公司；不进利润：借还款、互转、交税等')
-    dv_list(ws, f'{CT_LINE}{CT_R0}:{CT_LINE}{CT_R1}', f'={SH_AUX}!$H$1:$H$60', '新加的类别从这里选它记到报表哪一行')
+    dv_list(ws, f'{CT_LINE}{CT_R0}:{CT_LINE}{CT_R1}', f'={SH_AUX}!$H$1:$H$60',
+            '这一类记到报表哪一行。「分摊归类」跟着自动变：材料人工分包机械其他直接费＝项目直接成本（要选项目）；办公招待车辆等＝公司间接费（年底按费率摊到项目）；'
+            '利息手续费其他收支＝公司不分摊；借还款、互转、交税、付应付款＝不进利润')
     dv_list(ws, f'{CT_PROJ}{CT_R0}:{CT_PROJ}{CT_R1}', '"项目,人,单位,对方账户"')
     # ④ 摘要关键词
     section(ws, 3, KW_SEQ, KW_CAT, '④ 摘要关键词 → 收支类别', C_INV)
@@ -99,7 +107,6 @@ def build_base(wb, ctx):
         put(ws, f'{PA_NOTE}{r}', note, F_NOTE, align=ALW)
         ws.row_dimensions[r].height = 28
     dv_list(ws, PA_DRV.split('!')[1].replace('$', ''), '"施工费,直接成本"')
-    dv_list(ws, PA_INT.split('!')[1].replace('$', ''), '"不分摊,按未收款"')
     # ⑥ 固定资产
     section(ws, 3, FA_SEQ, FA_NOTE, '⑥ 固定资产（车、设备，5000 元以下直接算费用；购入次月起按月提折旧）', C_AR)
     hide(ws, FA_S, FA_E)
@@ -165,7 +172,7 @@ def build_aux(wb, ctx):
     j = {
         AX_Y: f'=IF(ISNUMBER({SEL_Y}),{SEL_Y},YEAR({AX_E.replace("$J$9", "$J$10")}))',
         AX_LAST: f'=IF({last}=0,{OPEN_DATE},{last})',
-        AX_E: f'=IF(ISNUMBER({SEL_E}),{SEL_E},IF(YEAR({AX_LAST})={AX_Y},{AX_LAST},DATE({AX_Y},12,31)))',
+        AX_E: f'=EOMONTH(IF(ISNUMBER({SEL_E}),{SEL_E},IF(YEAR({AX_LAST})={AX_Y},{AX_LAST},DATE({AX_Y},12,31))),0)',
         AX_YM0: f'={AX_Y}*100+1',
         AX_YM1: f'=IF(YEAR({AX_E})={AX_Y},YEAR({AX_E})*100+MONTH({AX_E}),IF(YEAR({AX_E})>{AX_Y},{AX_Y}*100+12,{AX_Y}*100+1))',
         AX_END: f'=EOMONTH(DATE(INT({AX_YM1}/100),MOD({AX_YM1},100),1),0)',
@@ -175,10 +182,14 @@ def build_aux(wb, ctx):
         AX_MON: f'=MOD({AX_YM1},100)',
     }
     labels = {AX_YM0: '本年1月', AX_YM1: '截止月', AX_END: '截止月末', AX_OYM: '建账年月', AX_PYM: '上年12月', AX_Y0: '建账年',
-              AX_Y: '报表年度', AX_MON: '截止几月', AX_E: '截止日', AX_LAST: '最后一笔'}
+              AX_Y: '报表年度', AX_MON: '截止几月', AX_E: '截止日（月底）', AX_LAST: '最后一笔'}
     for cell, f in j.items():
         a = cell.split('!')[1].replace('$', '')
         ws[a] = f
         ws['I' + a[1:]] = labels[cell]
+    nu = UN_R1 - UN_R0 + 1
+    counter(ws, 'N', 1, nu, lambda i: f'{SH_UNIT}!${UN_TYPE}${UN_R0 + i}="甲方/总包"')
+    for i in range(nu):
+        ws[f'L{i + 1}'] = f'=IFERROR(INDEX({UN_NAMES},MATCH({i + 1},$N$1:$N${nu},0))&"","")' if i < 100 else None
     ws.sheet_state = 'hidden'
     return ws

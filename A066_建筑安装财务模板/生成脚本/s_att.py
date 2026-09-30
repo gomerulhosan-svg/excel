@@ -15,10 +15,11 @@ def build_att(wb, ctx):
                 AT_DAYS: 7, AT_RATE: 9, AT_WAY: 6, AT_BASE: 11, AT_PAY: 11, AT_NETPAY: 11, AT_CHK: 34})
     title(ws, '考 勤 工 资（每人每月一行 · 项目＋天数成对填 · 单价自动按工资标准查）', AT_CHK, C_HOME,
           '💡 每个月每人一行：月份（这个月任意一天）、姓名，然后「项目1 天数1、项目2 天数2……」在哪个工地干了几天就填几天（半天填 0.5），'
-          '在公司/办公室干的项目选「公司管理」。一个月跑了 5 个以上工地，同一个人再加一行接着填。'
+          '在公司/办公室干的项目选「公司管理」。一个月跑了 5 个以上工地，同一个人再加一行接着填。删行请清空内容，别删整行。'
           '单价自动从【工资标准】查（涨工资在那边加一行，以前的月份不变）；月中涨薪：这个月拆两行，涨薪前的天数那一行在「单价手填」填旧单价。'
           '月薪的人（老板、负责人、办公室）：应发＝月薪，在工地干了几天就填那个项目几天、其余填「公司管理」——按天数把工资拆到项目和公司；不填天数＝全部算公司管理费。'
-          '零星的包工、点工（比如搬运 1200 元扣个税 80）：天数填 1、单价手填 1200、代扣个税 80。'
+          '零星的临时工、点工当场结清的不用录这里，直接在【资金流水】记「临时工工资」、选项目。'
+          '月薪的人一个月拆成两行（月中涨薪、超过 4 个工地）时，月薪按两行的天数比例分，不会算两遍。'
           '发工资不在这里记：在【资金流水】记（类别「工资」），【工资表】自动算已发多少、还欠多少。')
     heads = [(AT_SEQ, '序号'), (AT_MON, '月份'), (AT_NAME, '姓名')]
     for k in range(4):
@@ -45,27 +46,32 @@ def build_att(wb, ctx):
         ws[g(AT_YM)] = f'=IF(ISNUMBER({mon}),YEAR({mon})*100+MONTH({mon}),"")'
         ws[g(AT_DAYS)] = f'=IF({nm}="","",' + '+'.join(f'N({g(c)})' for c in AT_DDS) + ')'
         ok = f'AND({nm}<>"",ISNUMBER({mon}))'
-        ws[g(AT_EFF)] = f'=IF({ok},_xlfn.MAXIFS({RT_DATES},{RT_NAMES},{nm},{RT_DATES},"<="&EOMONTH({mon},0)),0)'
+        ws[g(AT_EFF)] = f'=IF({ok},SUMPRODUCT(MAX(({RT_NAMES}={nm})*({RT_DNS}<=EOMONTH({mon},0))*{RT_DNS})),0)'
         ws[g(AT_SDAY)] = f'=IF(N({g(AT_EFF)})=0,0,SUMIFS({RT_DAYS},{RT_NAMES},{nm},{RT_DATES},{g(AT_EFF)}))'
         ws[g(AT_SMON)] = f'=IF(N({g(AT_EFF)})=0,0,SUMIFS({RT_MONS},{RT_NAMES},{nm},{RT_DATES},{g(AT_EFF)}))'
         ws[g(AT_WAY)] = f'=IF({nm}="","",IF({g(AT_SMON)}>0,"月薪","日薪"))'
         ws[g(AT_RATE)] = f'=IF({nm}="","",IF({g(AT_URATE)}<>"",N({g(AT_URATE)}),IF({g(AT_WAY)}="月薪",{g(AT_SMON)},{g(AT_SDAY)})))'
-        ws[g(AT_BASE)] = f'=IF({nm}="","",ROUND(IF({g(AT_WAY)}="月薪",N({g(AT_RATE)}),N({g(AT_DAYS)})*N({g(AT_RATE)})),2))'
+        pdays = f'SUMIFS({atr(AT_DAYS)},{atr(AT_NAME)},{nm},{atr(AT_YM)},{g(AT_YM)})'
+        first = f'COUNTIFS(${AT_NAME}${AT_R0}:{nm},{nm},${AT_YM}${AT_R0}:{g(AT_YM)},{g(AT_YM)})=1'
+        ws[g(AT_BASE)] = (f'=IF({nm}="","",ROUND(IF({g(AT_WAY)}="月薪",IF({pdays}=0,IF({first},N({g(AT_RATE)}),0),'
+                          f'N({g(AT_RATE)})*N({g(AT_DAYS)})/{pdays}),N({g(AT_DAYS)})*N({g(AT_RATE)})),2))')
         ws[g(AT_PAY)] = f'=IF({nm}="","",ROUND(N({g(AT_BASE)})+N({g(AT_ALLOW)})+N({g(AT_ADJ)}),2))'
         ws[g(AT_NETPAY)] = f'=IF({nm}="","",ROUND(N({g(AT_PAY)})-N({g(AT_TAX)})-N({g(AT_SOC)}),2))'
         for pc, dc, ac in zip(AT_PJS, AT_DDS, AT_AMTS):
             ws[g(ac)] = f'=IF(OR({g(pc)}="",N({g(dc)})=0,N({g(AT_DAYS)})=0),0,ROUND(N({g(AT_PAY)})*{g(dc)}/{g(AT_DAYS)},2))'
         proj_part = '+'.join(f'{g(ac)}*({g(pc)}<>"{CO_PSEUDO}")' for pc, ac in zip(AT_PJS, AT_AMTS))
         ws[g(AT_COAMT)] = f'=IF({nm}="",0,ROUND(N({g(AT_PAY)})-({proj_part}),2))'
-        ws[g(AT_MIDRAISE)] = (f'=IF(NOT({ok}),0,_xlfn.MAXIFS({RT_DATES},{RT_NAMES},{nm},{RT_DATES},">"&({mon}-DAY({mon})+1),'
-                              f'{RT_DATES},"<="&EOMONTH({mon},0)))')
+        ws[g(AT_MIDRAISE)] = (f'=IF(NOT({ok}),0,SUMPRODUCT(MAX(({RT_NAMES}={nm})*({RT_DNS}>{mon}-DAY({mon})+1)'
+                              f'*({RT_DNS}<=EOMONTH({mon},0))*{RT_DNS})))')
         ws[g(AT_KIND)] = f'=IF({nm}="","",IFERROR(INDEX({UN_TYPES_R},MATCH({nm},{UN_NAMES},0))&"",""))'
         badpj = 'OR(' + ','.join(f'AND({g(pc)}<>"",{g(pc)}<>"{CO_PSEUDO}",COUNTIF({PJ_NAMES},{g(pc)})=0)' for pc in AT_PJS) + ')'
         daynopj = 'OR(' + ','.join(f'AND({g(pc)}="",N({g(dc)})<>0)' for pc, dc in zip(AT_PJS, AT_DDS)) + ')'
         pjnoday = 'OR(' + ','.join(f'AND({g(pc)}<>"",N({g(dc)})=0)' for pc, dc in zip(AT_PJS, AT_DDS)) + ')'
         dup = 'OR(' + ','.join(f'AND({g(AT_PJS[a])}<>"",{g(AT_PJS[a])}={g(AT_PJS[b])})' for a in range(4) for b in range(a + 1, 4)) + ')'
         ws[g(AT_CHK)] = (f'=IF({blank},"",IF(NOT(ISNUMBER({mon})),"✗ 月份要填成日期（这个月任意一天）",'
-                         f'IF({nm}="","✗ 填姓名",IF({g(AT_KIND)}="","✗ 这个人没在【往来单位及人员】登记",'
+                         f'IF({nm}="","✗ 填姓名",IF({g(AT_KIND)}="","✗ 这个人没在【往来单位】登记",'
+                         f'IF({g(AT_KIND)}="临时工","✗ 临时工现结不走考勤：在【资金流水】记「临时工工资」（要代扣个税的，在往来单位改成「工人」）",'
+                         f'IF(AND({g(AT_KIND)}<>"工人",{g(AT_KIND)}<>"管理人员"),"✗ 只有工人、管理人员录考勤（往来单位里的类型）",'
                          f'IF({mon}<{OPEN_DATE}-DAY({OPEN_DATE})+1,"✗ 月份早于建账日期",'
                          f'IF(AND({g(AT_URATE)}="",N({g(AT_RATE)})=0),"✗ 【工资标准】里查不到他这个月的单价（工资算成 0）",'
                          f'IF({badpj},"✗ 项目不在【项目档案】里",IF({daynopj},"✗ 有天数没选项目",IF({pjnoday},"✗ 选了项目没填天数",'
@@ -75,7 +81,7 @@ def build_att(wb, ctx):
                          f'"⚠ 本月"&DAY({g(AT_MIDRAISE)})&"号调价：拆两行，调价前那行手填旧单价",'
                          f'IF(SUMIFS({atr(AT_DAYS)},{atr(AT_NAME)},{nm},{atr(AT_YM)},{g(AT_YM)})>DAY(EOMONTH({mon},0)),'
                          f'"⚠ 这个人这个月天数比当月天数还多",'
-                         f'"√")))))))))))))')
+                         f'"√")))))))))))))))')
     cols = [AT_SEQ, AT_MON, AT_NAME] + [c for pair in zip(AT_PJS, AT_DDS) for c in pair] + \
            [AT_URATE, AT_ALLOW, AT_ADJ, AT_TAX, AT_SOC, AT_NOTE, AT_DAYS, AT_RATE, AT_WAY, AT_BASE, AT_PAY, AT_NETPAY, AT_CHK]
     style_rows(ws, AT_R0, AT_R1, cols, auto=[AT_SEQ, AT_DAYS, AT_RATE, AT_WAY, AT_BASE, AT_PAY, AT_NETPAY, AT_CHK],
@@ -95,7 +101,7 @@ def build_att(wb, ctx):
     ws.conditional_formatting.add(rng_, FormulaRule(formula=[f'${AT_CHK}{AT_R0}="√"'],
                                                     font=Font(name=YH, sz=10, bold=True, color='FF00B050')))
     dv_date(ws, f'{AT_MON}{AT_R0}:{AT_MON}{AT_R1}')
-    dv_list(ws, f'{AT_NAME}{AT_R0}:{AT_NAME}{AT_R1}', f'={UN_NAMES}', '【往来单位及人员】登记过的人')
+    dv_list(ws, f'{AT_NAME}{AT_R0}:{AT_NAME}{AT_R1}', f'={UN_NAMES}', '【往来单位】登记过的人')
     for pc in AT_PJS:
         dv_list(ws, f'{pc}{AT_R0}:{pc}{AT_R1}', f'={AX_ALL_R}', '项目，或者「公司管理」（在公司/办公室干的）')
     dv = DataValidation(type='decimal', operator='between', formula1='0', formula2='31', allow_blank=True,

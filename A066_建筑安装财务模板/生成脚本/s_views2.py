@@ -3,6 +3,7 @@
 from openpyxl.formatting.rule import FormulaRule
 from common import *
 from layout import *
+import calc
 import cats
 import s_agg
 from s_views import _sheet, _lbl, _val, jc, GREY
@@ -27,16 +28,16 @@ def build_pay(wb, ctx):
     PD = [CL(7 + j) for j in range(PAY_PJ)]                  # G..N 各项目天数
     PA = [CL(17 + j) for j in range(PAY_PJ)]                 # Q..X 各项目小计
     (C_DAYS, C_RATE) = 'O', 'P'
-    (C_BASE, C_ALW, C_ADJ, C_PAY, C_TAX, C_SOC, C_NET, C_PAID, C_OFF, C_REF, C_LEFT, C_OWE, C_SIGN, C_NOTE) = \
+    (C_BASE, C_ALW, C_ADJ, C_PAY, C_TAX, C_SOC, C_NET, C_PREV, C_PAID, C_OFF, C_REF, C_OWE, C_SIGN, C_NOTE) = \
         [CL(25 + i) for i in range(14)]                       # Y..AL
     last = C_NOTE
     ws = _sheet(wb, SH_PAY, C_HOME, '工 资 表（选月份 · 每人在各工地的天数和工资 · 本月发了多少、还欠多少）',
                 '💡 黄格子选月份（空着＝最近录了考勤的那个月）。全部从【考勤工资】自动来：每人一行，各工地天数、日工资、各工地小计，跟你原来的工资表一个样。'
-                '「本月发放」＝【资金流水】这个月发给他的（类别「工资」），「总包代发」＝【代发抵账】里总包直接发给他的，「已退回」＝工人多拿了退回来的；'
-                '「累计欠薪」＝到这个月底公司还欠他多少（负数＝多发了，他欠公司）。要打印发工资，筛掉空行就行。',
+                '右边是这个人的欠薪账：上月底欠他的 ＋ 本月实发应付 − 本月发放（【资金流水】这个月发给他的，类别「工资」，不管发的是哪个月的）'
+                '− 总包代发（【代发抵账】）＋ 已退回（工人多拿了退回来的）＝ 月底欠薪（负数＝多发了，他欠公司）。打印：筛掉空行，已设好横向一页宽。',
                 last, {'A': 5, 'B': 9, 'C': 18, 'D': 12, 'E': 20, 'F': 12, **{c: 8 for c in PD}, C_DAYS: 7, C_RATE: 8,
-                       **{c: 10 for c in PA}, C_BASE: 11, C_ALW: 9, C_ADJ: 9, C_PAY: 11, C_TAX: 8, C_SOC: 8, C_NET: 11,
-                       C_PAID: 11, C_OFF: 10, C_REF: 9, C_LEFT: 11, C_OWE: 11, C_SIGN: 8, C_NOTE: 16})
+                       **{c: 12 for c in PA}, C_BASE: 12, C_ALW: 10, C_ADJ: 10, C_PAY: 12, C_TAX: 9, C_SOC: 9, C_NET: 12,
+                       C_PREV: 12, C_PAID: 12, C_OFF: 11, C_REF: 10, C_OWE: 12, C_SIGN: 8, C_NOTE: 16})
     _lbl(ws, 'B3', '月份')
     last_att = next((a['mon'] for a in sorted(ctx['att_rows'], key=lambda a: a['mon'], reverse=True)), None)
     put(ws, 'C3', last_att, F_SEL, FILL_SEL, 'yyyy"年"m"月"', AC)
@@ -49,13 +50,11 @@ def build_pay(wb, ctx):
     put(ws, 'E3', f'=YEAR({M})*100+MONTH({M})', F_HELP, border=False)
     HP, HA = 'BC', 'BD'
     cand = AX_ALL_N
-    for i in range(cand):
-        r = 1 + i
-        c_ = f'{SH_AUX}!${AX_ALL}${r}'
+    def pcond(i):
+        c_ = f'{SH_AUX}!${AX_ALL}${1 + i}'
         n = '+'.join(f'COUNTIFS({atr(p)},{c_},{atr(AT_YM)},{YM})' for p in AT_PJS)
-        prev = f'{HP}{r - 1}+' if i else ''
-        ws[f'{HP}{r}'] = f'={prev}AND({c_}<>"",({n})>0)'
-        ws[f'{HP}{r}'].font = F_HELP
+        return f'AND({c_}<>"",({n})>0)'
+    counter(ws, HP, 1, cand, pcond)
     na = AT_R1 - AT_R0 + 1
     counter(ws, HA, 1, na, lambda i: f'{SH_ATT}!${AT_YM}${AT_R0 + i}={YM}')
     npj = cnt(HP, 1, cand)
@@ -63,8 +62,8 @@ def build_pay(wb, ctx):
     R0 = H0 + 1
     heads = [('A', '序号'), ('B', '姓名'), ('C', '身份证号'), ('D', '手机号'), ('E', '银行账号'), ('F', '开户行'),
              (C_DAYS, '合计\n天数'), (C_RATE, '日工资\n(月工资)'), (C_BASE, '基本工资'), (C_ALW, '补贴'), (C_ADJ, '其他加减'),
-             (C_PAY, '应发工资'), (C_TAX, '代扣\n个税'), (C_SOC, '代扣\n社保'), (C_NET, '实发应付'), (C_PAID, '本月发放'),
-             (C_OFF, '总包代发'), (C_REF, '已退回'), (C_LEFT, '本月还欠'), (C_OWE, '累计欠薪\n(月底)'), (C_SIGN, '签字'), (C_NOTE, '备注')]
+             (C_PAY, '应发工资'), (C_TAX, '代扣\n个税'), (C_SOC, '代扣\n社保'), (C_NET, '实发应付'), (C_PREV, '上月底\n欠薪'), (C_PAID, '本月发放'),
+             (C_OFF, '总包代发'), (C_REF, '已退回'), (C_OWE, '月底欠薪'), (C_SIGN, '签字'), (C_NOTE, '备注')]
     header(ws, H0, heads, C_HOME, height=40)
     for j in range(PAY_PJ):
         nm = f'IFERROR(INDEX({AX_ALL_R},MATCH({j + 1},${HP}$1:${HP}${cand},0)),"")'
@@ -113,20 +112,23 @@ def build_pay(wb, ctx):
         ws[f'{C_NOTE}{r}'] = f'=IF({ix}=0,"",{a(AT_NOTE)}&"")'
         first = f'$AO{r}=1'
         mrng = f'{jr(J_YM)},{YM}'
+        owe = lambda ym: (f'N(IFERROR(INDEX({rng(SH_UNIT, UN_OWE0, UN_R0, UN_R1)},MATCH({nm},{UN_NAMES},0)),0))'
+                          f'+SUMIFS({atr(AT_NETPAY)},{atr(AT_NAME)},{nm},{atr(AT_YM)},">="&{AX_OYM},{atr(AT_YM)},"<="&{ym})'
+                          f'+SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"应付职工薪酬",{rngj(ym)})'
+                          f'-SUMIFS({ofr(OF_AMT)},{ofr(OF_WHO)},{nm},{ofr(OF_TYPE)},"总包代发工资",{ofr(OF_YM)},">="&{AX_OYM},{ofr(OF_YM)},"<="&{ym})')
+        pym = f'IF(MOD({YM},100)=1,{YM}-89,{YM}-1)'
+        ws[f'{C_PREV}{r}'] = f'=IF({ix}=0,"",IF({first},ROUND({owe(pym)},2),0))'
         ws[f'{C_PAID}{r}'] = (f'=IF({ix}=0,"",IF({first},-SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"应付职工薪酬",'
                               f'{jr(J_NET)},"<0",{mrng}),0))')
         ws[f'{C_OFF}{r}'] = (f'=IF({ix}=0,"",IF({first},SUMIFS({ofr(OF_AMT)},{ofr(OF_WHO)},{nm},{ofr(OF_TYPE)},"总包代发工资",'
                              f'{ofr(OF_YM)},{YM}),0))')
         ws[f'{C_REF}{r}'] = (f'=IF({ix}=0,"",IF({first},SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"应付职工薪酬",'
                              f'{jr(J_NET)},">0",{mrng}),0))')
-        ws[f'{C_LEFT}{r}'] = f'=IF({ix}=0,"",{C_NET}{r}-{C_PAID}{r}-{C_OFF}{r}+{C_REF}{r})'
-        owe = (f'N(IFERROR(INDEX({rng(SH_UNIT, UN_OWE0, UN_R0, UN_R1)},MATCH({nm},{UN_NAMES},0)),0))+SUMIFS({atr(AT_NETPAY)},{atr(AT_NAME)},{nm},{atr(AT_YM)},">="&{AX_OYM},{atr(AT_YM)},"<="&{YM})'
-               f'+SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"应付职工薪酬",{rngj(YM)})'
-               f'-SUMIFS({ofr(OF_AMT)},{ofr(OF_WHO)},{nm},{ofr(OF_TYPE)},"总包代发工资",{ofr(OF_YM)},">="&{AX_OYM},{ofr(OF_YM)},"<="&{YM})')
-        ws[f'{C_OWE}{r}'] = f'=IF({ix}=0,"",IF({first},ROUND({owe},2),""))'
+        allnet = f'SUMIFS(${C_NET}${R0}:${C_NET}${R0 + PAY_ROWS - 1},$B${R0}:$B${R0 + PAY_ROWS - 1},{nm})'
+        ws[f'{C_OWE}{r}'] = f'=IF({ix}=0,"",IF({first},ROUND({C_PREV}{r}+{allnet}-{C_PAID}{r}-{C_OFF}{r}+{C_REF}{r},2),""))'
     R1 = R0 + PAY_ROWS - 1
     cols = [CL(i) for i in range(1, CI(last) + 1)]
-    money = PA + [C_BASE, C_ALW, C_ADJ, C_PAY, C_TAX, C_SOC, C_NET, C_PAID, C_OFF, C_REF, C_LEFT, C_OWE]
+    money = PA + [C_BASE, C_ALW, C_ADJ, C_PAY, C_TAX, C_SOC, C_NET, C_PREV, C_PAID, C_OFF, C_REF, C_OWE]
     _money_rows(ws, R0, R1, cols, money, {**{c: '0.##;-0.##;""' for c in PD + [C_DAYS]}, C_RATE: '#,##0.##', 'E': '@'},
                 left=('C', 'E', 'F', C_NOTE))
     ws.conditional_formatting.add(f'{C_OWE}{R0}:{C_OWE}{R1}', FormulaRule(formula=[f'N(${C_OWE}{R0})<0'], fill=fill('FFFFEB9C')))
@@ -143,6 +145,7 @@ def build_pay(wb, ctx):
     hide(ws, *HID, HP, HA)
     ws.freeze_panes = f'C{R0}'
     ws.auto_filter.ref = f'A{H0}:{last}{R1}'
+    print_setup(ws, f'{H0}:{H0}')
     return ws
 
 
@@ -153,8 +156,8 @@ def build_pays(wb, ctx):
     ws = _sheet(wb, SH_PAYS, C_HOME, '工 资 汇 总（每人一行：本年应发、发了多少、还欠多少）',
                 '💡 全自动，年度跟首页走。年初欠薪＋本年实发应付−本年发放−总包代发＋已退回＝剩余工资（负数＝多发了，他欠公司，下个月从工资里扣或让他退）。'
                 '右边是各月应发。月薪的人某个月没录考勤，最后一列会提醒（漏录了工资就进不了成本）。',
-                last, {'A': 5, 'B': 10, 'C': 9, 'D': 10, 'E': 11, 'F': 8, 'G': 12, 'H': 9, 'I': 9, 'J': 9, 'K': 12, 'L': 12,
-                       'M': 11, 'N': 10, 'O': 12, 'P': 14, 'Q': 2, **{c: 9 for c in MC}, 'AD': 20})
+                last, {'A': 5, 'B': 10, 'C': 9, 'D': 10, 'E': 12, 'F': 8, 'G': 13, 'H': 10, 'I': 10, 'J': 10, 'K': 13, 'L': 13,
+                       'M': 12, 'N': 11, 'O': 13, 'P': 16, 'Q': 2, **{c: 12 for c in MC}, 'AD': 22})
     put(ws, 'B3', f'={AX_Y}&"年  截止 "&TEXT({AX_E},"m月d日")', F_KPI_L, align=AL, border=False)
     ws.merge_cells('B3:D3')
     nu = UN_R1 - UN_R0 + 1
@@ -163,8 +166,9 @@ def build_pays(wb, ctx):
     def cond(i):
         b = BX_R0 + i
         t = f'{SH_BALX}!${BX_TYPE}${b}'
+        n = f'{SH_BALX}!${BX_NAME}${b}'
         return (f'AND(OR({t}="管理人员",{t}="工人"),OR({SH_BALX}!${BX_NETPAY}${b}<>0,{SH_BALX}!${BX_WPAID}${b}<>0,'
-                f'{SH_BALX}!${BX_WG_E}${b}<>0,{SH_BALX}!${BX_OFFW}${b}<>0))')
+                f'{SH_BALX}!${BX_WG_E}${b}<>0,{SH_BALX}!${BX_OFFW}${b}<>0,AND({t}="管理人员",COUNTIFS({RT_NAMES},{n},{RT_MONS},">0")>0)))')
     counter(ws, HC, 1, nu, cond)
     H0 = 5
     R0 = H0 + 1
@@ -187,7 +191,7 @@ def build_pays(wb, ctx):
         ws[f'A{r}'] = f'=IF({ix}=0,"",{k + 1})'
         ws[f'B{r}'] = f'=IF({ix}=0,"",INDEX({UN_NAMES},{ix}))'
         ws[f'C{r}'] = f'=IF({ix}=0,"",INDEX({UN_TYPES_R},{ix}))'
-        eff = f'_xlfn.MAXIFS({RT_DATES},{RT_NAMES},{nm},{RT_DATES},"<="&{AX_E})'
+        eff = f'SUMPRODUCT(MAX(({RT_NAMES}={nm})*({RT_DNS}<={AX_E})*{RT_DNS}))'
         ws[f'D{r}'] = (f'=IF({ix}=0,"",IF({eff}=0,"",SUMIFS({RT_DAYS},{RT_NAMES},{nm},{RT_DATES},{eff})'
                        f'+SUMIFS({RT_MONS},{RT_NAMES},{nm},{RT_DATES},{eff})))')
         ws[f'E{r}'] = f'=IF({ix}=0,"",{b(BX_WG_B)})'
@@ -207,12 +211,17 @@ def build_pays(wb, ctx):
         for i, c in enumerate(MC):
             ym = f'{AX_Y}*100+{i + 1}'
             ws[f'{c}{r}'] = f'=IF({ix}=0,"",SUMIFS({atr(AT_PAY)},{atr(AT_NAME)},{nm},{atr(AT_YM)},{ym}))'
-        first = f'MINIFS({atr(AT_YM)},{atr(AT_NAME)},{nm},{atr(AT_YM)},">="&{y0})'
-        out_ = f'{SH_UNIT}!${UN_OUT}$4:${UN_OUT}${UN_R1}'
-        outd = f'INDEX({out_},{ix})'
-        miss = '+'.join(f'AND({AX_Y}*100+{i + 1}>=_xlfn.{first},{AX_Y}*100+{i + 1}<={y1},N({MC[i]}{r})=0,'
-                        f'OR(NOT(ISNUMBER({outd})),DATE({AX_Y},{i + 1},1)<={outd}))' for i in range(12))
-        ws[f'AD{r}'] = (f'=IF({ix}=0,"",IF(AND(C{r}="管理人员",D{r}<>"",COUNTIFS({RT_NAMES},{nm},{RT_MONS},">0")>0),'
+        # 月薪的人：从「入职」（没填就用工资标准最早那天、建账月）到截止月，哪个月应发是 0 就算漏录（离职以后的不算）
+        u = lambda col: f'INDEX({rng(SH_UNIT, col, UN_R0, UN_R1)},{ix})'
+        rt0x = f'SUMPRODUCT(MAX(({RT_NAMES}={nm})*({RT_DNS}>0)*(99999-{RT_DNS})))'
+        rt0 = f'IF({rt0x}=0,0,99999-{rt0x})'
+        st = f'IF(ISNUMBER({u(UN_IN)}),{u(UN_IN)},{rt0})'
+        ws[f'AE{r}'] = f'=IF({ix}=0,0,MAX({y0},IF(N({st})=0,0,YEAR({st})*100+MONTH({st}))))'
+        ws[f'AF{r}'] = f'=IF({ix}=0,999912,IF(ISNUMBER({u(UN_OUT)}),YEAR({u(UN_OUT)})*100+MONTH({u(UN_OUT)}),999912))'
+        ws[f'AE{r}'].font = ws[f'AF{r}'].font = F_HELP
+        miss = '+'.join(f'AND({AX_Y}*100+{i + 1}>=$AE{r},{AX_Y}*100+{i + 1}<={y1},{AX_Y}*100+{i + 1}<=$AF{r},N({MC[i]}{r})=0)'
+                        for i in range(12))
+        ws[f'AD{r}'] = (f'=IF({ix}=0,"",IF(AND(C{r}="管理人员",COUNTIFS({RT_NAMES},{nm},{RT_MONS},">0")>0),'
                         f'IF(({miss})>0,"⚠ 有"&({miss})&"个月没录考勤",""),""))')
     R1 = R0 + PAYS_ROWS - 1
     cols = [CL(i) for i in range(1, 17)] + MC + ['AD']
@@ -228,9 +237,10 @@ def build_pays(wb, ctx):
         put(ws, f'{c}4', None, fill_=FILL_TOT)
     put(ws, 'AD4', f'=IF(COUNTIF(AD{R0}:AD{R1},"⚠*")>0,COUNTIF(AD{R0}:AD{R1},"⚠*")&"个管理人员有月份没录考勤","")', F_RED, FILL_TOT)
     put(ws, 'E3', f'=IF({cnt(HC, 1, nu)}>{PAYS_ROWS},"⚠ 有"&{cnt(HC, 1, nu)}&"人，只列前{PAYS_ROWS}人","")', F_RED, border=False)
-    hide(ws, 'AZ', HC)
+    hide(ws, 'AZ', HC, 'AE', 'AF')
     ws.freeze_panes = f'C{R0}'
     ws.auto_filter.ref = f'A{H0}:{last}{R1}'
+    print_setup(ws, f'{H0}:{H0}')
     return ws
 
 
@@ -315,8 +325,8 @@ def build_invs(wb, ctx):
     section(ws, 4, 'A', 'P', '① 按项目', C_INV)
     H0 = 5
     header(ws, H0, [('A', '序号'), ('B', '项目'), ('C', '甲方 / 总包'), ('D', '累计确认产值'), ('E', '累计开票'), ('F', '还没开票\n（确认−开票）'),
-                    ('G', '本年开票\n（价税合计）'), ('H', '本年销项税'), ('I', '本年收票\n（进项）'), ('J', '本年进项\n专票税额'),
-                    ('K', '本年增值税\n估算'), ('L', '累计材料分包\n机械其他成本'), ('M', '累计收票'), ('N', '还差多少票'), ('O', '收票\n比例'),
+                    ('G', '本年开票\n（价税合计）'), ('H', '本年销项税'), ('I', '本年收票\n（进项）'), ('J', '本年可抵扣\n进项税'),
+                    ('K', '本年增值税\n估算'), ('L', '累计该有票的成本\n（材料分包机械其他）'), ('M', '累计收票'), ('N', '还差多少票'), ('O', '收票\n比例'),
                     ('P', '提示')], C_INV, height=44)
     R0 = H0 + 2
     for i in range(npj):
@@ -336,7 +346,8 @@ def build_invs(wb, ctx):
         ws[f'J{r}'] = f'=IF({nm}="","",{pc("进项税", "本")})'
         ws[f'K{r}'] = f'=IF({nm}="","",H{r}-J{r})'
         cost = '+'.join(f'{pc(m, per)}' for m in ('材料', '分包', '机械', '其他直接') for per in ('前', '本'))
-        ws[f'L{r}'] = f'=IF({nm}="","",{o(OPJ_MAT)}+{o(OPJ_SUB)}+{o(OPJ_MACH)}+{o(OPJ_OTH)}+{cost})'
+        noinv = f'{calc.deduct(AX_OYM, AX_YM1, nm, "甲供材扣款")}+{calc.fa_dep(AX_OYM, AX_YM1, pj=nm)}'   # 甲供材、自己设备的折旧不会有票
+        ws[f'L{r}'] = f'=IF({nm}="","",{o(OPJ_MAT)}+{o(OPJ_SUB)}+{o(OPJ_MACH)}+{o(OPJ_OTH)}+{cost}-({noinv}))'
         ws[f'M{r}'] = (f'=IF({nm}="","",SUMIFS({oapr(OAP_INV)},{oapr(OAP_PJ)},{nm})'
                        f'+SUMIFS({ivr(IV_TOTU)},{ivr(IV_DIR)},"进项",{ivr(IV_PJ)},{nm},{ia}))')
         ws[f'N{r}'] = f'=IF({nm}="","",L{r}-M{r})'
@@ -355,7 +366,7 @@ def build_invs(wb, ctx):
     M0 = R1 + 3
     section(ws, M0, 'A', 'P', '② 按月（本年）', C_INV)
     header(ws, M0 + 1, [('A', '月'), ('B', '开票张数'), ('C', '销项金额\n（不含税）'), ('D', '销项税额'), ('E', '销项价税合计'), ('F', '收票张数'),
-                        ('G', '进项价税合计'), ('H', '进项专票\n税额'), ('I', '增值税估算\n（销项−进项）'), ('J', '附加税估算'),
+                        ('G', '进项价税合计'), ('H', '可抵扣\n进项税'), ('I', '增值税估算\n（销项−进项）'), ('J', '附加税估算'),
                         ('K', '本年累计\n增值税'), ('L', '确认产值\n（不含税）'), ('M', '税负率\n（增值税÷产值）')], C_INV, height=44)
     for m in range(1, 13):
         r = M0 + 1 + m

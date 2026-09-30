@@ -213,20 +213,59 @@ def home_link(ws, coord, home='首页'):
     return c
 
 
-def counter(ws, col, r0, n, cond):
-    """隐藏的计数列：第 r0 行起 n 行，第 i 行＝前 i 行里满足条件的个数（cond(i) 给出第 i 行的 0/1 条件公式）。
-       取第 k 个满足条件的行：kth(k, ...)。每格只看自己那一行，不卡。"""
+def counter(ws, col, r0, n, cond, block=50):
+    """隐藏的计数列：第 r0 行起 n 行，第 i 行＝前 i 行里满足条件的个数（cond(i) 给出第 i 行的条件公式）。
+       条件先放在另一列（自动找本表右边空列），计数按 50 行一段求和：公式链只有几十层深（不会太深算不动），改一格也不用整列重算。
+       取第 k 个满足条件的行：kth(k, ...)。"""
+    idx = getattr(ws, '_ccn', CI('CA'))
+    ws._ccn = idx + 1
+    cc = CL(idx)
     for i in range(n):
         r = r0 + i
-        prev = f'{col}{r - 1}+' if i else ''
-        ws[f'{col}{r}'] = f'={prev}({cond(i)})'
-        ws[f'{col}{r}'].font = F_HELP
+        ws[f'{cc}{r}'] = f'=IF({cond(i)},1,0)'
+        bs = r0 + (i // block) * block
+        base = f'{col}{bs - 1}+' if bs > r0 else ''
+        ws[f'{col}{r}'] = f'={base}SUM({cc}{bs}:{cc}{r})'
+        ws[f'{col}{r}'].font = ws[f'{cc}{r}'].font = F_HELP
+    ws.column_dimensions[cc].hidden = True
 
 
 def kth(k, col, r0, n):
     """第 k 个满足条件的是第几行（1 起；没有就 0）"""
-    return f'IFERROR(MATCH({k},${col}${r0}:${col}${r0 + n - 1},0),0)'
+    last = f'${col}${r0 + n - 1}'
+    return f'IF({k}>{last},0,IFERROR(MATCH({k},${col}${r0}:{last},0),0))'
 
 
 def cnt(col, r0, n):
     return f'${col}${r0 + n - 1}'
+
+
+def skey(ws, col, r0, n, cond, datef):
+    """按日期排序的清单用：满足条件的行放「日期×10000＋第几行」，不满足放空；返回放个数的格子"""
+    for i in range(n):
+        r = r0 + i
+        ws[f'{col}{r}'] = f'=IF({cond(i)},{datef(i)}*10000+{i + 1},"")'
+        ws[f'{col}{r}'].font = F_HELP
+    c = f'{col}{r0 - 1}' if r0 > 1 else f'{col}{r0 + n}'
+    ws[c] = f'=COUNT({col}{r0}:{col}{r0 + n - 1})'
+    ws[c].font = F_HELP
+    return f'${c[0:len(c.rstrip("0123456789"))]}${c[len(c.rstrip("0123456789")):]}'
+
+
+def ksorted(k, col, r0, n, ncell):
+    """按日期排第 k 笔是源表第几行（1 起；没有就 0）"""
+    return f'IF({k}>{ncell},0,MOD(SMALL(${col}${r0}:${col}${r0 + n - 1},{k}),10000))'
+
+
+def print_setup(ws, rows=None, landscape=True, fit_width=True):
+    """打印：横向、一页宽、每页重复表头"""
+    ws.page_setup.orientation = 'landscape' if landscape else 'portrait'
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    if fit_width:
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+    if rows:
+        ws.print_title_rows = rows
+    ws.page_margins.left = ws.page_margins.right = 0.3
+    ws.page_margins.top = ws.page_margins.bottom = 0.5

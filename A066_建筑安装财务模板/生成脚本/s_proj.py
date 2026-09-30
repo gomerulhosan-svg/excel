@@ -24,9 +24,9 @@ PPL_H = 5
 PPL_TOT = 6
 PPL_R0 = 7
 (P_SEQ, P_NAME, P_STAT, P_TOTAL,
- P_REV, P_MAT, P_LAB, P_SUB, P_MACH, P_OTH, P_TAX, P_INT, P_GROSS, P_ALLOC, P_INTA, P_NET, P_RATE,
+ P_REV, P_MAT, P_LAB, P_SUB, P_MACH, P_OTH, P_TAX, P_INT, P_GROSS, P_ALLOC, P_NET, P_RATE,
  C_REV, C_MAT, C_LAB, C_SUB, C_MACH, C_OTH, C_TAX, C_INT, C_ALLOC, C_NET, C_RATE, C_PROG, C_CPROG, C_REC, C_ARB, C_TIP) = \
-    [CL(i) for i in range(1, 34)]
+    [CL(i) for i in range(1, 33)]
 
 
 def _pool(y):
@@ -131,10 +131,10 @@ def build_alloc(wb, ctx):
 
 # ═══════════════════════════ 项目利润表 ═══════════════════════════
 def build_ppl(wb, ctx):
-    wmap = {P_SEQ: 5, P_NAME: 14, P_STAT: 9, P_TOTAL: 13, C_TIP: 34}
-    for c in [P_REV, P_MAT, P_LAB, P_SUB, P_MACH, P_OTH, P_TAX, P_INT, P_GROSS, P_ALLOC, P_INTA, P_NET,
+    wmap = {P_SEQ: 5, P_NAME: 14, P_STAT: 9, P_TOTAL: 14, C_TIP: 40}
+    for c in [P_REV, P_MAT, P_LAB, P_SUB, P_MACH, P_OTH, P_TAX, P_INT, P_GROSS, P_ALLOC, P_NET,
               C_REV, C_MAT, C_LAB, C_SUB, C_MACH, C_OTH, C_TAX, C_INT, C_ALLOC, C_NET, C_REC, C_ARB]:
-        wmap[c] = 12
+        wmap[c] = 14
     for c in (P_RATE, C_RATE, C_PROG, C_CPROG):
         wmap[c] = 8
     ws = _sheet(wb, SH_PPL, 'FFC65911', '项 目 利 润 表（每个项目：本年 ＋ 开工至今，赚了还是亏了）',
@@ -150,7 +150,7 @@ def build_ppl(wb, ctx):
     put(ws, f'{C_REV}4', '开 工 至 今（含建账前）', F_SEC, fill('FFC65911'), align=AC)
     heads = [(P_SEQ, '序号'), (P_NAME, '项目'), (P_STAT, '状态'), (P_TOTAL, '总价'),
              (P_REV, '确认收入'), (P_MAT, '材料'), (P_LAB, '人工'), (P_SUB, '分包'), (P_MACH, '机械运输'), (P_OTH, '其他直接'),
-             (P_TAX, '税金\n(估算)'), (P_INT, '票据贴息'), (P_GROSS, '项目毛利'), (P_ALLOC, '摊管理费'), (P_INTA, '摊利息'),
+             (P_TAX, '税金\n(估算)'), (P_INT, '票据贴息'), (P_GROSS, '项目毛利'), (P_ALLOC, '摊管理费'),
              (P_NET, '项目净利'), (P_RATE, '净利率'),
              (C_REV, '确认收入'), (C_MAT, '材料'), (C_LAB, '人工'), (C_SUB, '分包'), (C_MACH, '机械运输'), (C_OTH, '其他直接'),
              (C_TAX, '税金\n(估算)'), (C_INT, '票据贴息'), (C_ALLOC, '摊管理费'), (C_NET, '项目净利'), (C_RATE, '净利率'),
@@ -158,8 +158,6 @@ def build_ppl(wb, ctx):
     header(ws, PPL_H, heads, 'FFC65911', height=40)
     for c, _ in heads[4:17]:
         ws[f'{c}{PPL_H}'].fill = fill('FF2F75B5')
-    int_y = ms('利息支出', MS_YTD)
-    ar_pos = f'SUMIF({s_agg.ps(PS_AR_E)},">0")'
     for i in range(NPJ):
         r, p, k = PPL_R0 + i, PJ_R0 + i, PS_R0 + i
         nm = f'$B{r}'
@@ -181,8 +179,7 @@ def build_ppl(wb, ctx):
         ws[f'{P_INT}{r}'] = g(pc('贴息', '本'))
         ws[f'{P_GROSS}{r}'] = g(f'{P_REV}{r}-SUM({P_MAT}{r}:{P_INT}{r})')
         ws[f'{P_ALLOC}{r}'] = g(f'{SH_ALLOC}!${AL_NOW}${AL_P0 + i}')
-        ws[f'{P_INTA}{r}'] = g(f'IF(AND({PA_INT}="按未收款",{ar_pos}>0),ROUND({int_y}*MAX({SH_PS}!${PS_AR_E}${k},0)/{ar_pos},2),0)')
-        ws[f'{P_NET}{r}'] = g(f'{P_GROSS}{r}-{P_ALLOC}{r}-{P_INTA}{r}')
+        ws[f'{P_NET}{r}'] = g(f'{P_GROSS}{r}-{P_ALLOC}{r}')
         ws[f'{P_RATE}{r}'] = f'=IF(OR({nm}="",N({P_REV}{r})=0),"",{P_NET}{r}/{P_REV}{r})'
         both = lambda m: f'{pc(m, "前")}+{pc(m, "本")}'
         ws[f'{C_REV}{r}'] = g(f'{o(OPJ_REV)}+{both("确认收入")}')
@@ -204,13 +201,14 @@ def build_ppl(wb, ctx):
         ws[f'{C_TIP}{r}'] = (f'=IF({nm}="","",IF(AND(ISNUMBER({C_CPROG}{r}),N({C_CPROG}{r})-N({C_PROG}{r})>{PA_LAG}),'
                              f'"成本花了"&TEXT({C_CPROG}{r},"0%")&"，产值才确认"&TEXT(N({C_PROG}{r}),"0%")&"：找甲方报量、补【收入确认】",'
                              f'IF(AND(N({C_REV}{r})=0,SUM({C_MAT}{r}:{C_OTH}{r})>0),"有成本没收入：补【收入确认】（产值）",'
+                             f'IF(AND(N({C_REV}{r})=0,N({C_REC}{r})>0),"收了钱还没确认产值：补【收入确认】",'
                              f'IF(AND(N({C_REV}{r})>0,SUM({C_MAT}{r}:{C_OTH}{r})=0),"有产值没成本：成本是不是没录？（建账前的在【期初余额】①）",'
                              f'IF({st}="完工未结算","完工了还没结算：抓紧结算",'
                              f'IF(AND(OR({st}="已结算",{st}="质保期",{st}="已完结"),N({C_REV}{r})>0,SUM({C_MAT}{r}:{C_OTH}{r})<N({C_REV}{r})*0.3),'
                              f'"已结算但成本不到产值三成：成本是不是没录全？",'
-                             f'IF(N({C_NET}{r})<0,"开工至今亏损","")))))))')
+                             f'IF(N({C_NET}{r})<0,"开工至今亏损",""))))))))')
     R1 = PPL_R0 + NPJ - 1
-    cols = [CL(i) for i in range(1, 34)]
+    cols = [CL(i) for i in range(1, 33)]
     money = [c for c in cols if c not in (P_SEQ, P_NAME, P_STAT, P_RATE, C_RATE, C_PROG, C_CPROG, C_TIP)]
     style_rows(ws, PPL_R0, R1, cols, auto=cols, fmts={**{c: MONEY for c in money}, **{c: PCT for c in (P_RATE, C_RATE, C_PROG, C_CPROG)}},
                aligns={P_NAME: AL, C_TIP: AL, **{c: AR for c in money}}, bold=[P_NET, C_NET])
@@ -240,7 +238,7 @@ def build_ppl(wb, ctx):
              ('加：没归到项目的收入', f'={Y("营业收入")}-{P_REV}{PPL_TOT}', '收入确认里项目填错、没填的'),
              ('减：没归到项目的直接成本、税金、贴息', f'=-(({dir_is})-({dir_pj}))', '流水、应付登记里项目没选的（去看 ✗）'),
              ('减：没摊完的管理费（多摊了是加）', f'=-({"+".join(Y(n) for n in POOL)}-{P_ALLOC}{PPL_TOT})', '定稿费率跟算出来的不一样时的差额'),
-             ('减：公司不分摊的（利息、手续费、其他收支）', f'=-({fin}-{P_INTA}{PPL_TOT})', '选了按未收款摊利息的，摊出去的不在这里'),
+             ('减：公司不分摊的（利息、手续费、其他收支）', f'=-({fin})', '贷款利息、手续费、其他收支留在公司，不摊到项目'),
              ('减：所得税', f'=-{Y("所得税")}', ''),
              ('＝ 算出来的本年净利润', f'=SUM(C{b0 + 1}:C{b0 + 6})', ''),
              ('【利润表】本年净利润', f'={net_is}', ''),
@@ -251,6 +249,7 @@ def build_ppl(wb, ctx):
         put(ws, f'C{rr}', f, F_AUTOB, FILL_TOT if lab.startswith(('＝', '差额')) else FILL_AUTO, MONEY, AR)
         put(ws, f'D{rr}', note, F_NOTE, align=AL, border=False)
     ws.column_dimensions['B'].width = 14
+    ws.column_dimensions['C'].width = 14
     ws.conditional_formatting.add(f'C{b0 + 9}', FormulaRule(formula=[f'ABS(N(C{b0 + 9}))>0.01'], fill=FILL_WARN))
     ws.freeze_panes = f'C{PPL_R0}'
     ws.auto_filter.ref = f'A{PPL_H}:{C_TIP}{R1}'
@@ -272,9 +271,9 @@ def build_pl(wb, ctx):
     ws = _sheet(wb, SH_PL, 'FFC65911', '项 目 账（选一个项目：收入、成本、利润、应付、人工、发票、流水全在这一张）',
                 '💡 黄格子选项目，全部自动，不用每个项目单独做一张表、也不会漏改：流水、应付、考勤、发票一录，这里就跟着变。'
                 '「开工至今」含建账前（【期初余额】）；管理费按【费用分摊】的费率摊；税金按确认产值估算。下面几块清单：这个项目的材料商/分包/机械、干过活的工人、发票、每一笔收支。',
-                'AD', {'A': 5, 'B': 16, 'C': 14, 'D': 9, 'E': 14, 'F': 9, 'G': 24, 'H': 2, 'I': 16, 'J': 14, 'K': 2, 'L': 10, 'M': 13, 'N': 11, 'O': 12,
+                'AD', {'A': 5, 'B': 16, 'C': 14, 'D': 12, 'E': 14, 'F': 12, 'G': 24, 'H': 2, 'I': 30, 'J': 14, 'K': 2, 'L': 10, 'M': 13, 'N': 11, 'O': 12,
                        'P': 2, 'Q': 11, 'R': 6, 'S': 20, 'T': 13, 'U': 11, 'V': 2, 'W': 11, 'X': 11, 'Y': 30, 'Z': 12, 'AA': 12, 'AB': 11, 'AC': 14, 'AD': 12})
-    first = next((p['name'] for p in ctx['projects']), '')
+    first = ctx.get('pl_default') or next((p['name'] for p in ctx['projects']), '')
     _lbl(ws, 'B3', '选项目')
     put(ws, 'C3', first, F_SEL, FILL_SEL, align=AC)
     ws.merge_cells('C3:D3')
@@ -312,7 +311,7 @@ def build_pl(wb, ctx):
             ('分包', C_SUB, P_SUB, ''), ('机械运输', C_MACH, P_MACH, '含本项目用的设备折旧'), ('其他直接费', C_OTH, P_OTH, '检测、期间费、甲方扣款等'),
             ('直接成本小计', None, None, ''), ('税金（估算）', C_TAX, P_TAX, '增值税（销项−进项专票）＋附加＋印花'),
             ('票据贴息', C_INT, P_INT, ''), ('项目毛利', None, None, '产值 − 直接成本 − 税金 − 贴息'),
-            ('摊管理费', C_ALLOC, P_ALLOC, '【费用分摊】按施工费摊的'), ('摊利息', None, P_INTA, '基础资料选了按未收款摊才有'),
+            ('摊管理费', C_ALLOC, P_ALLOC, '【费用分摊】按施工费摊的'),
             ('项目净利', C_NET, P_NET, ''), ('净利率', None, None, '')]
     r0 = 14
     for i, (lab, cc, pc_, note) in enumerate(rows):
@@ -354,18 +353,22 @@ def build_pl(wb, ctx):
         r = 6 + i
         _lbl(ws, f'I{r}', lab)
         put(ws, f'J{r}', f'=IF({IX}=0,"",IF({f}="","",{f}))', F_AUTOB, FILL_AUTO, fmt, AR if fmt == MONEY else AC)
-    # ④ 税负测算（右中）
+    # ④ 税负测算（右中）：建账前的税金取【期初余额】，建账后的按确认产值和收到的专票估
     section(ws, 17, 'I', 'J', '④ 税负测算（开工至今，估算）', C_INV)
     PSc = lambda m: f'IF({IX}=0,0,INDEX({s_agg.ps(m, "前")},{IX})+INDEX({s_agg.ps(m, "本")},{IX}))'
     rate = f'IF(ISNUMBER({P(PJ_TAX)}),{P(PJ_TAX)},{PA_VATR})'
     rec = AR_('G')
-    tx = [('确认产值（不含税）', f'C{r0}-({PSc("销项税")})-IFERROR(SUMIFS({opr(OPJ_REV)},{opr(OPJ_PJ)},{PJ})/(1+{rate})*{rate},0)', MONEY),
-          ('销项税（建账后）', PSc('销项税'), MONEY), ('进项税（专票，建账后）', PSc('进项税'), MONEY),
-          ('增值税（建账后）', 'J19-J20', MONEY), ('附加税', f'ROUND(MAX(J21,0)*{PA_SURR},2)', MONEY),
-          ('印花税', f'ROUND(C{r0}*{PA_STAMP},2)', MONEY), ('税金合计（含建账前）', f'C{r0 + 7}', MONEY),
-          ('税负率（税金÷产值）', f'IF(N(C{r0})=0,"",J24/C{r0})', PCT),
-          ('已交增值税及附加（流水里选了这个项目的）', f'-SUMIFS({jr(J_NET)},{jr(J_PJ)},{PJ},{jr(J_LINE)},"应交税费",{jr(J_YM)},">="&{AX_OYM},{jr(J_YM)},"<="&{AX_YM1})', MONEY),
-          ('异地预缴增值税（按收款估）', f'ROUND({rec}/(1+{rate})*{PA_PRE},2)', MONEY)]
+    rev_after = PSc('确认收入')
+    tx = [('建账前的税金（期初填的）', f'SUMIFS({opr(OPJ_TAX)},{opr(OPJ_PJ)},{PJ})', MONEY),
+          ('建账后确认产值（不含税）', f'{rev_after}-({PSc("销项税")})', MONEY),
+          ('销项税', PSc('销项税'), MONEY), ('可抵扣进项税（专票）', PSc('进项税'), MONEY),
+          ('增值税（销项−进项）', 'J20-J21', MONEY), ('附加税', f'ROUND(J22*{PA_SURR},2)', MONEY),
+          ('印花税', f'ROUND({rev_after}*{PA_STAMP},2)', MONEY),
+          ('税金合计（＝上面②的税金）', 'J18+J22+J23+J24', MONEY),
+          ('税负率（税金÷产值）', f'IF(N(C{r0})=0,"",J25/C{r0})', PCT),
+          ('已交增值税及附加（流水里选了这个项目的）',
+           f'-SUMIFS({jr(J_NET)},{jr(J_PJ)},{PJ},{jr(J_LINE)},"应交税费",{jr(J_YM)},">="&{AX_OYM},{jr(J_YM)},"<="&{AX_YM1})', MONEY),
+          ('异地预缴增值税（按累计收款估）', f'ROUND({rec}/(1+{rate})*{PA_PRE},2)', MONEY)]
     for i, (lab, f, fmt) in enumerate(tx):
         r = 18 + i
         _lbl(ws, f'I{r}', lab)
@@ -423,11 +426,13 @@ def build_pl(wb, ctx):
     counter(ws, 'BF', 1, niv, lambda i: (f'({SH_INV}!${IV_PJ}${IV_R0 + i}={PJ})*ISNUMBER({SH_INV}!${IV_YM}${IV_R0 + i})'
                                           f'*({SH_INV}!${IV_YM}${IV_R0 + i}>={AX_OYM})*({SH_INV}!${IV_YM}${IV_R0 + i}<={AX_YM1})'))
     nj = J_R1 - J_R0 + 1
-    counter(ws, 'BG', 1, nj, lambda i: (f'({jc(J_PJ, J_R0 + i)}={PJ})*ISNUMBER({jc(J_YM, J_R0 + i)})'
-                                         f'*({jc(J_YM, J_R0 + i)}>={AX_OYM})*({jc(J_YM, J_R0 + i)}<={AX_YM1})'))
+    NJ = skey(ws, 'BG', 2, nj, lambda i: (f'AND({jc(J_PJ, J_R0 + i)}={PJ},ISNUMBER({jc(J_DATE, J_R0 + i)}),ISNUMBER({jc(J_YM, J_R0 + i)}),'
+                                           f'{jc(J_YM, J_R0 + i)}>={AX_OYM},{jc(J_YM, J_R0 + i)}<={AX_YM1})'),
+              lambda i: f'INT({jc(J_DATE, J_R0 + i)})')
     # ⑦ 应付汇总
     section(ws, top, 'A', 'G', '⑦ 这个项目的材料商、分包、机械（应付汇总）', C_AR)
-    header(ws, top + 1, [('A', '序号'), ('B', '单位'), ('C', '本项目应付'), ('D', '类型'), ('E', '本项目收票'), ('F', '收票\n比例'), ('G', '这家全部还欠（所有项目）')], C_AR, height=40)
+    header(ws, top + 1, [('A', '序号'), ('B', '单位'), ('C', '本项目应付'), ('D', '本项目已付'), ('E', '本项目未付'), ('F', '本项目收票'),
+                         ('G', '欠票\n（应付−收票）')], C_AR, height=40)
     # ⑧ 人工明细
     section(ws, top, 'I', 'O', '⑧ 在这个项目干过活的人（开工至今）', C_HOME)
     header(ws, top + 1, [('I', '姓名'), ('J', '工资'), ('L', '天数'), ('M', '平均日工资'), ('N', '类型'), ('O', '现在欠他')], C_HOME, height=40)
@@ -443,7 +448,7 @@ def build_pl(wb, ctx):
         r = d0 + kk
         # 流水
         ix = f'$BJ{r}'
-        ws[ix] = f'={kth(kk + 1, "BG", 1, nj)}'
+        ws[ix] = f'={ksorted(kk + 1, "BG", 2, nj, NJ)}'
         g = lambda col: f'INDEX({jr(col)},{ix})'
         ws[f'W{r}'] = f'=IF({ix}=0,"",{g(J_DATE)})'
         ws[f'X{r}'] = f'=IF({ix}=0,"",{g(J_ACC)}&"")'
@@ -482,30 +487,34 @@ def build_pl(wb, ctx):
             ws[f'A{r}'] = f'=IF({ix}=0,"",{kk + 1})'
             ws[f'B{r}'] = f'=IF({ix}=0,"",INDEX({UN_NAMES},{ix}))'
             ws[f'C{r}'] = f'=IF({ix}=0,"",INDEX($BA$1:$BA${nu},{ix}))'
-            ws[f'D{r}'] = f'=IF({ix}=0,"",INDEX({UN_TYPES_R},{ix})&"")'
-            ws[f'E{r}'] = (f'=IF({ix}=0,"",SUMIFS({oapr(OAP_INV)},{oapr(OAP_UNIT)},{nm},{oapr(OAP_PJ)},{PJ})'
+            paid = (f'SUMIFS({oapr(OAP_PAID)},{oapr(OAP_UNIT)},{nm},{oapr(OAP_PJ)},{PJ})'
+                    f'-SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_PJ)},{PJ},{jr(J_CT)},"付应付款",{jr(J_YM)},">="&{AX_OYM},{jr(J_YM)},"<="&{AX_YM1})'
+                    f'+SUMIFS({ofr(OF_AMT)},{ofr(OF_WHO)},{nm},{ofr(OF_PJ)},{PJ},{ofr(OF_TYPE)},"总包代付材料分包款",{ofr(OF_YM)},"<="&{AX_YM1})')
+            ws[f'D{r}'] = f'=IF({ix}=0,"",{paid})'
+            ws[f'E{r}'] = f'=IF({ix}=0,"",C{r}-D{r})'
+            ws[f'F{r}'] = (f'=IF({ix}=0,"",SUMIFS({oapr(OAP_INV)},{oapr(OAP_UNIT)},{nm},{oapr(OAP_PJ)},{PJ})'
                            f'+SUMIFS({ivr(IV_TOTU)},{ivr(IV_DIR)},"进项",{ivr(IV_UNIT)},{nm},{ivr(IV_PJ)},{PJ},{ivr(IV_YM)},">="&{AX_OYM},{ivr(IV_YM)},"<="&{AX_YM1}))')
-            ws[f'F{r}'] = f'=IF(OR({ix}=0,N(C{r})=0),"",E{r}/C{r})'
-            ws[f'G{r}'] = f'=IF({ix}=0,"",INDEX({s_agg.bx(BX_AP_E)},{ix}))'
+            ws[f'G{r}'] = f'=IF({ix}=0,"",C{r}-F{r})'
     style_rows(ws, d0, d0 + PL_J - 1, ['W', 'X', 'Y', 'Z', 'AA', 'AB', 'AC', 'AD'], auto=['W', 'X', 'Y', 'Z', 'AA', 'AB', 'AC', 'AD'],
                fmts={'W': DATE, 'Z': MONEY, 'AA': MONEY}, aligns={'Y': AL, 'Z': AR, 'AA': AR, 'AC': AL})
     style_rows(ws, d0, d0 + PL_IV - 1, list('QRSTU'), auto=list('QRSTU'), fmts={'Q': DATE, 'T': MONEY, 'U': MONEY},
                aligns={'S': AL, 'T': AR, 'U': AR})
     style_rows(ws, d0, d0 + PL_LAB - 1, list('IJKLMNO'), auto=list('IJKLMNO'), fmts={'J': MONEY, 'L': '0.##', 'M': '#,##0', 'O': MONEY},
                aligns={'J': AR, 'O': AR})
-    style_rows(ws, d0, d0 + PL_UN - 1, list('ABCDEFG'), auto=list('ABCDEFG'), fmts={'C': MONEY, 'E': MONEY, 'F': PCT, 'G': MONEY},
-               aligns={'B': AL, 'C': AR, 'E': AR, 'G': AR})
+    style_rows(ws, d0, d0 + PL_UN - 1, list('ABCDEFG'), auto=list('ABCDEFG'), fmts={c: MONEY for c in 'CDEFG'},
+               aligns={'B': AL, **{c: AR for c in 'CDEFG'}})
     for r in range(d0, d0 + PL_J):
         for c in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'Q', 'R', 'S', 'T', 'U', 'W', 'X', 'Y', 'Z', 'AA', 'AB', 'AC', 'AD']:
             ws[f'{c}{r}'].fill = FILL_NONE
     # 各清单合计（放在标题行右边）
     put(ws, f'H{top}', None, border=False)
-    for c, f in (('C', f'=SUM(C{d0}:C{d0 + PL_UN - 1})'), ('J', f'=SUM(J{d0}:J{d0 + PL_LAB - 1})'), ('Z', f'=SUM(Z{d0}:Z{d0 + PL_J - 1})'),
+    for c, f in (('C', f'=SUM(C{d0}:C{d0 + PL_UN - 1})'), ('D', f'=SUM(D{d0}:D{d0 + PL_UN - 1})'), ('E', f'=SUM(E{d0}:E{d0 + PL_UN - 1})'),
+                 ('F', f'=SUM(F{d0}:F{d0 + PL_UN - 1})'), ('G', f'=SUM(G{d0}:G{d0 + PL_UN - 1})'), ('J', f'=SUM(J{d0}:J{d0 + PL_LAB - 1})'), ('Z', f'=SUM(Z{d0}:Z{d0 + PL_J - 1})'),
                  ('AA', f'=SUM(AA{d0}:AA{d0 + PL_J - 1})'), ('T', f'=SUM(T{d0}:T{d0 + PL_IV - 1})')):
         put(ws, f'{c}{top - 1}', f, F_AUTOB, FILL_TOT, MONEY, AR)
     put(ws, f'B{top - 1}', '下面清单合计 →', F_NOTE, align=AR, border=False)
     msgs = (f'IF({cnt("BB", 1, nu)}>{PL_UN},"⚠ 单位超过{PL_UN}家 ","")&IF({cnt("BE", 1, nu)}>{PL_LAB},"⚠ 人超过{PL_LAB}个 ","")'
-            f'&IF({cnt("BF", 1, niv)}>{PL_IV},"⚠ 发票超过{PL_IV}张 ","")&IF({cnt("BG", 1, nj)}>{PL_J},"⚠ 流水超过{PL_J}笔（只列前面的）","")')
+            f'&IF({cnt("BF", 1, niv)}>{PL_IV},"⚠ 发票超过{PL_IV}张 ","")&IF({NJ}>{PL_J},"⚠ 流水超过{PL_J}笔（只列前面的）","")')
     put(ws, f'W{top - 1}', f'={msgs}', F_RED, border=False)
     hide(ws, 'AF', 'AZ', 'BH', 'BI', 'BJ', *HX)
     ws.freeze_panes = 'A5'

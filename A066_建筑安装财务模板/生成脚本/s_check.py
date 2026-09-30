@@ -44,7 +44,8 @@ def build_chk(wb, ctx):
         ('工资汇总对不上的人', f'COUNTIF({SH_PAYS}!$P$6:$P$205,"✗*")', 'x', '', SH_PAYS),
         ('资金账户：表里余额跟银行 App 差多少', f'SUMIF({rng(SH_BASE, AC_DIFF, AC_R0, AC_R1)},">0")-SUMIF({rng(SH_BASE, AC_DIFF, AC_R0, AC_R1)},"<0")', 'w',
          '在【基础资料】② 填银行 App 上的余额和日期；有差额就是漏记、记错金额或日期', SH_BASE),
-        ('资产负债表平不平（差额）', f'{s_fin.BS_DIFF}', 'x0', '不是 0 说明公式被改坏了，请联系做表的人', SH_BS),
+        ('资产负债表平不平（截止月末差额）', f'{s_fin.BS_DIFF}', 'x0', '不是 0 说明公式被改坏了，请联系做表的人', SH_BS),
+        ('资产负债表平不平（年初差额）', f'{s_fin.BS_DIFF_B}', 'x0', '', SH_BS),
         ('待查：没分类、没选账户的流水净额', f'{s_fin.BS_PEND}', 'w0', '去【资金流水】改 ✗ 的行', SH_CASH),
         ('收付款没分到项目（应收账款）', f'ROUND({PE["应收残"]},2)', 'w0', '工程款没选项目、收入确认/代发抵账的项目写错', SH_AR),
         ('付款没分到单位（应付账款）', f'ROUND({PE["应付残"]},2)', 'w0', '付应付款没选单位、单位类型不是材料商/分包/机械', SH_APS),
@@ -57,6 +58,12 @@ def build_chk(wb, ctx):
         ('以前年度还没定稿管理费率', f'SUMPRODUCT(({SH_ALLOC}!$A${sp.AL_Y0}:$A${sp.AL_Y0 + NYEARS - 1}<{AX_Y})*({SH_ALLOC}!$E${sp.AL_Y0}:$E${sp.AL_Y0 + NYEARS - 1}=""))',
          'w', '上一年的账定了，就把费率填到【费用分摊】E 列，以前年度的项目利润就不会再变', SH_ALLOC),
         ('期初项目有产值、没填税金', f'COUNTIFS({opr(OPJ_REV)},">0",{opr(OPJ_TAX)},"")', 'w', '建账前的项目税金（实交的或估算的）填在【期初余额】①，不然开工至今利润偏高', SH_OPEN),
+        ('期初项目不在项目档案里', f'SUMPRODUCT(({opr(OPJ_PJ)}<>"")*(COUNTIF({PJ_NAMES},{opr(OPJ_PJ)})=0))', 'x', '项目名要跟【项目档案】的简称一样', SH_OPEN),
+        ('期初应付的单位没登记', f'COUNTIF({oapr(OAP_TYPE)},"？")', 'x', '单位名要跟【往来单位】的名称一样（类型那列显示 ？ 的）', SH_OPEN),
+        ('建账日期不是某月 1 号', f'IF(AND(ISNUMBER({OPEN_DATE}),DAY({OPEN_DATE})<>1),1,0)', 'x', '【基础资料】① 建账日期填某个月的 1 号（报表按月算）', SH_BASE),
+        ('应付设备款是负数（付了设备款但没在⑥登记？）', f'MIN(0,{SH_BS}!${s_fin.BS_ROWS["应付设备款"][0]}${s_fin.BS_ROWS["应付设备款"][1]})',
+         'w0', '买车买设备在【基础资料】⑥ 登记；建账前赊购没付完的在【期初余额】③ 填', SH_BASE),
+        ('收入确认：要看一下的（⚠）', _cnt_mark(rvr(RV_CHK), '⚠'), 'w', '累计确认超过总价（结算额整笔又录了一遍？）、没选类型', SH_REV),
         ('项目简称重名', dup(PJ_NAMES), 'x', '项目简称不能重名（加个字区分）', SH_PROJ),
         ('往来单位/人重名', dup(UN_NAMES), 'x', '同名的人名字后面加括号区分，比如 张伟(电工)', SH_UNIT),
         ('资金账户重名', dup(AC_NAMES), 'x', '', SH_BASE),
@@ -120,7 +127,7 @@ NAV = [
                                   (SH_BASE, '公司、资金账户、收支类别、关键词、税率、固定资产')]),
     ('查看（自动）', 'FF548235', [(SH_ACC, '选一个账户看每一笔和余额'), ('资金报表', '资金周报 / 月报'),
                                (SH_AR, '每个项目甲方还欠多少、欠了多久'), (SH_APS, '欠材料商、分包、机械多少，对账单'),
-                               (SH_PER, '老板、负责人垫了多少、公司欠他多少'), (SH_PAY, '选月份出工资表'),
+                               (SH_PER, '老板、负责人垫了多少、公司欠他多少；保证金押金台账'), (SH_PAY, '选月份出工资表'),
                                (SH_PAYS, '每人本年应发、已发、欠薪'), (SH_LAB, '各项目每月人工'), (SH_INVS, '开票、收票、欠票')]),
     ('项目（自动）', 'FFC65911', [(SH_PL, '选一个项目看全部明细（不用每个项目做一张表）'), (SH_PPL, '全部项目本年和开工至今的利润'),
                                (SH_ALLOC, '老板工资、公司开支怎么摊到项目')]),
@@ -138,23 +145,31 @@ def build_home(wb, ctx):
     ws['A1'].value = f'={SH_BASE}!${CO_NAME[0]}${CO_NAME[1:]}&" · 建筑安装财务模板（消防改造 · 水电安装 · 强弱电）"'
     _lbl(ws, 'B4', '报表年度')
     put(ws, 'C4', ctx['open_date'].year, F_SEL, FILL_SEL, '0', AC)
-    _lbl(ws, 'E4', '截止日')
+    _lbl(ws, 'E4', '截止月份')
     put(ws, 'F4', None, F_SEL, FILL_SEL, DATE, AC)
     dv_date(ws, 'F4')
     dv = DataValidation(type='whole', operator='between', formula1='2000', formula2='2100', allow_blank=True)
     ws.add_data_validation(dv)
     dv.add('C4')
-    put(ws, 'H4', f'="用的截止日："&TEXT({AX_E},"yyyy年m月d日")&"（最后一笔流水 "&TEXT({AX_LAST},"m月d日")&"）"', F_NOTE, align=AL, border=False)
+    put(ws, 'H4', f'=IF(N(C4)<{AX_Y0},"⚠ 早于建账年（"&{AX_Y0}&"），没有数",'
+                  f'"报表到："&TEXT({AX_E},"yyyy年m月d日")&"（截止日所在月的月底；最后一笔流水 "&TEXT({AX_LAST},"m月d日")&"）")',
+        F_NOTE, align=AL, border=False)
     ws.merge_cells('H4:L4')
+    if ctx.get('demo_note'):
+        put(ws, 'B5', ctx['demo_note'], Font(name=YH, sz=10, bold=True, color='FFC00000'), fill('FFFFF2CC'), align=ALW)
+        ws.merge_cells('B5:L5')
+        ws.row_dimensions[5].height = 64
     # 关键数
-    section(ws, 6, 'B', 'L', '关键数（到截止日）', C_HOME)
+    section(ws, 6, 'B', 'L', '关键数（到截止月底）', C_HOME)
     Y = lambda n: ms(n, MS_YTD)
     is_net = (f'{Y("营业收入")}+{Y("其他收入")}-(' + '+'.join(Y(n) for n in __import__('cats').IS_NAMES if n not in ('营业收入', '其他收入')) + ')')
     BS = lambda lab_col: lab_col
+    cash_c, cash_r = s_fin.BS_ROWS['货币资金（银行＋现金）']
     kpis = [('本年确认产值', f'={Y("营业收入")}', SH_IS), ('本年净利润', f'={is_net}', SH_IS),
-            ('银行＋现金余额', f'={SH_BS}!$B$6', SH_ACC), ('甲方还欠（应收）', f'={SH_BS}!$B$8', SH_AR),
-            ('欠材料分包机械（应付）', f'={SH_BS}!$F$7', SH_APS), ('欠工人工资', f'={SH_BS}!$F$9', SH_PAYS),
-            ('公司欠老板/负责人', f'={SH_BS}!$F$13', SH_PER), ('全年保本产值', f'={SH_BE}!$C$16', SH_BE)]
+            ('银行＋现金余额', f'={SH_BS}!${cash_c}${cash_r}', '资金报表'), ('甲方还欠（应收净额）', f'=SUM({s_agg.ps(PS_AR_E)})', SH_AR),
+            ('欠材料分包机械（应付净额）', f'=SUM({s_agg.bx(BX_AP_E)})', SH_APS), ('欠工资（净额，含管理人员）', f'=SUM({s_agg.bx(BX_WG_E)})', SH_PAYS),
+            ('公司欠老板/负责人（个人户）', f'=-SUMIFS({s_agg.ba(BA_E)},{s_agg.ba(BA_TYPE)},"个人户")', SH_PER),
+            ('全年保本产值', f'={SH_BE}!$C$16', SH_BE)]
     for i, (lab, f, sh) in enumerate(kpis):
         r = 7 + (i // 4) * 2
         c1 = ['B', 'E', 'H', 'K'][i % 4]
@@ -188,6 +203,8 @@ def build_home(wb, ctx):
         r = 15 + k
         for (cn, cv, cr, cp), fn in ((('B', 'C', 'E', 'F'), 'LARGE'), (('H', 'I', 'K', 'L'), 'SMALL')):
             ix = f'IFERROR(MATCH({fn}({K},{k + 1}),{K},0),0)'
+            if fn == 'SMALL':      # 项目少于 10 个时，下面不重复列上面已经列了的
+                ix = f'IF({k + 1}>COUNT({K})-5,0,{ix})'
             put(ws, f'{cn}{r}', f'=IF({ix}=0,"",INDEX({PPL(sp.P_NAME)},{ix}))', F_TXT, align=AL)
             put(ws, f'{cv}{r}', f'=IF({ix}=0,"",INDEX({PPL(sp.C_NET)},{ix}))', F_AUTOB, fmt=MONEY, align=AR)
             ws.merge_cells(f'{cv}{r}:{CL(CI(cv) + 1)}{r}')
@@ -238,7 +255,8 @@ def build_home(wb, ctx):
              '③ 平时：每笔钱进出记【资金流水】（摘要写清楚项目和对象，类别自动认；认不出的在「改类别」选）；跟材料商/分包对了账记【应付登记】；每月月底录【考勤工资】。',
              '④ 甲方/总包确认了产值（报量批了、结算了）就记【收入确认】——利润按这个算，不按收钱算。总包代发工资、甲方扣款记【代发抵账】。发票每月从电子税务局导出粘到【发票登记】。',
              '⑤ 看报表：首页选年度；【项目账】选项目看明细；【项目利润表】看哪个项目赚哪个亏；【利润表】【资产负债表】【盈亏平衡表】给老板看。每年年底在【费用分摊】填定稿费率。',
-             '⑥ 每月对一次账：【基础资料】② 填银行 App 上的实际余额，差额是 0 就对了；再看一眼【数据校验】有没有 ✗。']
+             '⑥ 每月对一次账：【基础资料】② 填银行 App 上的实际余额，差额是 0 就对了；再看一眼【数据校验】有没有 ✗。',
+             '⑦ 注意：记错了就清空那几格，不要删整行、插行（别的表按行取数，删行公式会出错）；灰色格子是公式，不要往里打字。']
     for i, t in enumerate(steps):
         rr = s0 + 1 + i
         put(ws, f'B{rr}', t, F_TXT, align=ALW, border=False)

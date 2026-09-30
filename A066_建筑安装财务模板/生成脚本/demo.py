@@ -9,7 +9,7 @@ import data_prep as d
 import cats
 
 D = dt.datetime
-OPEN_DATE = D(2026, 1, 1)
+OPEN_DATE = D(2026, 3, 1)      # 跟你的用工成本表一样：25 年～26 年 2 月合计是期初，3 月起逐月
 ACC_MAP = {'聂辉微信': '聂辉个人户', '王伟微信': '王伟个人户', '张滨微信': '张滨个人户'}
 
 
@@ -62,7 +62,7 @@ def build_ctx():
             add(name=n, type='管理人员', note=managers[n] + '（月薪）')
         else:
             al = {'王兴蛟': '王兴姣'}.get(n)
-            add(name=n, type='工人', al1=al, note=('开户行：' + wk[n]['bank']) if wk[n].get('bank') else None)
+            add(name=n, type='工人', al1=al, bank=wk[n].get('bank'))
     for n in ('朱博文',):
         add(name=n, type='管理人员', note='办公室（流水里有 4、5 月工资和社保）')
     for n in ('陈德银', '邓付贞', '桂木生', '雷友才', '占善庆'):
@@ -94,7 +94,7 @@ def build_ctx():
     ctx['accounts'] = [
         ('九江银行', '银行', None, None, 0, '对公基本户。1~4 月流水原表没有，期初余额请按银行对账单填'),
         ('农业银行', '银行', None, None, 0, '贷款户。期初余额请按对账单填'),
-        ('工商银行', '银行', None, None, 0.01, '贷款户。期初 0.01＝2025-12-31 云链平台转入'),
+        ('工商银行', '银行', None, None, 0, '贷款户'),
         ('现金', '现金', None, None, 0, ''),
         ('聂辉个人户', '个人户', '聂辉', None, -237668,
          '原来的「聂辉微信」＋他个人替公司付的、借给公司的。期初 −237,668＝你原表聂总个人明细里借给公司的合计（到 2024-10），2025 年的请核对'),
@@ -105,16 +105,24 @@ def build_ctx():
     ]
     # ── 流水 ──
     J = []
+    pre = {}                                   # 建账日以前的流水：并进账户期初（工商银行 1 月的贷款、付筑强货款）
     for (dd, acc, memo, inc, exp) in d.journal():
         if dd is not None and dd < OPEN_DATE:
-            continue                           # 2025-12-31 云链平台转入 0.01 → 放进工商银行期初
+            a = ACC_MAP.get(acc, acc)
+            pre[a] = round(pre.get(a, 0) + (inc or 0) - (exp or 0), 2)
+            continue
         if (inc in (None, 0)) and exp is not None and exp < 0:
             inc, exp = -exp, None             # 原表把收款记成「支出」负数的，改到收入栏
         J.append((dd, ACC_MAP.get(acc, acc), memo, inc, exp))
     # 演示：几笔原表里看不出对象的，替你在「改…」列选好（其余的保持自动认，✗ 的留给你看怎么改）
-    fixes = {'汇款退回': {'N': '杭州行消物资贸易'}}
+    fixes = {'汇款退回': {'N': '杭州行消物资贸易'},
+             # 机械费表里 2026 年这 3 笔登记在【应付登记】，付款那天选上单位＝付应付款（冲应付），不然会算两遍
+             '邹桥派出所设备运输费': {'N': '章德吉货运'}, '邹桥派出所挖机费': {'N': '航帆增辉'}, '德安农商行挖机费': {'N': '德安县恒建工程部'}}
     J = [row + ((fixes[row[2]],) if row[2] in fixes else ()) for row in J]
     ctx['journal'] = J
+    ctx['accounts'] = [(n, t, o, no, round((op or 0) + pre.get(n, 0), 2),
+                        note + (f'（含 1～2 月流水 {pre[n]:,.2f}：1/12 对公贷款 281,148、1/14 付筑强 281,000 等）' if pre.get(n) else ''))
+                       for (n, t, o, no, op, note) in ctx['accounts']]
     # ── 期初：项目（累计确认＝应收金额，累计收款＝已收 − 2026 流水里这个项目的工程款），应付（单位×项目） ──
     rec26, paid26 = _journal_2026(J, projects, units)
     op = []
@@ -124,9 +132,10 @@ def build_ctx():
     tot = sum(share_base.values())
     lab0 = {'德安养老中心': 1073656.4, '科创中心': 402775, '九安架空层': 96985}
     inv0 = {p[0]: p[5] for p in d.PROJECTS if p[5]}
+    NEW26 = {'德安农商行总部'}                 # 你发来的项目账样例：2026 年的活，产值在【收入确认】里按 2026 年确认
     for p in d.PROJECTS:
         n = p[0]
-        if n not in d.RECEIVED and n not in lab0:
+        if (n not in d.RECEIVED and n not in lab0) or n in NEW26:
             continue
         rec = round(d.RECEIVED.get(n, 0) - rec26.get(n, 0), 2)
         op.append(dict(pj=n, rev=p[3], rec=rec, inv=inv0.get(n), lab=lab0.get(n),
@@ -155,17 +164,22 @@ def build_ctx():
         if dd < OPEN_DATE:
             oap.append(dict(unit=team, pj=pj, amt=amt, paid=paid0, inv=inv or None, note='机械费表 ' + note))
     ctx['open_ap'] = oap
-    ctx['open_other'] = [None, None, None, None, None, None, None]
+    ctx['open_other'] = [281148, None, None, None, None, None, None, None]     # 短期借款：工商银行 1/12 对公贷款
     # ── 应付登记（2026 年发生的机械运输） ──
     ctx['ap_rows'] = [(dd, '机械运输', team, pj, '机械费表：' + note, amt, rate, None)
                       for (dd, team, pj, amt, paid0, payee, inv, rate, note) in d.MACH if dd >= OPEN_DATE]
-    ctx['rev_rows'] = []
+    ctx['rev_rows'] = [(D(2026, 7, 31), '德安农商行总部', '进度确认', 8992,
+                        '演示：你原表2「项目汇总情况」合同 8,992、已开票 8,992（确认日期原表没有，按完工 7 月底估的）')]
     ctx['off_rows'] = []
     # ── 发票登记（演示：原表 2 项目账里农商行的两张进项票） ──
+    co_full = ctx['company'][1]
     ctx['inv_rows'] = [
-        (None, D(2026, 7, 2), '德安县恒建工程部', '竣辉', 792.08, 7.92, 800, '1%', '普通发票', '德安农商行总部', '机械费表：已开票 800（日期按付款日）'),
-        (None, D(2026, 6, 30), '江西筑强建材有限公司', '竣辉', 484.02, 62.92, 546.94, '13%', '增值税专用发票', '德安农商行总部',
-         '原表2 应付汇总：消防器材（日期没给，演示按 6/30）'),
+        dict(seller='竣辉', buyer='农村商业银行股份有限公司德安县总部', time=D(2026, 7, 31), net=8249.54, tax=742.46, total=8992,
+             kind='数电票（增值税专用发票）', stat='正常', pj='德安农商行总部', note='演示：原表 已开票 8,992（开票日期按估）'),
+        dict(seller='德安县恒建工程部', buyer='竣辉', time=D(2026, 7, 2), net=792.08, tax=7.92, total=800, kind='数电票（普通发票）',
+             stat='正常', pj='德安农商行总部', note='机械费表：已开票 800（日期按付款日）'),
+        dict(seller='江西筑强建材有限公司', buyer='竣辉', time=D(2026, 6, 30), net=484.02, tax=62.92, total=546.94,
+             kind='数电票（增值税专用发票）', stat='正常', pj='德安农商行总部', note='原表2 应付汇总：消防器材（日期没给，演示按 6/30）'),
     ]
     # ── 考勤：4 月（原表）＋ 2~3 月（截图里看得到的 12 人） ──
     att = []
@@ -177,6 +191,10 @@ def build_ctx():
         att.append(dict(mon=D(2026, 3, 1), name=n, pairs=list(days.items()), note='2、3 月合在一起的（截图）'))
     ctx['att_rows'] = att
     ctx['fixed_assets'] = []
+    ctx['pl_default'] = '德安农商行总部'          # 项目账默认打开你发来的样例项目
+    ctx['demo_note'] = ('⚠ 现在表里是你原表的数（演示用）：原表只有「累计」数，建账日定在 2026-03-01，以前的都当期初；'
+                        '2026 年只有德安农商行总部录了产值确认，其他项目 3 月以后的产值确认、5～8 月的考勤都还没录，'
+                        '所以本年利润表只有成本、收入很少，工人显示「多发了」。补录【收入确认】【考勤工资】后就准了。正式用之前，看说明里「开始用自己的账」清空这几张表。')
     return ctx
 
 

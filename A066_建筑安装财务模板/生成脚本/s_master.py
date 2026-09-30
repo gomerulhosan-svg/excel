@@ -12,7 +12,7 @@ def build_proj(wb, ctx):
     title(ws, '项 目 档 案（一个工地一行 · 项目简称全表通用）', 'T', C_BASE,
           '💡 每接一个工地就在下面加一行。「项目简称」是全表通用的名字（流水、应付、工资、报表都用它），起短一点、别重名。'
           '「摘要关键词」：流水摘要里出现这几个词就自动认成这个项目（比如「德养」「养老中心」都是德安养老中心）；项目简称本身不用再填。'
-          '合同额、变更签证、结算额都填含税价；结算了填结算额，没结算空着（按合同＋变更算）。'
+          '合同额、变更签证、结算额都填含税价；结算了填结算额，没结算空着（按合同＋变更算）。项目不要删整行，完结了把状态改成「已完结」。'
           '建账前的累计产值、收款在【期初余额】① 填；「已收工程款」自动算到截止日（期初＋流水＋总包代发抵账）。')
     header(ws, PJ_HDR, [(PJ_SEQ, '序号'), (PJ_NAME, '项目简称'), (PJ_FULL, '项目全称（合同上的）'), (PJ_CUS, '甲方 / 总包'),
                         (PJ_AMT, '合同额\n（含税）'), (PJ_CHG, '变更签证'), (PJ_SET, '结算额\n（结算了才填）'),
@@ -45,7 +45,7 @@ def build_proj(wb, ctx):
             if v is not None:
                 ws[f'{c}{r}'] = v
     dv_list(ws, f'{PJ_STAT}{PJ_R0}:{PJ_STAT}{PJ_R1}', '"' + ','.join(PJ_STATS) + '"')
-    dv_list(ws, f'{PJ_CUS}{PJ_R0}:{PJ_CUS}{PJ_R1}', f'={SH_AUX}!$E$1:$E$300', '从【往来单位】的甲方/总包里选，也可以直接打', stop=False)
+    dv_list(ws, f'{PJ_CUS}{PJ_R0}:{PJ_CUS}{PJ_R1}', f'={SH_AUX}!$L$1:$L$100', '从【往来单位】类型是「甲方/总包」的里选，也可以直接打', stop=False)
     dv_date(ws, f'{PJ_START}{PJ_R0}:{PJ_START}{PJ_R1}')
     dv_date(ws, f'{PJ_END}{PJ_R0}:{PJ_END}{PJ_R1}')
     ws.freeze_panes = f'C{PJ_R0}'
@@ -61,7 +61,8 @@ def build_unit(wb, ctx):
           '💡 所有跟公司有钱来往的单位和人都在这一张：名称用你平时叫的（筑强、恩旗老叶、邓泽贵），流水摘要里出现名称、别名1、别名2 任何一个就自动认出来。'
           '「类型」很要紧：材料供应商、分包、机械运输（欠他们的钱在【应付登记】记）；管理人员、工人（工资在【考勤工资】算）；'
           '临时工（现结工资，不走考勤）；股东（借钱给公司的，每人在【基础资料】② 开一个个人户）。'
-          '「期初欠薪」＝建账那天公司还欠他的工资（多发了、预支了填负数）。同名的人名字后面加个括号区分，比如 张伟(电工)。')
+          '「期初欠薪」＝建账那天公司还欠他的工资（多发了、预支了填负数）。同名的人名字后面加个括号区分，比如 张伟(电工)。'
+          '不用的单位不要删整行（别的表按行取数），清空内容或者在备注写「不用了」。')
     header(ws, UN_HDR, [(UN_SEQ, '序号'), (UN_NAME, '名称 / 姓名'), (UN_TYPE, '类型'), (UN_AL1, '别名1'), (UN_AL2, '别名2'),
                         (UN_FULL, '全称'), (UN_ID, '税号 / 身份证号'), (UN_TEL, '手机'), (UN_BANKNO, '银行账号'), (UN_BANK, '开户行'),
                         (UN_IN, '入职'), (UN_OUT, '离职'), (UN_OWE0, '期初欠薪\n（建账日）'), (UN_NOTE, '备注')], C_BASE)
@@ -72,8 +73,8 @@ def build_unit(wb, ctx):
             put(ws, f'{c}{r}', None, F_IN, FILL_IN, fmt, AL if c in (UN_NAME, UN_FULL, UN_BANK, UN_NOTE) else AC)
     for i, u in enumerate(ctx['units']):
         r = UN_R0 + i
-        for c, k in ((UN_NAME, 'name'), (UN_TYPE, 'type'), (UN_AL1, 'al1'), (UN_AL2, 'al2'), (UN_FULL, 'full'),
-                     (UN_OWE0, 'owe0'), (UN_NOTE, 'note')):
+        for c, k in ((UN_NAME, 'name'), (UN_TYPE, 'type'), (UN_AL1, 'al1'), (UN_AL2, 'al2'), (UN_FULL, 'full'), (UN_ID, 'id'),
+                     (UN_BANKNO, 'bankno'), (UN_BANK, 'bank'), (UN_OWE0, 'owe0'), (UN_NOTE, 'note')):
             v = u.get(k)
             if v not in (None, ''):
                 ws[f'{c}{r}'] = v
@@ -102,11 +103,14 @@ def build_rate(wb, ctx):
             put(ws, f'{c}{r}', None, F_IN, FILL_IN, DATE if c == RT_DATE else (MONEY if c in (RT_DAY, RT_MON) else None),
                 AL if c == RT_NOTE else AC)
         g = lambda c: f'{c}{r}'
-        put(ws, g(RT_CHK), f'=IF(AND({g(RT_NAME)}="",{g(RT_DATE)}=""),"",IF(COUNTIF({UN_NAMES},{g(RT_NAME)})=0,"✗ 没在【往来单位及人员】登记",'
+        put(ws, g(RT_CHK), f'=IF(AND({g(RT_NAME)}="",{g(RT_DATE)}=""),"",IF(COUNTIF({UN_NAMES},{g(RT_NAME)})=0,"✗ 没在【往来单位】登记",'
                            f'IF(NOT(ISNUMBER({g(RT_DATE)})),"✗ 从哪天起要填日期",'
                            f'IF((N({g(RT_DAY)})<>0)=(N({g(RT_MON)})<>0),"✗ 日薪、月薪只填一个",'
                            f'IF(COUNTIFS({RT_NAMES},{g(RT_NAME)},{RT_DATES},{g(RT_DATE)})>1,"✗ 同一天有两条，单价会算重","√")))))',
             F_AUTO, FILL_AUTO, align=AL)
+        ws[g(RT_DN)] = f'=IF(ISNUMBER({g(RT_DATE)}),INT({g(RT_DATE)}),0)'
+        ws[g(RT_DN)].font = F_HELP
+    hide(ws, RT_DN)
     for i, (n, d, day, mon, note) in enumerate(ctx['rates']):
         r = RT_R0 + i
         ws[f'{RT_NAME}{r}'], ws[f'{RT_DATE}{r}'] = n, d
@@ -116,7 +120,7 @@ def build_rate(wb, ctx):
             ws[f'{RT_MON}{r}'] = mon
         if note:
             ws[f'{RT_NOTE}{r}'] = note
-    dv_list(ws, f'{RT_NAME}{RT_R0}:{RT_NAME}{RT_R1}', f'={UN_NAMES}', '【往来单位及人员】登记过的人', stop=False)
+    dv_list(ws, f'{RT_NAME}{RT_R0}:{RT_NAME}{RT_R1}', f'={UN_NAMES}', '【往来单位】登记过的人', stop=False)
     dv_date(ws, f'{RT_DATE}{RT_R0}:{RT_DATE}{RT_R1}')
     ws.freeze_panes = f'C{RT_R0}'
     ws.auto_filter.ref = f'A{RT_HDR}:G{RT_R1}'

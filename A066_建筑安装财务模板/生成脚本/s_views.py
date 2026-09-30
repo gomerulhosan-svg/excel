@@ -77,13 +77,14 @@ def build_acc(wb, ctx):
     _val(ws, 'J5', f'=IF({real(AC_REAL)}="","",{real(AC_REAL)})')
     _lbl(ws, 'K5', '核对差额')
     _val(ws, 'L5', f'=IF({real(AC_DIFF)}="","",{real(AC_DIFF)})')
-    # 隐藏计数列（跟资金流水一行对一行）
+    # 隐藏排序键（跟资金流水一行对一行）：日期×10000＋行号，按日期先后列出
     HC = 'Z'
     n = J_R1 - J_R0 + 1
-    counter(ws, HC, J_R0, n, lambda i: (
-        f'ISNUMBER({jc(J_DATE, J_R0 + i)})*({jc(J_DATE, J_R0 + i)}>={S})*({jc(J_DATE, J_R0 + i)}<={E})'
-        f'*((({jc(J_ACC, J_R0 + i)}={A})+({jc(J_TO, J_R0 + i)}={A})*({jc(J_LINE, J_R0 + i)}="账户互转"))>0)'))
-    put(ws, 'I3', f'=IF({cnt(HC, J_R0, n)}>{ACC_CAP},"⚠ 这段时间有"&{cnt(HC, J_R0, n)}&"笔，只列前{ACC_CAP}笔，把日期缩短一点","")',
+    NC = skey(ws, HC, J_R0, n, lambda i: (
+        f'AND(ISNUMBER({jc(J_DATE, J_R0 + i)}),{jc(J_DATE, J_R0 + i)}>={S},{jc(J_DATE, J_R0 + i)}<={E},'
+        f'OR({jc(J_ACC, J_R0 + i)}={A},AND({jc(J_TO, J_R0 + i)}={A},{jc(J_LINE, J_R0 + i)}="账户互转")))'),
+        lambda i: f'INT({jc(J_DATE, J_R0 + i)})')
+    put(ws, 'I3', f'=IF({NC}>{ACC_CAP},"⚠ 这段时间有"&{NC}&"笔，只列前{ACC_CAP}笔，把日期缩短一点","")',
         F_RED, border=False)
     ws.merge_cells('I3:L3')
     header(ws, R0 - 1, [('A', '序号'), ('B', '日期'), ('C', '摘要'), ('D', '收入'), ('E', '支出'), ('F', '结存'), ('G', '项目'),
@@ -91,7 +92,7 @@ def build_acc(wb, ctx):
     IDX, MIR = 'N', 'O'
     for k in range(ACC_CAP):
         r = R0 + k
-        ws[f'{IDX}{r}'] = f'={kth(k + 1, HC, J_R0, n)}'
+        ws[f'{IDX}{r}'] = f'={ksorted(k + 1, HC, J_R0, n, NC)}'
         ix = f'${IDX}{r}'
         g = lambda col: f'INDEX({jr(col)},{ix})'
         ws[f'{MIR}{r}'] = f'=IF({ix}=0,0,IF({g(J_ACC)}={A},0,1))'
@@ -124,12 +125,11 @@ def build_acc(wb, ctx):
 
 # ═══════════════════════════ 资金报表（周报 / 月报 / 自定义） ═══════════════════════════
 def build_fund(wb, ctx):
-    ws = _sheet(wb, '资金报表', C_CASH, '资 金 周 报 / 月 报（各账户余额 · 收支分类 · 回款 · 付款）',
-                '💡 黄格子选「周报」「月报」或「自定义」，再选哪一天（空着＝截止日）：周报＝那天所在的周一到周日，月报＝那天所在的月；'
-                '自定义＝自己填起止日期。① 各账户期初、收入、支出、期末（老板个人户是负数＝公司欠他的）；② 这段时间的钱按收支类别分；'
-                '③ 月报按周分、周报按天分；④ 收了哪些项目的工程款；⑤ 付给谁最多。账户互转（自己账户之间倒钱）不算收入支出。',
-                'K', {'A': 6, 'B': 16, 'C': 12, 'D': 14, 'E': 14, 'F': 14, 'G': 14, 'H': 14, 'I': 11, 'J': 12, 'K': 20, 'L': 2,
-                      'M': 6, 'N': 14, 'O': 12, 'P': 14, 'Q': 14, 'R': 14, 'S': 14, 'T': 14}, home_col='M')
+    ws = _sheet(wb, '资金报表', C_CASH, '资 金 周 报 / 月 报（各账户余额 · 分段收支 · 回款 · 付款 · 收支分类）',
+                '💡 黄格子选「周报」「月报」或「自定义」，再选哪一天（空着＝最后一笔流水那天）：周报＝那天所在的周一到周日，月报＝那天所在的月；'
+                '自定义＝自己填起止日期。① 各账户期初、收入、支出、期末（老板个人户是负数＝公司欠他的）；② 月报按周分、周报按天分；'
+                '③ 收了哪些项目的工程款；④ 付给谁最多；⑤ 这段时间的钱按收支类别分。①里含账户之间的互转，②～⑤不含（自己账户之间倒钱不算收支）。',
+                'K', {'A': 7, 'B': 18, 'C': 13, 'D': 14, 'E': 14, 'F': 14, 'G': 14, 'H': 14, 'I': 11, 'J': 12, 'K': 20})
     _lbl(ws, 'B3', '报表')
     put(ws, 'C3', '月报', F_SEL, FILL_SEL, align=AC)
     dv_list(ws, 'C3', '"周报,月报,自定义"')
@@ -142,7 +142,7 @@ def build_fund(wb, ctx):
     put(ws, 'I3', None, F_SEL, FILL_SEL, DATE, AC)
     dv_date(ws, 'G3')
     dv_date(ws, 'I3')
-    d = f'IF(ISNUMBER($E$3),$E$3,{AX_E})'
+    d = f'IF(ISNUMBER($E$3),$E$3,IF(YEAR({AX_LAST})={AX_Y},{AX_LAST},{AX_E}))'
     _lbl(ws, 'B4', '期间')
     _val(ws, 'C4', f'=IF($C$3="周报",{d}-WEEKDAY({d},2)+1,IF($C$3="自定义",IF(ISNUMBER($G$3),$G$3,DATE({AX_Y},1,1)),DATE(YEAR({d}),MONTH({d}),1)))',
          DATE, F_AUTOB)
@@ -154,7 +154,7 @@ def build_fund(wb, ctx):
     S, E = '$C$4', '$E$4'
     DR = dates(S, E)
     # ① 各账户
-    section(ws, 6, 'A', 'K', '① 各账户余额', C_CASH)
+    section(ws, 6, 'A', 'K', '① 各账户余额（本期收入、支出含账户之间的互转）', C_CASH)
     header(ws, 7, [('A', '序号'), ('B', '账户'), ('C', '类型'), ('D', '期初余额'), ('E', '本期收入'), ('F', '本期支出'),
                    ('G', '期末余额'), ('H', '银行App余额'), ('I', '核对日期'), ('J', '核对差额'), ('K', '说明')], C_CASH)
     A0 = 8
@@ -184,7 +184,7 @@ def build_fund(wb, ctx):
     for r in range(A0, A1 + 1):
         for c in 'ABCDEFGHIJK':
             ws[f'{c}{r}'].fill = FILL_NONE
-    groups = [('银行＋现金（能动用的钱）', '"银行"', '"现金"'), ('承兑汇票', '"票据"', None), ('老板 / 负责人个人户（负数＝公司欠他们）', '"个人户"', None)]
+    groups = [('银行＋现金（能动用的钱）', '"银行"', '"现金"'), ('承兑汇票', '"票据"', None), ('老板/负责人个人户（负＝公司欠）', '"个人户"', None)]
     for k, (lab, t1, t2) in enumerate(groups):
         r = A1 + 1 + k
         put(ws, f'B{r}', lab, F_TXTB, FILL_SUB, align=AL)
@@ -194,46 +194,112 @@ def build_fund(wb, ctx):
             put(ws, f'{c}{r}', f'={f}', F_AUTOB, FILL_SUB, MONEY, AR)
         for c in 'AHIJK':
             put(ws, f'{c}{r}', None, F_AUTO, FILL_SUB)
-    # ③ 分段（右边）
-    section(ws, 6, 'M', 'T', '③ 分段（月报按周 · 周报按天 · 自定义长的按月）', C_RPT)
-    header(ws, 7, [('M', '段'), ('N', '起'), ('O', '止'), ('P', '经营收入\n（不含互转）'), ('Q', '经营支出\n（不含互转）'),
-                   ('R', '净额'), ('S', '银行＋现金\n段末余额'), ('T', '其中个人户\n代收付净额')], C_RPT)
+    # ② 分段
+    G0 = A1 + len(groups) + 3
+    section(ws, G0, 'A', 'K', '② 分段（月报按周 · 周报按天 · 自定义长的按月；不含账户互转）', C_RPT)
+    header(ws, G0 + 1, [('A', '段'), ('B', '起'), ('C', '止'), ('D', '收到的钱'), ('E', '付出的钱'), ('F', '净额'),
+                        ('G', '银行＋现金\n段末余额'), ('H', '其中老板个人户\n代收付净额')], C_RPT, height=40)
     kind = f'IF($C$3="周报","日",IF({E}-{S}<=31,"周","月"))'
     bank_bal = lambda d: (f'SUMIFS({SH_BASE}!${AC_OPEN}${AC_R0}:${AC_OPEN}${AC_R1},{AC_TYPES_R},"银行")'
                           f'+SUMIFS({SH_BASE}!${AC_OPEN}${AC_R0}:${AC_OPEN}${AC_R1},{AC_TYPES_R},"现金")'
                           + ''.join(f'+SUMIFS({jr(J_NET)},{jr(J_ATYPE)},"{t}",{jr(J_DATE)},">="&{OPEN_DATE},{jr(J_DATE)},"<="&{d})'
                                     f'-SUMIFS({jr(J_NET)},{jr(J_TOTYPE)},"{t}",{jr(J_LINE)},"账户互转",{jr(J_DATE)},">="&{OPEN_DATE},{jr(J_DATE)},"<="&{d})'
                                     for t in ('银行', '现金')))
+    s0 = G0 + 2
     for k in range(12):
-        r = 8 + k
-        st = f'N{r}'
+        r = s0 + k
         if k == 0:
-            ws[st] = f'={S}'
+            ws[f'B{r}'] = f'={S}'
         else:
-            ws[st] = f'=IF(OR(O{r - 1}="",O{r - 1}>={E}),"",O{r - 1}+1)'
-        ws[f'M{r}'] = f'=IF(N{r}="","",{k + 1})'
-        ws[f'O{r}'] = f'=IF(N{r}="","",MIN({E},IF({kind}="日",N{r},IF({kind}="周",N{r}+7-WEEKDAY(N{r},2),EOMONTH(N{r},0)))))'
-        sd = f'{jr(J_DATE)},">="&N{r},{jr(J_DATE)},"<="&O{r}'
-        ws[f'P{r}'] = f'=IF(N{r}="","",SUMIFS({jr(J_NET)},{jr(J_NET)},">0",{jr(J_LINE)},"<>账户互转",{sd}))'
-        ws[f'Q{r}'] = f'=IF(N{r}="","",-SUMIFS({jr(J_NET)},{jr(J_NET)},"<0",{jr(J_LINE)},"<>账户互转",{sd}))'
-        ws[f'R{r}'] = f'=IF(N{r}="","",P{r}-Q{r})'
-        ws[f'S{r}'] = f'=IF(N{r}="","",ROUND({bank_bal(f"O{r}")},2))'
-        ws[f'T{r}'] = f'=IF(N{r}="","",SUMIFS({jr(J_NET)},{jr(J_ATYPE)},"个人户",{jr(J_LINE)},"<>账户互转",{sd}))'
-    style_rows(ws, 8, 19, list('MNOPQRST'), auto=list('MNOPQRST'), fmts={'N': 'm/d', 'O': 'm/d', **{c: MONEY for c in 'PQRST'}},
-               aligns={c: AR for c in 'PQRST'})
-    r = 20
-    put(ws, f'N{r}', '合计', F_TXTB, FILL_TOT, align=AC)
-    for c in 'PQRT':
-        put(ws, f'{c}{r}', f'=SUM({c}8:{c}19)', F_AUTOB, FILL_TOT, MONEY, AR)
-    for c in 'MOS':
+            ws[f'B{r}'] = f'=IF(OR(C{r - 1}="",C{r - 1}>={E}),"",C{r - 1}+1)'
+        ws[f'A{r}'] = f'=IF(B{r}="","",{k + 1})'
+        ws[f'C{r}'] = f'=IF(B{r}="","",MIN({E},IF({kind}="日",B{r},IF({kind}="周",B{r}+7-WEEKDAY(B{r},2),EOMONTH(B{r},0)))))'
+        sd = f'{jr(J_DATE)},">="&B{r},{jr(J_DATE)},"<="&C{r}'
+        ws[f'D{r}'] = f'=IF(B{r}="","",SUMIFS({jr(J_NET)},{jr(J_NET)},">0",{jr(J_LINE)},"<>账户互转",{sd}))'
+        ws[f'E{r}'] = f'=IF(B{r}="","",-SUMIFS({jr(J_NET)},{jr(J_NET)},"<0",{jr(J_LINE)},"<>账户互转",{sd}))'
+        ws[f'F{r}'] = f'=IF(B{r}="","",D{r}-E{r})'
+        ws[f'G{r}'] = f'=IF(B{r}="","",ROUND({bank_bal(f"C{r}")},2))'
+        ws[f'H{r}'] = f'=IF(B{r}="","",SUMIFS({jr(J_NET)},{jr(J_ATYPE)},"个人户",{jr(J_LINE)},"<>账户互转",{sd}))'
+    s1 = s0 + 11
+    style_rows(ws, s0, s1, list('ABCDEFGH'), auto=list('ABCDEFGH'), fmts={'B': 'm/d', 'C': 'm/d', **{c: MONEY for c in 'DEFGH'}},
+               aligns={c: AR for c in 'DEFGH'})
+    r = s1 + 1
+    put(ws, f'B{r}', '合计', F_TXTB, FILL_TOT, align=AC)
+    for c in 'DEFH':
+        put(ws, f'{c}{r}', f'=SUM({c}{s0}:{c}{s1})', F_AUTOB, FILL_TOT, MONEY, AR)
+    for c in 'ACG':
         put(ws, f'{c}{r}', None, F_AUTO, FILL_TOT)
-    # ② 收支分类
-    C0 = A1 + len(groups) + 3
-    section(ws, C0 - 2, 'A', 'K', '② 本期收支分类（按收支类别；账户互转单列，不算收支）', C_RPT)
-    header(ws, C0 - 1, [('A', '序号'), ('B', '收支类别'), ('C', '报表项目'), ('D', '收入\n（银行现金票据）'), ('E', '支出\n（银行现金票据）'),
-                        ('F', '个人户\n代公司收'), ('G', '个人户\n代公司付'), ('H', '本期净额'), ('I', '笔数'), ('J', '本年累计\n净额'), ('K', '说明')], C_RPT)
-    nc = CT_R1 - CT_R0 + 1
+    # ③ 回款（按项目）、④ 付款前 15（按单位）
+    HP, HU, HUK = 'X', 'Z', 'AA'       # 隐藏：项目回款；单位付款、排序键
+    npj = PJ_R1 - PJ_R0 + 1
+    for i in range(npj):
+        rr = 1 + i
+        pn = f'{SH_PROJ}!${PJ_NAME}${PJ_R0 + i}'
+        ws[f'{HP}{rr}'] = f'=IF({pn}="",0,SUMIFS({jr(J_NET)},{jr(J_PJ)},{pn},{jr(J_LINE)},"应收账款",{DR}))'
+        ws[f'{HP}{rr}'].font = F_HELP
+    HPC = 'Y'
+    counter(ws, HPC, 1, npj, lambda i: f'{HP}{1 + i}<>0')
+    nu = UN_R1 - UN_R0 + 1
+    for i in range(nu):
+        rr = 1 + i
+        un = f'{SH_UNIT}!${UN_NAME}${UN_R0 + i}'
+        ws[f'{HU}{rr}'] = f'=IF({un}="",0,-SUMIFS({jr(J_NET)},{jr(J_UN)},{un},{jr(J_NET)},"<0",{jr(J_LINE)},"<>账户互转",{DR}))'
+        ws[f'{HUK}{rr}'] = f'=IF({HU}{rr}>0,{HU}{rr}+({nu + 1}-{rr})/1000000,0)'
+        ws[f'{HU}{rr}'].font = ws[f'{HUK}{rr}'].font = F_HELP
     YR = f'{jr(J_DATE)},">="&DATE(YEAR({E}),1,1),{jr(J_DATE)},"<="&{E}'
+    P0 = r + 4
+    section(ws, P0 - 2, 'A', 'K', '③ 本期收到的工程款（按项目）', C_AR)
+    header(ws, P0 - 1, [('A', '序号'), ('B', '项目'), ('C', '本期收款'), ('D', '本年累计收款'), ('E', '应收余额\n（截止月末）'),
+                        ('F', '累计确认'), ('G', '回款比例'), ('H', '甲方 / 总包')], C_AR, height=40)
+    ws.merge_cells(f'H{P0 - 1}:K{P0 - 1}')
+    for k in range(20):
+        r = P0 + k
+        ix = f'$W{r}'
+        ws[ix] = f'={kth(k + 1, HPC, 1, npj)}'
+        ws[ix].font = F_HELP
+        pn = f'INDEX({PJ_NAMES},{ix})'
+        ws[f'A{r}'] = f'=IF({ix}=0,"",{k + 1})'
+        ws[f'B{r}'] = f'=IF({ix}=0,"",{pn})'
+        ws[f'C{r}'] = f'=IF({ix}=0,"",INDEX(${HP}$1:${HP}${npj},{ix}))'
+        ws[f'D{r}'] = f'=IF({ix}=0,"",SUMIFS({jr(J_NET)},{jr(J_PJ)},B{r},{jr(J_LINE)},"应收账款",{YR}))'
+        ws[f'E{r}'] = f'=IF({ix}=0,"",INDEX({s_agg.ps(PS_AR_E)},{ix}))'
+        ws[f'F{r}'] = f'=IF({ix}=0,"",INDEX({SH_AR}!$F${AR_R0}:$F${AR_R0 + npj - 1},{ix}))'
+        ws[f'G{r}'] = f'=IF(OR({ix}=0,N(F{r})=0),"",INDEX({SH_AR}!$G${AR_R0}:$G${AR_R0 + npj - 1},{ix})/F{r})'
+        ws[f'H{r}'] = f'=IF({ix}=0,"",INDEX({rng(SH_PROJ, PJ_CUS, PJ_R0, PJ_R1)},{ix})&"")'
+        ws.merge_cells(f'H{r}:K{r}')
+    style_rows(ws, P0, P0 + 19, list('ABCDEFGH'), auto=list('ABCDEFGH'), fmts={**{c: MONEY for c in 'CDEF'}, 'G': PCT},
+               aligns={'B': AL, 'H': AL, **{c: AR for c in 'CDEF'}})
+    r = P0 + 20
+    put(ws, f'B{r}', '合计', F_TXTB, FILL_TOT, align=AC)
+    for c in 'CD':
+        put(ws, f'{c}{r}', f'=SUM({c}{P0}:{c}{r - 1})', F_AUTOB, FILL_TOT, MONEY, AR)
+    for c in 'AEFGH':
+        put(ws, f'{c}{r}', None, fill_=FILL_TOT)
+    U0 = r + 4
+    section(ws, U0 - 2, 'A', 'K', '④ 本期付款最多的 15 家（单位 / 人，不含互转）', C_AR)
+    header(ws, U0 - 1, [('A', '名次'), ('B', '单位 / 人'), ('C', '类型'), ('D', '本期付款'), ('E', '还欠他\n（截止月末）'), ('F', '说明')], C_AR,
+           height=40)
+    ws.merge_cells(f'F{U0 - 1}:K{U0 - 1}')
+    for k in range(15):
+        r = U0 + k
+        ix = f'$W{r}'
+        ws[ix] = f'=IFERROR(IF(LARGE(${HUK}$1:${HUK}${nu},{k + 1})<=0,0,MATCH(LARGE(${HUK}$1:${HUK}${nu},{k + 1}),${HUK}$1:${HUK}${nu},0)),0)'
+        ws[ix].font = F_HELP
+        ws[f'A{r}'] = f'=IF({ix}=0,"",{k + 1})'
+        ws[f'B{r}'] = f'=IF({ix}=0,"",INDEX({UN_NAMES},{ix}))'
+        ws[f'C{r}'] = f'=IF({ix}=0,"",INDEX({UN_TYPES_R},{ix})&"")'
+        ws[f'D{r}'] = f'=IF({ix}=0,"",INDEX(${HU}$1:${HU}${nu},{ix}))'
+        ws[f'E{r}'] = f'=IF({ix}=0,"",INDEX({s_agg.bx(BX_AP_E)},{ix})+INDEX({s_agg.bx(BX_WG_E)},{ix}))'
+        ws[f'F{r}'] = f'=IF({ix}=0,"",IF(N(E{r})<0,"多付了（他欠我们）",""))'
+        ws.merge_cells(f'F{r}:K{r}')
+    style_rows(ws, U0, U0 + 14, list('ABCDEF'), auto=list('ABCDEF'), fmts={'D': MONEY, 'E': MONEY}, aligns={'B': AL, 'D': AR, 'E': AR, 'F': AL})
+    # ⑤ 收支分类
+    C0 = U0 + 15 + 3
+    section(ws, C0 - 2, 'A', 'K', '⑤ 本期收支分类（按收支类别；账户互转单列，不算收支）', C_RPT)
+    header(ws, C0 - 1, [('A', '序号'), ('B', '收支类别'), ('C', '报表项目'), ('D', '收入\n（银行现金票据）'), ('E', '支出\n（银行现金票据）'),
+                        ('F', '个人户\n代公司收'), ('G', '个人户\n代公司付'), ('H', '本期净额'), ('I', '笔数'), ('J', '本年累计\n净额'), ('K', '说明')],
+           C_RPT, height=40)
+    nc = CT_R1 - CT_R0 + 1
     for i in range(nc):
         r, c_ = C0 + i, CT_R0 + i
         cat = f'$B{r}'
@@ -273,67 +339,9 @@ def build_fund(wb, ctx):
     put(ws, f'I{r}', f'=SUM(I{C0}:I{r - 1})-SUMIFS(I{C0}:I{C1},$B{C0}:$B{C1},"账户互转")', F_AUTOB, FILL_TOT, INT, AC)
     for c in 'AK':
         put(ws, f'{c}{r}', None, fill_=FILL_TOT)
-    # ④ 回款（按项目）、⑤ 付款前 15（按单位）：右边
-    HP, HPC, HU, HUK = 'X', 'Y', 'Z', 'AA'       # 隐藏：项目回款、计数；单位付款、排序键
-    npj = PJ_R1 - PJ_R0 + 1
-    for i in range(npj):
-        r = 1 + i
-        pn = f'{SH_PROJ}!${PJ_NAME}${PJ_R0 + i}'
-        ws[f'{HP}{r}'] = f'=IF({pn}="",0,SUMIFS({jr(J_NET)},{jr(J_PJ)},{pn},{jr(J_LINE)},"应收账款",{DR}))'
-        ws[f'{HP}{r}'].font = F_HELP
-    counter(ws, HPC, 1, npj, lambda i: f'{HP}{1 + i}<>0')
-    nu = UN_R1 - UN_R0 + 1
-    for i in range(nu):
-        r = 1 + i
-        un = f'{SH_UNIT}!${UN_NAME}${UN_R0 + i}'
-        ws[f'{HU}{r}'] = f'=IF({un}="",0,-SUMIFS({jr(J_NET)},{jr(J_UN)},{un},{jr(J_NET)},"<0",{jr(J_LINE)},"<>账户互转",{DR}))'
-        ws[f'{HUK}{r}'] = f'=IF({HU}{r}>0,{HU}{r}+({nu + 1}-{r})/1000000,0)'
-        ws[f'{HU}{r}'].font = ws[f'{HUK}{r}'].font = F_HELP
-    P0 = 24
-    section(ws, P0 - 2, 'M', 'T', '④ 本期收到的工程款（按项目）', C_AR)
-    header(ws, P0 - 1, [('M', '序号'), ('N', '项目'), ('O', '甲方/总包'), ('P', '本期收款'), ('Q', '本年累计收款'), ('R', '应收余额\n（截止日）'),
-                        ('S', '累计确认'), ('T', '回款比例')], C_AR)
-    for k in range(20):
-        r = P0 + k
-        ix = f'$W{r}'
-        ws[ix] = f'={kth(k + 1, HPC, 1, npj)}'
-        ws[ix].font = F_HELP
-        pn = f'INDEX({PJ_NAMES},{ix})'
-        ws[f'M{r}'] = f'=IF({ix}=0,"",{k + 1})'
-        ws[f'N{r}'] = f'=IF({ix}=0,"",{pn})'
-        ws[f'O{r}'] = f'=IF({ix}=0,"",INDEX({rng(SH_PROJ, PJ_CUS, PJ_R0, PJ_R1)},{ix})&"")'
-        ws[f'P{r}'] = f'=IF({ix}=0,"",INDEX(${HP}$1:${HP}${npj},{ix}))'
-        ws[f'Q{r}'] = (f'=IF({ix}=0,"",SUMIFS({jr(J_NET)},{jr(J_PJ)},N{r},{jr(J_LINE)},"应收账款",{YR}))')
-        ws[f'R{r}'] = f'=IF({ix}=0,"",INDEX({s_agg.ps(PS_AR_E)},{ix}))'
-        ws[f'S{r}'] = f'=IF({ix}=0,"",INDEX({SH_AR}!$F${AR_R0}:$F${AR_R0 + npj - 1},{ix}))'
-        ws[f'T{r}'] = f'=IF(OR({ix}=0,N(S{r})=0),"",INDEX({SH_AR}!$G${AR_R0}:$G${AR_R0 + npj - 1},{ix})/S{r})'
-    style_rows(ws, P0, P0 + 19, list('MNOPQRST'), auto=list('MNOPQRST'), fmts={**{c: MONEY for c in 'PQRS'}, 'T': PCT},
-               aligns={'N': AL, 'O': AL, **{c: AR for c in 'PQRS'}})
-    r = P0 + 20
-    put(ws, f'N{r}', '合计', F_TXTB, FILL_TOT, align=AC)
-    for c in 'PQ':
-        put(ws, f'{c}{r}', f'=SUM({c}{P0}:{c}{r - 1})', F_AUTOB, FILL_TOT, MONEY, AR)
-    for c in 'MORST':
-        put(ws, f'{c}{r}', None, fill_=FILL_TOT)
-    U0 = P0 + 24
-    section(ws, U0 - 2, 'M', 'T', '⑤ 本期付款最多的 15 家（单位 / 人）', C_AR)
-    header(ws, U0 - 1, [('M', '名次'), ('N', '单位 / 人'), ('O', '类型'), ('P', '本期付款'), ('Q', '还欠他\n（截止日）'), ('R', '说明')], C_AR)
-    ws.merge_cells(f'R{U0 - 1}:T{U0 - 1}')
-    for k in range(15):
-        r = U0 + k
-        ix = f'$W{r}'
-        ws[ix] = f'=IFERROR(IF(LARGE(${HUK}$1:${HUK}${nu},{k + 1})<=0,0,MATCH(LARGE(${HUK}$1:${HUK}${nu},{k + 1}),${HUK}$1:${HUK}${nu},0)),0)'
-        ws[ix].font = F_HELP
-        ws[f'M{r}'] = f'=IF({ix}=0,"",{k + 1})'
-        ws[f'N{r}'] = f'=IF({ix}=0,"",INDEX({UN_NAMES},{ix}))'
-        ws[f'O{r}'] = f'=IF({ix}=0,"",INDEX({UN_TYPES_R},{ix})&"")'
-        ws[f'P{r}'] = f'=IF({ix}=0,"",INDEX(${HU}$1:${HU}${nu},{ix}))'
-        ws[f'Q{r}'] = f'=IF({ix}=0,"",INDEX({s_agg.bx(BX_AP_E)},{ix})+INDEX({s_agg.bx(BX_WG_E)},{ix}))'
-        ws[f'R{r}'] = f'=IF({ix}=0,"",IF(N(Q{r})<0,"多付了（他欠我们）",""))'
-        ws.merge_cells(f'R{r}:T{r}')
-    style_rows(ws, U0, U0 + 14, list('MNOPQR'), auto=list('MNOPQR'), fmts={'P': MONEY, 'Q': MONEY}, aligns={'N': AL, 'P': AR, 'Q': AR, 'R': AL})
     hide(ws, 'W', HP, HPC, HU, HUK)
     ws.freeze_panes = 'A6'
+    print_setup(ws, '5:5', landscape=False)
     return ws
 
 
@@ -345,7 +353,7 @@ def build_ar(wb, ctx):
     ws = _sheet(wb, SH_AR, C_AR, '应 收 账 款 总 表（每个项目：确认了多少、收了多少、还欠多少、欠了多久）',
                 '💡 全自动，到首页选的截止日为止。应收金额＝甲方/总包确认的产值（【收入确认】＋期初），已收＝收到的工程款＋总包代发工资等抵账。'
                 '质保金没到期的不算「可催收」。账龄按「先确认的先收回」算：还欠的钱是最近几次确认的那些。'
-                '开票未回款＝开了票还没收到钱的（要重点催）。点项目名去【项目账】看这个项目的全部明细。',
+                '开票未回款＝开了票还没收到钱的（要重点催）。点项目名跳到【项目账】，在那边黄格子选这个项目就能看全部明细。',
                 'Y', {'A': 5, 'B': 14, 'C': 24, 'D': 13, 'E': 13, 'F': 14, 'G': 14, 'H': 8, 'I': 14, 'J': 13, 'K': 13, 'L': 13,
                       'M': 13, 'N': 11, 'O': 13, 'P': 11, 'Q': 8, 'R': 12, 'S': 12, 'T': 12, 'U': 12, 'V': 10, 'W': 13, 'X': 11, 'Y': 26})
     put(ws, 'B3', f'="截止 "&TEXT({AX_E},"yyyy年m月d日")', F_KPI_L, align=AL, border=False)
@@ -353,7 +361,7 @@ def build_ar(wb, ctx):
     heads = [('A', '序号'), ('B', '项目'), ('C', '甲方 / 总包'), ('D', '合同额'), ('E', '总价\n（结算/合同＋变更）'), ('F', '应收金额\n（累计确认产值）'),
              ('G', '已收金额\n（含抵账）'), ('H', '回款\n比例'), ('I', '未收金额\n（应收余额）'), ('J', '已开票'), ('K', '未开票\n（确认−开票）'),
              ('L', '开票未回款'), ('M', '质保金'), ('N', '质保到期'), ('O', '可催收\n（不含未到期质保）'), ('P', '最后回款日'),
-             ('Q', '多久\n没回款(天)'), ('R', '3个月内'), ('S', '3～6个月'), ('T', '6～12个月'), ('U', '1年以上'), ('V', '状态'),
+             ('Q', '多久\n没回款(天)'), ('R', '3个月内'), ('S', '3～6个月'), ('T', '6～12个月'), ('U', '1年以上\n（含建账前）'), ('V', '状态'),
              ('W', '还没确认的\n（总价−确认）'), ('X', '确认进度'), ('Y', '提示')]
     header(ws, AR_R0 - 1, heads, C_AR, height=40)
     ws.row_dimensions[4].height = 20
@@ -380,12 +388,12 @@ def build_ar(wb, ctx):
         ws[f'M{r}'] = f'=IF({nm}="","",ROUND(E{r}*N({P(PJ_RET)}),2))'
         ws[f'N{r}'] = f'=IF(OR({nm}="",NOT(ISNUMBER({P(PJ_RETD)}))),"",{P(PJ_RETD)})'
         ws[f'O{r}'] = f'=IF({nm}="","",MAX(0,I{r}-IF(AND(ISNUMBER(N{r}),N{r}<={Ed}),0,MIN(MAX(I{r},0),M{r}))))'
-        last_j = f'_xlfn.MAXIFS({jr(J_DATE)},{jr(J_PJ)},{nm},{jr(J_LINE)},"应收账款",{jr(J_NET)},">0",{jr(J_DATE)},"<="&{Ed})'
-        last_o = f'_xlfn.MAXIFS({ofr(OF_DATE)},{ofr(OF_PJ)},{nm},{ofr(OF_DATE)},"<="&{Ed})'
+        last_j = f'SUMPRODUCT(MAX(({jr(J_PJ)}={nm})*({jr(J_LINE)}="应收账款")*({jr(J_NET)}>0)*({jr(J_DN)}<={Ed})*{jr(J_DN)}))'
+        last_o = (f'SUMPRODUCT(MAX(({ofr(OF_PJ)}={nm})*(({ofr(OF_TYPE)}="总包代发工资")+({ofr(OF_TYPE)}="总包代付材料分包款"))'
+                  f'*({ofr(OF_DN)}<={Ed})*{ofr(OF_DN)}))')
         ws[f'P{r}'] = f'=IF({nm}="","",IF(MAX({last_j},{last_o})=0,"",MAX({last_j},{last_o})))'
-        ws[f'Q{r}'] = f'=IF(OR({nm}="",N(I{r})<=0),"",IF(P{r}="","没收过",{Ed}-P{r}))'
-        win = lambda days: (f'SUMIFS({rvr(RV_AMT)},{rvr(RV_PJ)},{nm},{rvr(RV_DATE)},">"&({Ed}-{days}),{rvr(RV_DATE)},"<="&{Ed})'
-                            f'+IF({OPEN_DATE}-1>{Ed}-{days},{o(OPJ_REV)},0)')
+        ws[f'Q{r}'] = f'=IF(OR({nm}="",N(I{r})<=0),"",IF(P{r}="","建账后没收过",{Ed}-P{r}))'
+        win = lambda days: (f'SUMIFS({rvr(RV_AMT)},{rvr(RV_PJ)},{nm},{rvr(RV_AMT)},">0",{rvr(RV_DATE)},">"&({Ed}-{days}),{rvr(RV_DATE)},"<="&{Ed})')
         B = f'MAX(I{r},0)'
         m90, m180, m365 = (f'MIN({B},{win(d)})' for d in (91, 183, 365))
         ws[f'R{r}'] = f'=IF({nm}="","",{m90})'
@@ -448,14 +456,12 @@ def build_aps(wb, ctx):
         typ_ok = f'OR({t}="{AP_T[0]}",{t}="{AP_T[1]}",{t}="{AP_T[2]}",{t}="{AP_T[3]}")'
         return f'AND({typ_ok},OR({T}="全部",{t}={T}),OR({SH_BALX}!${BX_APAMT}${b}<>0,{SH_BALX}!${BX_PAID}${b}<>0))'
     counter(ws, HU, 1, nu, ucond)
-    for i in range(npj):
-        r = 1 + i
+    def pcond(i):
         pn = f'{SH_PROJ}!${PJ_NAME}${PJ_R0 + i}'
         amt = (f'SUMIFS({oapr(OAP_AMT)},{oapr(OAP_PJ)},{pn},{oapr(OAP_TYPE)},{tc})'
                f'+SUMIFS({apr(AP_AMT)},{apr(AP_PJ)},{pn},{apr(AP_UTYPE)},{tc},{apr(AP_YM)},">="&{AX_OYM},{apr(AP_YM)},"<="&{AX_YM1})')
-        prev = f'{HP}{r - 1}+' if i else ''
-        ws[f'{HP}{r}'] = f'={prev}AND({pn}<>"",{amt}<>0)'
-        ws[f'{HP}{r}'].font = F_HELP
+        return f'AND({pn}<>"",{amt}<>0)'
+    counter(ws, HP, 1, npj, pcond)
     H0 = 6
     R0 = H0 + 1
     heads = [('A', '序号'), ('B', '单位'), ('C', '类型'), ('D', '应付总额'), ('E', '已付总额'), ('F', '剩余未付'), ('G', '付款\n比例'),
@@ -480,7 +486,7 @@ def build_aps(wb, ctx):
         ws[f'G{r}'] = f'=IF(OR({ix}=0,N(D{r})=0),"",E{r}/D{r})'
         ws[f'H{r}'] = f'=IF({ix}=0,"",{b(BX_INVIN)})'
         ws[f'I{r}'] = f'=IF({ix}=0,"",D{r}-H{r})'
-        lp = f'_xlfn.MAXIFS({jr(J_DATE)},{jr(J_UN)},{nm},{jr(J_NET)},"<0",{jr(J_DATE)},"<="&{AX_E})'
+        lp = f'SUMPRODUCT(MAX(({jr(J_UN)}={nm})*({jr(J_NET)}<0)*({jr(J_DN)}<={AX_E})*{jr(J_DN)}))'
         ws[f'J{r}'] = f'=IF({ix}=0,"",IF({lp}=0,"",{lp}))'
         pcols = []
         for j in range(APS_PJ):
@@ -540,12 +546,14 @@ def build_aps(wb, ctx):
     counter(ws, HA, 1, no, lambda i: f'{SH_OPEN}!${OAP_UNIT}${OAP_R0 + i}={U}')
     counter(ws, HB, 1, na_, lambda i: (f'({SH_AP}!${AP_UNIT}${AP_R0 + i}={U})*ISNUMBER({SH_AP}!${AP_YM}${AP_R0 + i})'
                                         f'*({SH_AP}!${AP_YM}${AP_R0 + i}>={AX_OYM})*({SH_AP}!${AP_YM}${AP_R0 + i}<={AX_YM1})'))
-    counter(ws, HC_, 1, nj, lambda i: (f'({jc(J_UN, J_R0 + i)}={U})*({jc(J_LINE, J_R0 + i)}<>"账户互转")*({jc(J_NET, J_R0 + i)}<>0)'
-                                        f'*ISNUMBER({jc(J_YM, J_R0 + i)})*({jc(J_YM, J_R0 + i)}>={AX_OYM})*({jc(J_YM, J_R0 + i)}<={AX_YM1})'
-                                        f'*(LEFT({jc(J_LINE, J_R0 + i)},2)="应付")*({jc(J_LINE, J_R0 + i)}<>"应付职工薪酬")*({jc(J_LINE, J_R0 + i)}<>"应付设备款")'))
+    NCC = skey(ws, HC_, 2, nj, lambda i: (f'AND({jc(J_UN, J_R0 + i)}={U},ISNUMBER({jc(J_DATE, J_R0 + i)}),ISNUMBER({jc(J_YM, J_R0 + i)}),'
+                                           f'{jc(J_YM, J_R0 + i)}>={AX_OYM},{jc(J_YM, J_R0 + i)}<={AX_YM1},'
+                                           f'OR({jc(J_LINE, J_R0 + i)}="应付材料款",{jc(J_LINE, J_R0 + i)}="应付分包款",'
+                                           f'{jc(J_LINE, J_R0 + i)}="应付机械运输费",{jc(J_LINE, J_R0 + i)}="应付其他款"))'),
+               lambda i: f'INT({jc(J_DATE, J_R0 + i)})')
     counter(ws, HD, 1, nf, lambda i: (f'({SH_OFF}!${OF_WHO}${OF_R0 + i}={U})*({SH_OFF}!${OF_TYPE}${OF_R0 + i}="总包代付材料分包款")'
                                        f'*ISNUMBER({SH_OFF}!${OF_YM}${OF_R0 + i})*({SH_OFF}!${OF_YM}${OF_R0 + i}<={AX_YM1})'))
-    ca, cb, cc, cd = cnt(HA, 1, no), cnt(HB, 1, na_), cnt(HC_, 1, nj), cnt(HD, 1, nf)
+    ca, cb, cc, cd = cnt(HA, 1, no), cnt(HB, 1, na_), NCC, cnt(HD, 1, nf)
     for k in range(STMT_CAP):
         r = h + 1 + k
         # 左：先期初，再应付登记
@@ -565,7 +573,7 @@ def build_aps(wb, ctx):
         ws[f'E{r}'] = f'=IF({A_}>0,N({oa(OAP_AMT)}),IF({B_}>0,N({ab(AP_AMT)}),""))'
         # 右：先流水付款，再总包代付；期初已付放第一行
         kc = f'{k}'
-        ic = f'IF(AND({k}>=1,{k}<={cc}),{kth(kc, HC_, 1, nj)},0)'
+        ic = f'IF(AND({k}>=1,{k}<={cc}),{ksorted(kc, HC_, 2, nj, NCC)},0)'
         id_ = f'IF(AND({k}>{cc},{k}<={cc}+{cd}),{kth(f"{k}-{cc}", HD, 1, nf)},0)'
         ws[f'AU{r}'], ws[f'AV{r}'] = f'={ic}', f'={id_}'
         ws[f'AU{r}'].font = ws[f'AV{r}'].font = F_HELP
@@ -667,16 +675,17 @@ def build_per(wb, ctx):
            C_CASH, height=40)
     n = J_R1 - J_R0 + 1
     HD = 'AA'
-    counter(ws, HD, J_R0, n, lambda i: (
-        f'ISNUMBER({jc(J_YM, J_R0 + i)})*({jc(J_YM, J_R0 + i)}>={AX_OYM})*({jc(J_YM, J_R0 + i)}<={AX_YM1})'
-        f'*((({jc(J_ACC, J_R0 + i)}={A})+({jc(J_TO, J_R0 + i)}={A})*({jc(J_LINE, J_R0 + i)}="账户互转")'
-        f'+({jc(J_UN, J_R0 + i)}={OW})*({OW}<>"")*({jc(J_LINE, J_R0 + i)}="应付职工薪酬"))>0)'))
-    put(ws, f'G{D0 + 1}', f'=IF({cnt(HD, J_R0, n)}>{PER_CAP},"⚠ 有"&{cnt(HD, J_R0, n)}&"笔，只列前{PER_CAP}笔","")', F_RED, border=False)
+    NDC = skey(ws, HD, J_R0, n, lambda i: (
+        f'AND(ISNUMBER({jc(J_DATE, J_R0 + i)}),ISNUMBER({jc(J_YM, J_R0 + i)}),{jc(J_YM, J_R0 + i)}>={AX_OYM},{jc(J_YM, J_R0 + i)}<={AX_YM1},'
+        f'OR({jc(J_ACC, J_R0 + i)}={A},AND({jc(J_TO, J_R0 + i)}={A},{jc(J_LINE, J_R0 + i)}="账户互转"),'
+        f'AND({OW}<>"",{jc(J_UN, J_R0 + i)}={OW},{jc(J_LINE, J_R0 + i)}="应付职工薪酬")))'),
+        lambda i: f'INT({jc(J_DATE, J_R0 + i)})')
+    put(ws, f'G{D0 + 1}', f'=IF({NDC}>{PER_CAP},"⚠ 有"&{NDC}&"笔，只列前{PER_CAP}笔","")', F_RED, border=False)
     ob = f'IFERROR(INDEX({AC_OPENS},MATCH({A},{AC_NAMES},0)),0)'
     for k in range(PER_CAP):
         r = h + 1 + k
         ix = f'$X{r}'
-        ws[ix] = f'={kth(k + 1, HD, J_R0, n)}'
+        ws[ix] = f'={ksorted(k + 1, HD, J_R0, n, NDC)}'
         ws[ix].font = F_HELP
         g = lambda col: f'INDEX({jr(col)},{ix})'
         own = f'({g(J_ACC)}={A})'
@@ -707,9 +716,9 @@ def build_per(wb, ctx):
     _lbl(ws, f'J{D0 + 1}', '现在余额')
     _val(ws, f'K{D0 + 1}', f'=IFERROR(INDEX({s_agg.ba(BA_E)},MATCH({A},{AC_NAMES},0)),0)', font=F_KPI_V)
     # ── 右上：保证金、押金台账（流水类别「保证金押金」，按单位） ──
-    widths(ws, {'O': 5, 'P': 18, 'Q': 13, 'R': 13, 'S': 13, 'T': 11})
-    section(ws, 3, 'O', 'T', '保证金、押金（付出去还没退回的）', C_AR)
-    header(ws, 4, [('O', '序号'), ('P', '交给谁'), ('Q', '付出去'), ('R', '退回来'), ('S', '还没退'), ('T', '最近一笔')], C_AR)
+    widths(ws, {'O': 5, 'P': 18, 'Q': 13, 'R': 13, 'S': 13, 'T': 11, 'U': 2, 'V': 14})
+    section(ws, 3, 'O', 'V', '保证金、押金（付出去还没退回的）', C_AR)
+    header(ws, 4, [('O', '序号'), ('P', '交给谁'), ('Q', '付出去'), ('R', '退回来'), ('S', '还没退'), ('T', '最近一笔'), ('V', '最近一笔的项目')], C_AR)
     nu = UN_R1 - UN_R0 + 1
     HB = 'AB'
     counter(ws, HB, 1, nu, lambda i: (f'COUNTIFS({jr(J_UN)},{SH_UNIT}!${UN_NAME}${UN_R0 + i},{jr(J_LINE)},"其他应收款",{rj})*'
@@ -727,8 +736,12 @@ def build_per(wb, ctx):
         ws[f'Q{r}'] = f'=IF({ix}=0,"",-SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"其他应收款",{jr(J_NET)},"<0",{rj}))'
         ws[f'R{r}'] = f'=IF({ix}=0,"",SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"其他应收款",{jr(J_NET)},">0",{rj}))'
         ws[f'S{r}'] = f'=IF({ix}=0,"",Q{r}-R{r})'
-        lp = f'_xlfn.MAXIFS({jr(J_DATE)},{jr(J_UN)},{nm},{jr(J_LINE)},"其他应收款",{jr(J_YM)},"<="&{AX_YM1})'
-        ws[f'T{r}'] = f'=IF({ix}=0,"",IF({lp}=0,"",{lp}))'
+        lp = (f'SUMPRODUCT(MAX(({jr(J_UN)}={nm})*({jr(J_LINE)}="其他应收款")*({jr(J_DN)}>0)*({jr(J_DN)}<={AX_E})'
+              f'*({jr(J_DN)}*10000+ROW({jr(J_DN)}))))')
+        ws[f'U{r}'] = f'=IF({ix}=0,0,{lp})'
+        ws[f'U{r}'].font = F_HELP
+        ws[f'T{r}'] = f'=IF(N(U{r})=0,"",INT(U{r}/10000))'
+        ws[f'V{r}'] = f'=IF(N(U{r})=0,"",INDEX({SH_CASH}!${J_PJ}:${J_PJ},MOD(U{r},10000))&"")'
     r = b0 + BN
     put(ws, f'P{r}', '建账前没退的（期初）', F_TXT, align=AL)
     put(ws, f'S{r}', f'=N({oo(1)})', F_AUTO, fmt=MONEY, align=AR)
@@ -740,14 +753,14 @@ def build_per(wb, ctx):
     for rr in (r, r + 1, r + 2):
         for c in 'OQRT':
             put(ws, f'{c}{rr}', None, fill_=FILL_TOT if rr == r + 2 else None)
-    style_rows(ws, b0, b0 + BN - 1, list('OPQRST'), auto=list('OPQRST'), fmts={'Q': MONEY, 'R': MONEY, 'S': MONEY, 'T': DATE},
-               aligns={'P': AL, 'Q': AR, 'R': AR, 'S': AR})
+    style_rows(ws, b0, b0 + BN - 1, list('OPQRSTV'), auto=list('OPQRSTV'), fmts={'Q': MONEY, 'R': MONEY, 'S': MONEY, 'T': DATE},
+               aligns={'P': AL, 'Q': AR, 'R': AR, 'S': AR, 'V': AL})
     for rr in range(b0, b0 + BN):
-        for c in 'OPQRST':
+        for c in 'OPQRSTV':
             ws[f'{c}{rr}'].fill = FILL_NONE
     put(ws, f'P{r + 3}', '投标、履约保证金、押金：流水里类别选「保证金押金」、单位选交给谁；退回来也记这个类别。', F_NOTE, align=ALW, border=False)
     ws.merge_cells(f'P{r + 3}:T{r + 4}')
-    hide(ws, 'X', 'Y', HC, HD, HB, 'AC')
+    hide(ws, 'X', 'Y', HC, HD, HB, 'AC', 'U')
     ws.freeze_panes = f'A{H0 + 1}'
     return ws
 
