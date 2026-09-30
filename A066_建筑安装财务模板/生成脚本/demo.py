@@ -108,6 +108,8 @@ def build_ctx():
     for (dd, acc, memo, inc, exp) in d.journal():
         if dd is not None and dd < OPEN_DATE:
             continue                           # 2025-12-31 云链平台转入 0.01 → 放进工商银行期初
+        if (inc in (None, 0)) and exp is not None and exp < 0:
+            inc, exp = -exp, None             # 原表把收款记成「支出」负数的，改到收入栏
         J.append((dd, ACC_MAP.get(acc, acc), memo, inc, exp))
     # 演示：几笔原表里看不出对象的，替你在「改…」列选好（其余的保持自动认，✗ 的留给你看怎么改）
     fixes = {'汇款退回': {'N': '杭州行消物资贸易'}}

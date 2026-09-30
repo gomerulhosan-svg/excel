@@ -602,7 +602,7 @@ def build_per(wb, ctx):
     ws = _sheet(wb, SH_PER, C_CASH, '个 人 往 来（老板、负责人替公司收付的钱 · 公司欠他多少）',
                 '💡 上面：每个人的个人户一行——他替公司付了多少、替公司收了多少、公司转给他多少（还他钱、报销、备用金）、他转给公司多少（借给公司），'
                 '余额是负数＝公司欠他，正数＝他手上还有公司的钱（备用金没花完）。另外公司欠他的工资单独算。'
-                '下面：选一个人，列出跟他有关的每一笔（跟你原来的「王总个人收支明细」一个意思）。',
+                '下面：选一个人，列出跟他有关的每一笔（跟你原来的「王总个人收支明细」一个意思）。右上是保证金、押金台账。',
                 'M', {'A': 6, 'B': 11, 'C': 34, 'D': 13, 'E': 13, 'F': 13, 'G': 13, 'H': 13, 'I': 13, 'J': 12, 'K': 12, 'L': 14, 'M': 14})
     put(ws, 'B3', f'="截止 "&TEXT({AX_E},"yyyy年m月d日")', F_KPI_L, align=AL, border=False)
     ws.merge_cells('B3:D3')
@@ -706,7 +706,48 @@ def build_per(wb, ctx):
     _val(ws, f'I{D0 + 1}', f'={ob}')
     _lbl(ws, f'J{D0 + 1}', '现在余额')
     _val(ws, f'K{D0 + 1}', f'=IFERROR(INDEX({s_agg.ba(BA_E)},MATCH({A},{AC_NAMES},0)),0)', font=F_KPI_V)
-    hide(ws, 'X', 'Y', HC, HD)
+    # ── 右上：保证金、押金台账（流水类别「保证金押金」，按单位） ──
+    widths(ws, {'O': 5, 'P': 18, 'Q': 13, 'R': 13, 'S': 13, 'T': 11})
+    section(ws, 3, 'O', 'T', '保证金、押金（付出去还没退回的）', C_AR)
+    header(ws, 4, [('O', '序号'), ('P', '交给谁'), ('Q', '付出去'), ('R', '退回来'), ('S', '还没退'), ('T', '最近一笔')], C_AR)
+    nu = UN_R1 - UN_R0 + 1
+    HB = 'AB'
+    counter(ws, HB, 1, nu, lambda i: (f'COUNTIFS({jr(J_UN)},{SH_UNIT}!${UN_NAME}${UN_R0 + i},{jr(J_LINE)},"其他应收款",{rj})*'
+                                       f'({SH_UNIT}!${UN_NAME}${UN_R0 + i}<>"")>0'))
+    BN = 12
+    b0 = 5
+    for k in range(BN):
+        r = b0 + k
+        ix = f'$AC{r}'
+        ws[ix] = f'={kth(k + 1, HB, 1, nu)}'
+        ws[ix].font = F_HELP
+        nm = f'$P{r}'
+        ws[f'O{r}'] = f'=IF({ix}=0,"",{k + 1})'
+        ws[f'P{r}'] = f'=IF({ix}=0,"",INDEX({UN_NAMES},{ix}))'
+        ws[f'Q{r}'] = f'=IF({ix}=0,"",-SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"其他应收款",{jr(J_NET)},"<0",{rj}))'
+        ws[f'R{r}'] = f'=IF({ix}=0,"",SUMIFS({jr(J_NET)},{jr(J_UN)},{nm},{jr(J_LINE)},"其他应收款",{jr(J_NET)},">0",{rj}))'
+        ws[f'S{r}'] = f'=IF({ix}=0,"",Q{r}-R{r})'
+        lp = f'_xlfn.MAXIFS({jr(J_DATE)},{jr(J_UN)},{nm},{jr(J_LINE)},"其他应收款",{jr(J_YM)},"<="&{AX_YM1})'
+        ws[f'T{r}'] = f'=IF({ix}=0,"",IF({lp}=0,"",{lp}))'
+    r = b0 + BN
+    put(ws, f'P{r}', '建账前没退的（期初）', F_TXT, align=AL)
+    put(ws, f'S{r}', f'=N({oo(1)})', F_AUTO, fmt=MONEY, align=AR)
+    put(ws, f'P{r + 1}', '没选「交给谁」的', F_TXT, align=AL)
+    tot = f'-SUMIFS({jr(J_NET)},{jr(J_LINE)},"其他应收款",{rj})'
+    put(ws, f'S{r + 1}', f'=ROUND({tot}-SUM(S{b0}:S{r - 1}),2)', F_AUTO, fmt=MONEY, align=AR)
+    put(ws, f'P{r + 2}', '合计（＝资产负债表里的保证金押金）', F_TXTB, FILL_TOT, align=AL)
+    put(ws, f'S{r + 2}', f'=SUM(S{b0}:S{r + 1})', F_AUTOB, FILL_TOT, MONEY, AR)
+    for rr in (r, r + 1, r + 2):
+        for c in 'OQRT':
+            put(ws, f'{c}{rr}', None, fill_=FILL_TOT if rr == r + 2 else None)
+    style_rows(ws, b0, b0 + BN - 1, list('OPQRST'), auto=list('OPQRST'), fmts={'Q': MONEY, 'R': MONEY, 'S': MONEY, 'T': DATE},
+               aligns={'P': AL, 'Q': AR, 'R': AR, 'S': AR})
+    for rr in range(b0, b0 + BN):
+        for c in 'OPQRST':
+            ws[f'{c}{rr}'].fill = FILL_NONE
+    put(ws, f'P{r + 3}', '投标、履约保证金、押金：流水里类别选「保证金押金」、单位选交给谁；退回来也记这个类别。', F_NOTE, align=ALW, border=False)
+    ws.merge_cells(f'P{r + 3}:T{r + 4}')
+    hide(ws, 'X', 'Y', HC, HD, HB, 'AC')
     ws.freeze_panes = f'A{H0 + 1}'
     return ws
 
