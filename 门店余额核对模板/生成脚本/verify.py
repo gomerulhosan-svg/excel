@@ -99,7 +99,7 @@ def eff(x):
         return serial(b)
     if isnum(b) and 36526 <= b <= 2958465:
         return int(b)
-    if isnum(L) and L >= 190001 and 1 <= L % 100 <= 12:
+    if isnum(L) and 190001 <= L <= (book_y + 1) * 100 + 12 and 1 <= L % 100 <= 12:
         y, m = int(L // 100), int(L % 100)
         nxt = dt.datetime(y + (m == 12), m % 12 + 1, 1)
         return serial(nxt - dt.timedelta(days=1))
@@ -113,7 +113,7 @@ def mtype(L):
 
 
 flows = []
-for r in range(19, 30192):
+for r in range(5, 30192):                                     # 从账户期初那几行就开始（收入支出空着，不影响数）
     x = list(row(r))
     if isinstance(x[11], dt.datetime):                        # 插的行从上一行带了日期格式：202609 会读成日期，还原成数
         x[11] = (x[11] - dt.datetime(1899, 12, 30)).days
@@ -126,7 +126,7 @@ for r in range(19, 30192):
     else:
         store = 1
     flows.append(dict(r=r, eff=eff(x), bank=bank, store=store, tiao=1 if '调拨' in txt(x[4]) else 0,
-                      n=(txt(x[5]) != '') + (txt(x[6]) != ''), mt=mtype(L),
+                      n=isnum(x[5]) + isnum(x[6]), mt=mtype(L),
                       F=num(x[5]), G=num(x[6]), C=C, I=I, L=L))
 
 # 门店名单（门店月度收支统计 B 列，不重复，去掉不算门店的名字）
@@ -161,8 +161,9 @@ def store_tables(cut):
         K = sum(x['F'] - x['G'] for x in flows if x['I'] == nm and x['mt'] == 0)
         f, g, _ = agg(cut, lambda x, nm=nm: x['I'] == nm and x['store'] == 1)
         miss = sum(x['F'] - x['G'] for x in flows if x['I'] == nm and x['store'] == 1 and x['mt'] != 0)
-        adj = r2(msD[nm] - msE[nm] - K)
-        out.append(dict(name=nm, open=msG[nm], adj=adj, F=f, G=g, end=msG[nm] + adj + f - g, miss=r2(miss)))
+        adj = 0 if msN[nm] < 12 else r2(msD[nm] - msE[nm] - K)       # 已关的店（单列一行）首月手加按 0
+        out.append(dict(name=nm, open=msG[nm], adj=adj, F=f, G=g, end=msG[nm] + adj + f - g,
+                        miss=r2(miss) if ms_year == book_y else ''))
     return out
 
 
@@ -209,8 +210,9 @@ else:
     want = f'✗ 对账单比账上{"少" if stmt < bank else "多"} {money(stmt - bank)} 元：看 ⑥ 是哪个账户'
 chk(p + '① 对账单提示', v(f'D{R1["stmt"]}'), want)
 chk(p + '① 差额提示', v(f'D{R1["diff"]}'),
-    '✓ 账面对上了：门店余额＋收款－付款＋非门店年初数＝14 个账户的账上余额（跟银行实际余额核对：在 ⑥ 填对账单余额）'
-    if abs(diff) < 0.005 else f'✗ 实存比应存{"少" if diff < 0 else "多"} {money(diff)} 元：看下面 ③ 是哪些记录造成的')
+    '✓ 账面对上了：门店余额＋收款－付款＋非门店年初数＝各账户的账上余额（跟银行实际余额核对：在 ⑥ 填对账单余额）'
+    if abs(diff) < 0.005 else f'✗ 应存比实存{"多" if diff < 0 else "少"} {money(diff)} 元：多半是不走银行的记录记了两遍、'
+                              f'或漏了冲总数（看 ③），不是银行{"少" if diff < 0 else "多"}了钱')
 chk(p + '① 应存说明里的 H3', v(f'D{R1["should"]}'),
     f'＝【数据录入】最上面 H3 的「账户余额」{money(H3)}（没筛选时）。那个数把不走银行的记录也算进去了，所以不等于银行余额；银行余额看下一行'
     if ALL else '')
@@ -274,11 +276,11 @@ for i, s in enumerate(st):
     for col, k in zip('CDEFGH', ('open', 'adj', 'F', 'G', 'end', 'miss')):
         chk(p + f'⑤ {nm} {col}', v(f'{col}{rr}'), s[k])
     if abs(s['adj']) >= 0.005 and adj_cnt[s['adj']] > 1:
-        hint = '首月手加的数跟另一家一模一样，核对是不是复制错了'
+        hint = '首月手加的数跟别家一样，查一下'
     elif msN[nm] < 12:
-        hint = '已关的店：余额是门店月度收支统计里单列的一行'
-    elif abs(s['miss']) >= 0.005:
-        hint = '有记录没填所属月份，门店月度收支统计没算到'
+        hint = '已关的店本年还有收支，核对' if (abs(s['F']) >= 0.005 or abs(s['G']) >= 0.005) else '已关的店（统计表里单列一行）'
+    elif abs(num(s['miss'])) >= 0.005:
+        hint = '所属月份没填，统计表没算到'
     else:
         hint = ''
     chk(p + f'⑤ {nm} 提示', v(f'I{rr}'), hint)
@@ -288,7 +290,17 @@ for rr in range(S_0 + len(st), S_1 + 1):
 unk = agg(CUT, lambda x: x['store'] == 1 and x['I'] not in seen)
 chk(p + '⑤ 名字不在门店月度里的 收入', v(f'E{S_RES}'), unk[0])
 chk(p + '⑤ 名字不在门店月度里的 支出', v(f'F{S_RES}'), unk[1])
-for col, want in zip('CDEFGH', (open_sum, adj_sum, sf, sg, store_bal, sum(s['miss'] for s in st))):
+allB = {txt(msr(r)[1]) for r in range(5, 1005)}
+odd = [x for x in flows if x['store'] == 1 and x['I'] not in allB]
+if abs(unk[0]) < 0.005 and abs(unk[1]) < 0.005:
+    want = ''
+elif not odd:
+    want = '门店超过 80 家放不下，要请人加行'
+else:
+    want = (f'数据录入第 {odd[0]["r"]} 行「{odd[0]["I"]}」不在门店月度收支统计里（注意前后空格）：'
+            '是门店就改成一样，不是门店就加到 ④')
+chk(p + '⑤ 名字不在门店月度里的 提示', v(f'I{S_RES}'), want)
+for col, want in zip('CDEFGH', (open_sum, adj_sum, sf, sg, store_bal, sum(num(s['miss']) for s in st))):
     chk(p + f'⑤ 合计 {col}', v(f'{col}{S_TOT}'), want)
 
 # ⑥
@@ -333,7 +345,7 @@ for k in range(1, 13):
     i_ = r2(h - g)
     for col, want in zip('CDEFGHI', (c, d, e, co, g, h, i_)):
         chk(f'② {k}月 {col}', v(f'{col}{rr}'), want)
-    chk(f'② {k}月 标记', v(f'J{rr}'), '✓' if abs(i_) < 0.005 else ('✗ 少' if i_ < 0 else '✗ 多'))
+    chk(f'② {k}月 标记', v(f'J{rr}'), '✓' if abs(i_) < 0.005 else '✗')
     # 每个月的差额＝－到月底为止没走银行的净额
     nbm = agg(me, lambda x: x['bank'] != 1)
     chk(f'② {k}月 恒等式', i_, r2(-(nbm[0] - nbm[1])))
@@ -343,6 +355,7 @@ for x in flows:
     r = x['r']
     for col, key in zip('ABCDEF', ('eff', 'bank', 'store', 'tiao', 'n', 'mt')):
         chk(f'辅助 {col}{r}', wa[f'{col}{r}'].value, x[key], 0)
+    chk(f'辅助 G{r}', wa[f'G{r}'].value, r if (x['store'] == 1 and x['I'] not in allB) else '', 0)
 cum = 0
 first = set()
 for r in range(5, 1005):
