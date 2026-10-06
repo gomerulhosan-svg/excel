@@ -30,6 +30,13 @@
     逐行镜像全部改成按位置 INDEX 取（中间插行不再错位），补上周转筐/自备筐池子各少的 1 行，紧凑列表加「超过个数就不查」护栏。
 11. 【主页】修两个指向不存在表名的链接（客户自备加工筐明细、次果筐+托盘明细），补上筐子采购汇总、对账明细接口，加新表入口；
     【使用说明】补本轮要点。
+
+核对后修正（1006 复核）：
+ · 插行/插列平移冻结窗格改按 pane 的 xSplit/ySplit 算拆分点（ws.freeze_panes 读到的是滚动位置），所有设冻结的地方
+   先清 selection（freeze()），不再出现重复 selection；发泡网/其他包装物料汇总只冻前 3 行（C4）。
+ · 对账明细接口 K 列次果筐/托盘段只取应收使用费，不含押金（字段对照有说明）。
+ · 发泡网/其他包装物料汇总上块 K、L 用不舍入的加权单价算，A3 和物料成本接口说明写明两种加权口径的差别。
+ · 装筐费接口超过 500 笔时 A2 变红提示；本轮新写的说明格开换行、行高撑够（fit_note）。
 """
 import os
 import re
@@ -45,6 +52,7 @@ from openpyxl.formatting.formatting import ConditionalFormattingList
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.hyperlink import Hyperlink
+from openpyxl.worksheet.views import Selection
 from openpyxl.styles import Font, PatternFill, Alignment
 
 from common0928 import (cell, title, note, section, header, widths, hide, period, dv_list,
@@ -238,6 +246,33 @@ def _geometry(ws, fn):
     return merged
 
 
+def freeze(ws, ref):
+    """设冻结窗格。先把 selection 清成一个，否则 openpyxl 会在原有的 selection 上再叠一套
+       （同一 sheetView 里出现重复的 pane，Excel 打开会提示修复）；活动格放在拆分点。"""
+    ws.sheet_view.selection = [Selection()]
+    ws.freeze_panes = ref
+    if ref:
+        s = ws.sheet_view.selection[-1]
+        s.activeCell = s.sqref = ref
+
+
+def split_cell(ws):
+    """冻结的拆分点（按 pane 的 xSplit/ySplit 算；ws.freeze_panes 读到的是滚动位置 topLeftCell，不能用）"""
+    p = ws.sheet_view.pane
+    if p is None or p.state not in ('frozen', 'frozenSplit'):
+        return None
+    xs, ys = int(p.xSplit or 0), int(p.ySplit or 0)
+    if xs == 0 and ys == 0:
+        return None
+    return f'{L(xs + 1)}{ys + 1}'
+
+
+def _shift_freeze(ws, fn, sheet):
+    sp = split_cell(ws)
+    if sp:
+        freeze(ws, fn(sheet, sp))
+
+
 def insert_cols(wb, sheet, at, n=1, width=None):
     """整列插入：单元格（含样式、批注、超链接）、列宽/隐藏、合并、下拉、条件格式、筛选、打印区、全册公式都跟着走"""
     ws = wb[sheet]
@@ -266,8 +301,7 @@ def insert_cols(wb, sheet, at, n=1, width=None):
         d = ws.column_dimensions[L(k)]
         d.min = d.max = k
         d.width = width or 10
-    if ws.freeze_panes:
-        ws.freeze_panes = fn(sheet, ws.freeze_panes.replace('$', ''))
+    _shift_freeze(ws, fn, sheet)
     map_workbook(wb, fn, only_if=sheet)
     for m in merged:
         ws.merge_cells(fn(sheet, m))
@@ -286,8 +320,7 @@ def insert_rows(wb, sheet, at, n=1):
         nd = copy.copy(d)
         nd.index = nk
         ws.row_dimensions[nk] = nd
-    if ws.freeze_panes:
-        ws.freeze_panes = fn(sheet, ws.freeze_panes.replace('$', ''))
+    _shift_freeze(ws, fn, sheet)
     if ws.print_title_rows:
         pt = ws.print_title_rows
         ws.print_title_rows = fn(sheet, pt)
@@ -358,6 +391,37 @@ def au(col, r0=4, r1=BZ1):
 def _copy_style(src, dst):
     if src.has_style:
         dst._style = copy.copy(src._style)
+
+
+def _col_w(ws, c):
+    """第 c 列的可见宽度（按 <col> 分组找；隐藏列算 0；没定义算 8.43）"""
+    for k, d in ws.column_dimensions.items():
+        lo, hi = d.min or CI(k), d.max or CI(k)
+        if lo <= c <= hi:
+            return 0 if d.hidden else (d.width or 8.43)
+    return 8.43
+
+
+def _text_px(t, size):
+    em = size * 4 / 3
+    return sum(em if ord(ch) > 0x2E7F else em * 0.6 for ch in t)
+
+
+def fit_note(ws, ref, text=None, minimum=0, size=9):
+    """说明格（可以是合并格的左上角）开自动换行、靠左，行高按文字量撑够（只加不减）。
+       text＝公式格要显示的文字（默认取格子本身的值）。"""
+    c = ws[ref]
+    rng = next((m for m in ws.merged_cells.ranges if m.min_row == c.row and m.min_col == c.column), None)
+    c0, c1 = (rng.min_col, rng.max_col) if rng else (c.column, c.column)
+    w = sum(_col_w(ws, x) for x in range(c0, c1 + 1)) * 7 - 8
+    text = str(text if text is not None else c.value or '')
+    lines = sum(max(1, -(-int(_text_px(seg, size)) // int(w))) for seg in text.split('\n'))
+    c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+    need = max(minimum, round(lines * size * 1.4 + 5, 1))
+    h = ws.row_dimensions[c.row].height or 0
+    if h < need:
+        ws.row_dimensions[c.row].height = need
+    return lines
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -534,6 +598,11 @@ def jk_extend(wb):
         v = ws[f'{col}4'].value
         tpl[col] = _reseg(v) if isinstance(v, str) and v.startswith('=') else None
     tpl['Z'] = (f'=IF(ROW()-3>N({AU}!$CP$1),"",IFERROR(MATCH(ROW()-3,{AU}!$CQ$4:$CQ$6804,0),""))')
+    # K 列次果筐/托盘段只取「应收使用费」（L），不再加「押金金额」（J）：押金收退在【押金汇总】看，
+    # 混进金额会让《04》应收应付汇总把已退的押金当成欠款（王照雪 315）
+    dep = "+N(INDEX('次果筐+托盘明细'!$J$4:$J$603,$Z4-6201))"
+    assert tpl['K'].count(dep) == 1, tpl['K']
+    tpl['K'] = tpl['K'].replace(dep, '')
     src_h = ws.row_dimensions[JK_OLD1].height
     for col, f in tpl.items():
         st = ws[f'{col}{JK_OLD1}']
@@ -555,6 +624,21 @@ def jk_extend(wb):
         for rule in cf.rules:
             if rule.formula:
                 rule.formula = [x.replace('>1200)', '>3000)') for x in rule.formula]
+    fit_note(ws, 'A2', text='★《04》按固定位置引用本表 A3:S3003，请不要插入/删除行列或改表名。本表把包装物料、周转筐、客户自备筐、'
+                            '次果筐托盘四张明细的每一笔业务规范化成同一种格式，并按业务类别成组排列　【业务笔数 1000/3000】　'
+                            '★「发出筐数」只取《周转筐出入库明细》的「出库数量」，不含「销售数量」——卖断的筐子不是往来筐，'
+                            '它走金额线，在《04 物料与筐子销售对账单》里对账。')
+    # 字段对照：写明 K 列各段取什么
+    fz = wb['字段对照']
+    r = fz.max_row + 1
+    for col, t in zip('ABCDE', ['（本册）对账明细接口', 'K 列「金额」各段的取数',
+                                '包装物料＝合计金额；周转筐＝采购/销售金额；客户自备筐＝空；'
+                                '次果筐/托盘＝只取「应收使用费」，不含押金金额和退款',
+                                '对账明细接口 → 《04》对接源_02物料',
+                                '★押金、退押金不算业务金额，在本册【押金汇总】看；《04》应收应付汇总「次果筐/托盘」列因此只含使用费']):
+        fz[f'{col}{r}'] = t
+        _copy_style(fz[f'{col}{r - 1}'], fz[f'{col}{r}'])
+    fz.row_dimensions[r].height = 60
 
 
 def top_totals(wb):
@@ -617,7 +701,7 @@ def fee_param(wb):
          F_NOTE, FL_NOTE, AL)
     for r in range(5, 16):
         ws[f'W{r}'].border = BOX
-    widths(ws, {'U': 18, 'V': 14, 'W': 46})
+    widths(ws, {'U': 18, 'V': 19, 'W': 46})
 
 
 def fee_price(r):
@@ -640,6 +724,7 @@ def tz_fee(wb):
         ws['A2'] = (a2 + '　★ O 列「装筐费」自动算：（入库数量＋退回数量）×装筐费单价，单价在【基础资料】U～V 列填'
                     '（留空＝不计费）；期初、装卸方式空着或属于【基础资料】U18～U23「不计费的装卸方式」（默认 自卸、自装、自提、无）的不计。'
                     '本表可录到第 3003 行，请在最后一行下面接着录，不要在中间插行。')
+    fit_note(ws, 'A2', minimum=30)
 
 
 def build_fee_iface(wb, idx):
@@ -650,8 +735,13 @@ def build_fee_iface(wb, idx):
     title(ws, '装 筐 费 接 口（全自动 · 供《03 财务账套》挂应付，请勿改动结构）', 'A', 'I')
     cell(ws, 'K1', '笔数', F_LBL, FL_LBL, AC)
     cell(ws, 'L1', f'=N({AU}!$ED$1)', F_AUTOB, FL_AUTO, AC, fmt=INT)
-    note(ws, f'★ 按【周转筐出入库明细】O 列「装筐费」逐笔列出金额>0 的行（第 4 行起连续排列，最多 500 笔）。'
-             f'付款对象＝该行「装卸」列。装筐费单价在【基础资料】U～V 列设，默认空＝不计费，所以本表平时是空的。', 'A', 'I', 2, 36)
+    msg = ('★ 按【周转筐出入库明细】O 列「装筐费」逐笔列出金额>0 的行（第 4 行起连续排列，最多 500 笔）。'
+           '付款对象＝该行「装卸」列。装筐费单价在【基础资料】U～V 列设，默认空＝不计费，所以本表平时是空的。')
+    over = '★★ 注意：装筐费已有 "&N($L$1)&" 笔，超过本表 500 笔上限，第 501 笔起《03》不会挂应付，请联系维护人员扩容'
+    assert len(msg) <= 255 and len(over) <= 255
+    note(ws, f'=IF(N($L$1)>500,"{over}","{msg}")', 'A', 'I', 2, 36)
+    ws.conditional_formatting.add('A2:I2', FormulaRule(formula=['N($L$1)>500'], fill=fill('C00000'),
+                                                       font=Font(name='微软雅黑', size=9, bold=True, color='FFFFFF')))
     header(ws, 3, 'A', ['序号', '日期', '付款对象\n（装卸方）', '筐子类型', '计费数量', '装筐费单价', '装筐费金额', '原表行号', '摘要'])
     for r in range(4, 504):
         h = f'$H{r}'
@@ -672,7 +762,7 @@ def build_fee_iface(wb, idx):
         for col, f in vals.items():
             cell(ws, f'{col}{r}', f, F_AUTO, FL_AUTO, AL if col in 'CI' else AC, fmt=fmts.get(col))
     widths(ws, {'A': 6, 'B': 11, 'C': 12, 'D': 14, 'E': 10, 'F': 11, 'G': 12, 'H': 9, 'I': 46, 'K': 7, 'L': 8})
-    ws.freeze_panes = 'C4'
+    freeze(ws, 'C4')
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -781,9 +871,9 @@ def collect_material(wb):
     ws['A2'] = ('★ 全自动。C～T 列按第 3 行表头（蓝格，可改成别的物料名）统计各客户的出库数量，表头在物料清单里找不到会标红；'
                 'U「其他物料」＝没列出来的物料。应收金额＝领用出库＋销售出库＋退回入库（退回冲减）的合计金额，跟《03》口径一致；'
                 '已收＝其中收付款状态为「已收讫」的部分。填右边【开始日期／结束日期】按区间统计（留空＝不限）。')
-    ws.freeze_panes = 'C5'
-    ws.sheet_view.selection[0].activeCell = 'C5'
-    ws.sheet_view.selection[0].sqref = 'C5'
+    fit_note(ws, 'A2', minimum=30)
+    ws.row_dimensions[3].height = max(ws.row_dimensions[3].height or 0, 44)    # Y3「应收金额(领用/销售/退回)」三行
+    freeze(ws, 'C5')
     new = ConditionalFormattingList()
     for cf in ws.conditional_formatting:
         for rule in cf.rules:
@@ -807,6 +897,7 @@ def basket_sales(wb):
     a2 = ws['A2'].value or ''
     if '表头' not in a2:
         ws['A2'] = a2 + ' C～F 列按第 3 行表头（蓝格，可改成别的筐子类型）统计，没列出来的类型进「其他」。'
+    fit_note(ws, 'A2', minimum=28)
 
 
 def basket_flow(wb):
@@ -823,6 +914,7 @@ def basket_flow(wb):
     a2 = ws['A2'].value or ''
     if '次果筐' not in a2:
         ws['A2'] = a2 + ' 退回列 I～M 含【次果筐+托盘明细】里「退回入库」的筐（次果筐领用不算发出）。'
+    fit_note(ws, 'A2', minimum=40)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -847,7 +939,7 @@ def _stock_block(ws, r0, r1, mat_formula, p):
     H = bz('H')
     c_qc, c_nqc, c_cg = ',%s,"期初库存"' % H, ',%s,"<>期初库存"' % H, ',%s,"采购入库"' % H
     header(ws, r0 - 1, 'A', ['物料', '期初数量', '期初金额', '采购数量', '采购金额', '销售(领用)\n数量', '客户退回\n数量',
-                             '其他减少\n(自用/报损等)', '结存数量', '加权单价\n(含期初)', '结存成本', '本期销售成本'])
+                             '其他减少\n(自用/报损等)', '结存数量', '加权单价\n(含期初)', '结存成本', '本期销售成本'], 44)
     for r in range(r0, r1 + 1):
         m = f'$A{r}'
 
@@ -865,8 +957,9 @@ def _stock_block(ws, r0, r1, mat_formula, p):
             'H': f'=IF({m}="","",{s("J", win)}-N($F{r}))',
             'I': f'=IF({m}="","",N($B{r})+N($D{r})-N($F{r})+N($G{r})-N($H{r}))',
             'J': f'=IF({m}="","",IFERROR(ROUND((N($C{r})+N($E{r}))/(N($B{r})+N($D{r})),4),0))',
-            'K': f'=IF({m}="","",ROUND(N($I{r})*N($J{r}),2))',
-            'L': f'=IF({m}="","",ROUND((N($F{r})-N($G{r}))*N($J{r}),2))',
+            # K、L 直接用 (期初金额＋采购金额)÷(期初数量＋采购数量)，不用 J（J 舍到 4 位小数，只显示）
+            'K': f'=IF({m}="","",IFERROR(ROUND(N($I{r})*(N($C{r})+N($E{r}))/(N($B{r})+N($D{r})),2),0))',
+            'L': f'=IF({m}="","",IFERROR(ROUND((N($F{r})-N($G{r}))*(N($C{r})+N($E{r}))/(N($B{r})+N($D{r})),2),0))',
         }
         fm = {'C': MONEY, 'E': MONEY, 'J': '#,##0.0000;[Red]\\-#,##0.0000;\\-', 'K': MONEY, 'L': MONEY}
         for col, v in f.items():
@@ -886,7 +979,8 @@ def build_fpw(wb, idx):
     note(ws, '★ 全自动。「哪些物料算发泡网」就是第 12 行 C～E 的蓝格（默认 香梨网、苹果网，第三格备用，可改），'
              '《物料成本接口》也按这几格分类。上块：期初＝起始日以前的结存（含建账期初），加权单价＝(期初金额＋采购金额)÷(期初数量＋采购数量)，'
              '结存成本＝结存数量×加权单价，本期销售成本＝(销售−退回)×加权单价。下块：每个客户的领用/销售数量、客户退回、销售金额'
-             '（领用＋销售−退回，跟《03》口径一致）和已收（收付款状态＝已收讫）。第 2 行填年份或起止日按区间统计，都空＝不限。',
+             '（领用＋销售−退回，跟《03》口径一致）和已收（收付款状态＝已收讫）。第 2 行填年份或起止日按区间统计，都空＝不限。'
+             '本表按所选期间整体加权；《03》入账和果然鲜总表用【物料成本接口】按月加权，两者会差几元，入账以物料成本接口为准。',
          'A', 'L', 3, 48)
     section(ws, '一、库存与成本（按物料）', 'A', 'L', 4)
     mats = ['C', 'D', 'E']
@@ -927,7 +1021,8 @@ def build_fpw(wb, idx):
         cell(ws, f'L{t}', None, F_TOT, FL_TOT, AC)
     widths(ws, {'A': 10, 'B': 13, 'C': 11, 'D': 11, 'E': 11, 'F': 11, 'G': 11, 'H': 12, 'I': 12, 'J': 12,
                 'K': 12, 'L': 13})
-    ws.freeze_panes = 'C14'
+    fit_note(ws, 'A3')
+    freeze(ws, 'C4')                 # 只冻标题、时段、说明三行（上下两块表头不同，冻不住两个表头）
 
 
 def build_qtw(wb, idx):
@@ -936,7 +1031,8 @@ def build_qtw(wb, idx):
     p = period(ws, row=2, col='A', open_ended=True, year=None)
     note(ws, '★ 全自动。物料范围＝【包装物料出入库明细】里不是发泡网（见【发泡网销售汇总】第 12 行蓝格）、也不是筐子/托盘的物料。'
              '上块按物料列库存与成本，加权单价含期初（期初那几种物料不再是 0 成本）；下块每个客户一行，C～J 按第 29 行表头'
-             '（蓝格，可改）统计数量，K「其他」＝没列出来的。销售金额＝领用＋销售−退回，已收＝已收讫。第 2 行可按区间统计，都空＝不限。',
+             '（蓝格，可改）统计数量，K「其他」＝没列出来的。销售金额＝领用＋销售−退回，已收＝已收讫。第 2 行可按区间统计，都空＝不限。'
+             '本表按所选期间整体加权；《03》入账和果然鲜总表用【物料成本接口】按月加权，两者会差几元，入账以物料成本接口为准。',
          'A', 'R', 3, 48)
     section(ws, '一、库存与成本（按物料）', 'A', 'L', 4)
     _stock_block(ws, 6, 25, lambda r: f'=IFERROR(INDEX({AU}!$EK$4:$EK$63,ROW()-5),"")', p)
@@ -978,7 +1074,8 @@ def build_qtw(wb, idx):
                  fmt=MONEY if col in 'OPQ' else (neg if col == 'M' else QTY))
         cell(ws, f'R{t}', None, F_TOT, FL_TOT, AC)
     widths(ws, {'A': 10, 'B': 13, **{L(i): 11 for i in range(3, 15)}, 'O': 12, 'P': 12, 'Q': 12, 'R': 13})
-    ws.freeze_panes = 'C31'
+    fit_note(ws, 'A3')
+    freeze(ws, 'C4')                 # 同上，不能冻住 30 行
 
 
 def build_cgh(wb, idx):
@@ -1021,21 +1118,22 @@ def build_cgh(wb, idx):
                  fmt=MONEY if col in 'OPQ' else QTY)
         cell(ws, f'R{t}', None, F_TOT, FL_TOT, AC)
     widths(ws, {'A': 6, 'B': 14, **{L(i): 10 for i in range(3, 15)}, 'O': 12, 'P': 12, 'Q': 12, 'R': 14})
-    ws.freeze_panes = 'C5'
+    freeze(ws, 'C5')
 
 
 def build_cost_iface(wb, idx):
     """新表【物料成本接口】（K7）：B2 起始月；行 4～27＝24 个月；月末一次加权平均；隐藏网格 K～Z 行 4～1443"""
     ws = _new_sheet(wb, CBJ, idx, tab='C55A11')
-    title(ws, '物 料 成 本 接 口（全自动 · 供《03 财务账套》按月结转物料销售成本，请勿改动结构）', 'A', 'G')
+    title(ws, '物 料 成 本 接 口（全自动 · 供《03 财务账套》按月结转物料销售成本，请勿改动结构）', 'A', 'J')
     cell(ws, 'A2', '起始月', F_LBL, FL_LBL, AC)
     cell(ws, 'B2', datetime.datetime(2026, 8, 1), F_IN, FL_IN, AC, fmt=MONTH)
-    ws.merge_cells('C2:G2')
+    ws.merge_cells('C2:J2')
     cell(ws, 'C2', '← 蓝格可改（填每月 1 日，默认 2026-08-01，与《03》对接源_02物料 同一个起点）。成本按「月末一次加权平均」：'
                    '每种物料 当月单价＝(月初结存金额＋本月采购金额)÷(月初结存数量＋本月采购数量)，销售成本＝本月净销售数量'
-                   '(领用＋销售−客户退回)×当月单价；建账期初按其金额进第一个月的月初结存。「哪些算发泡网」看【发泡网销售汇总】第 12 行。',
+                   '(领用＋销售−客户退回)×当月单价；建账期初按其金额进第一个月的月初结存。「哪些算发泡网」看【发泡网销售汇总】第 12 行。'
+                   '本表按月加权，《03》入账和果然鲜总表都用本表；【发泡网销售汇总】【其他包装物料汇总】按所选期间整体加权，'
+                   '跟本表会差几元，入账以本表为准。',
          F_NOTE, FL_NONE, AL, border=NOB)
-    ws.row_dimensions[2].height = 54
     header(ws, 3, 'A', ['月份', '发泡网\n销售数量', '发泡网\n销售成本', '其他包装物料\n销售数量', '其他包装物料\n销售成本',
                          '销售成本合计', '备注'], 36)
     G0, G1 = 4, 4 + 60 * 24 - 1             # 网格 4～1443：60 种物料 × 24 个月
@@ -1092,9 +1190,10 @@ def build_cost_iface(wb, idx):
             c.font = F_HELP
             if col in 'MN':
                 c.number_format = DATE
-    widths(ws, {'A': 12, 'B': 12, 'C': 13, 'D': 13, 'E': 13, 'F': 13, 'G': 24})
+    widths(ws, {'A': 12, 'B': 12, 'C': 13, 'D': 13, 'E': 13, 'F': 13, 'G': 24, 'H': 12, 'I': 12, 'J': 12})
     hide(ws, *[L(i) for i in range(11, 27)])
-    ws.freeze_panes = 'B4'
+    fit_note(ws, 'C2', minimum=54)
+    freeze(ws, 'B4')
 
 
 # ════════════════════════════════════════════════════════════════════════════

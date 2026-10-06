@@ -33,16 +33,30 @@
 
 post(path)：核对定义名称（删表后 localSheetId）、没有外链；把 openpyxl 写成 &#xxxx; 的中文改回 UTF-8，
 【对账明细接口】【_自动清单】改成共享公式（WPS/Excel 自己存盘也是这样），文件 9MB → 3.7MB，算出来不变。
+
+复核后的修正（A050 1006 fix）：
+ · 列宽定义一律按组处理：_move_cols 按组搬（不再逐列展开成 16,388 条）；给单列设宽/隐藏前先把它从列组里拆出来（_col），
+   最后每张表再查一遍（_tidy_cols），保证 <col> 不重叠、不超过 XFD，组的 style/hidden 原样保留。
+ · 果然鲜销售明细 G、I 列宽 13（#####）；库存结余 R 列宽 11（开始日期输入格）。
+ · 库存结余 T 备注按情况用「；」连起来（出库多于入库／原料未出完／只有成品没有原料／成品多于加工出库／损耗率≥30%），
+   合计行 Q 加批注；【库存总结余】加「在库成品（含损耗）」「损耗」「损耗率」三列（按货主＋品种，本表日期筛选，看损耗以这张为准）。
+ · 果然鲜采购明细：合计数量箱、筐分开（不再相加）；按货主汇总 D＝数量（箱），J＝数量（筐）。
+ · 公司购买接口：超过 400 笔 A2 变红提示。
+ · 本轮写的说明文字（A2 等）一律自动换行、行高按字数算够。
 """
 import copy
+import math
 import re
+import unicodedata
 import zipfile
 
 from openpyxl.utils import get_column_letter as L, column_index_from_string as CI
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.worksheet.hyperlink import Hyperlink
-from openpyxl.styles import Font, Alignment
+from openpyxl.worksheet.views import Selection
+from openpyxl.comments import Comment
+from openpyxl.styles import Font, Alignment, PatternFill
 
 from common0928 import (F_TITLE, F_NOTE, F_HDR, F_IN, F_AUTO, F_AUTOB, F_TOT, F_TOTN, F_HELP, F_LBL,
                         FL_TITLE, FL_HDR, FL_AUTO, FL_IN, FL_TOT, FL_LBL, FL_NOTE, FL_NONE,
@@ -102,6 +116,133 @@ def date_num(x):
             f'VALUE(MID({x},9,2))),0))')
 
 
+# ── 列宽定义（<col>）：按组处理，不重叠、不超过 XFD ─────────────────────────────
+XFD = 16384
+
+
+def _span(k, d):
+    lo, hi = d.min or CI(k), d.max or CI(k)
+    return lo, hi
+
+
+def _col(ws, letter):
+    """取某一列自己的列宽定义；它要是在一个列组里（如 U:XFD），先把组拆成 前段｜本列｜后段，
+    三段都照原组的宽度/样式/隐藏，再返回本列那段。这样给单列设宽、隐藏不会波及整组，也不会重叠。"""
+    c = CI(letter)
+    cd = ws.column_dimensions
+    for k, d in list(cd.items()):
+        lo, hi = _span(k, d)
+        if lo <= c <= hi:
+            if lo == hi:
+                d.min = d.max = c
+                return d
+            del cd[k]
+            for a, b in ((lo, c - 1), (c, c), (c + 1, min(hi, XFD))):
+                if a <= b:
+                    nd = copy.copy(d)
+                    nd.index, nd.min, nd.max = L(a), a, b
+                    cd[L(a)] = nd
+            return cd[letter]
+    d = cd[letter]
+    d.min = d.max = c
+    return d
+
+
+def _remap_dims(ws, mapping):
+    """列宽定义按组搬：旧列号 → 新列号（mapping）。一组里映射不连续的地方才拆开，超出 XFD 的截掉；
+    copy.copy 保留宽度、样式、隐藏。"""
+    new = []
+    for k, d in list(ws.column_dimensions.items()):
+        lo, hi = _span(k, d)
+        a = lo
+        while a <= hi:
+            b = a
+            while b < hi and mapping(b + 1) == mapping(b) + 1:
+                b += 1
+            nlo, nhi = mapping(a), min(mapping(b), XFD)
+            if nlo <= XFD:
+                nd = copy.copy(d)
+                nd.index, nd.min, nd.max = L(nlo), nlo, nhi
+                new.append(nd)
+            a = b + 1
+    ws.column_dimensions.clear()
+    for nd in sorted(new, key=lambda x: x.min):
+        ws.column_dimensions[nd.index] = nd
+
+
+def _tidy_cols(ws):
+    """兜底：本表 <col> 有重叠或超过 XFD 时重排——宽的组先铺、窄的（单列）后盖，同样宽的后写入的盖先写入的；
+    再把相邻、来自同一条定义的列并回一组。没有问题就不动。返回是否改过。"""
+    cd = ws.column_dimensions
+    items = []
+    for i, (k, d) in enumerate(cd.items()):
+        lo, hi = _span(k, d)
+        items.append((lo, hi, i, d))
+    sp = sorted((lo, hi) for lo, hi, _, _ in items)
+    over = any(sp[j + 1][0] <= sp[j][1] for j in range(len(sp) - 1))
+    if not over and all(hi <= XFD for _, hi in sp):
+        return False
+    owner = [None] * (XFD + 2)
+    for lo, hi, i, d in sorted(items, key=lambda t: (-(min(t[1], XFD) - t[0]), t[2])):
+        for c in range(lo, min(hi, XFD) + 1):
+            owner[c] = d
+    new, c = [], 1
+    while c <= XFD:
+        d = owner[c]
+        if d is None:
+            c += 1
+            continue
+        e = c
+        while e < XFD and owner[e + 1] is d:
+            e += 1
+        nd = copy.copy(d)
+        nd.index, nd.min, nd.max = L(c), c, e
+        new.append(nd)
+        c = e + 1
+    cd.clear()
+    for nd in new:
+        cd[nd.index] = nd
+    return True
+
+
+def _cw(ws, c):
+    """第 c 列的显示宽度（字符数）"""
+    for k, d in ws.column_dimensions.items():
+        lo, hi = _span(k, d)
+        if lo <= c <= hi:
+            if d.hidden:
+                return 0
+            return d.width or (ws.sheet_format.defaultColWidth or 8.43)
+    return ws.sheet_format.defaultColWidth or 8.43
+
+
+def _units(s, size):
+    """一段文字按 size 号字大约占多少个「列宽单位」：汉字/全角≈0.19×字号，半角≈0.105×字号"""
+    return sum(size * (0.19 if unicodedata.east_asian_width(ch) in 'WF' else 0.105) for ch in s)
+
+
+def fit_note(ws, ref, text=None, horizontal='left'):
+    """说明格：开自动换行、靠左居中，按（合并区）宽度和字数算出要几行，行高不够就加高（只加不减）。
+    text 给公式格用（按最长的那句算）。"""
+    c = ws[ref]
+    cols = [c.column]
+    for m in ws.merged_cells.ranges:
+        if ref in m:
+            cols = list(range(m.min_col, m.max_col + 1))
+            break
+    width = sum(_cw(ws, i) for i in cols)
+    if text is None:
+        text = c.value if isinstance(c.value, str) else ''
+    size = c.font.sz or 11
+    lines = sum(max(1, math.ceil(_units(p, size) / (width * 0.9))) for p in str(text).split('\n'))
+    c.alignment = Alignment(horizontal=horizontal, vertical='center', wrap_text=True)
+    h = round(lines * size * 1.5 + 5, 1)
+    rd = ws.row_dimensions[c.row]
+    if (rd.height or 0) < h:
+        rd.height = h
+    return lines
+
+
 # ════════════════════════════════════════════════════════════════════════════
 # ① ② 录入表：原料出库明细加 4 列、补 K103；原料入库明细扩到 5,000 行
 # ════════════════════════════════════════════════════════════════════════════
@@ -135,8 +276,9 @@ def out_sheet(wb):
     dv = DataValidation(type='list', formula1='购买方表', allow_blank=True, showErrorMessage=False)
     dv.add(f'X4:X{OUT_END}')
     ws.add_data_validation(dv)
+    # 底稿 U 是 U:XFD 一整组：先拆出 U、V、W、X 四列再设宽，Y:XFD 照原组（宽度/样式不变）
     for c, w in {'U': 11, 'V': 12, 'W': 10, 'X': 14}.items():
-        ws.column_dimensions[c].width = w
+        _col(ws, c).width = w
     for m in [str(m) for m in ws.merged_cells.ranges]:
         if m in ('A1:T1', 'A2:T2'):
             ws.unmerge_cells(m)
@@ -147,6 +289,7 @@ def out_sheet(wb):
                     '采购单价（元/件，按出库数量算）填在这里，金额自动算；直接买货主加工好的成品，才填【成品出库明细】的采购单价'
                     '——同一批货别两头都填。')
     ws.row_dimensions[2].height = 48
+    fit_note(ws, 'A2', horizontal=ws['A2'].alignment.horizontal or 'left')
     ws.auto_filter.ref = f'A3:X{OUT_END}'
 
 
@@ -210,7 +353,7 @@ def auto_list(wb):
                 'CC': '成品日期', 'CG': '位置',
                 'CP': '公司购买', 'CQ': '累计', 'CR': '采购明细时段内', 'CS': '累计',
                 'CT': '估算出库重量', 'CU': '出库日期', 'CV': '货主', 'CW': '品种',
-                'CX': '公司购买金额', 'CY': '付款状态'})
+                'CX': '公司购买金额', 'CY': '付款状态', 'CZ': '加工类估算重量', 'DA': '报损估算重量'})
     for c, t in hdr.items():
         if t is None:
             continue
@@ -378,6 +521,9 @@ def auto_list(wb):
         put(f'CY{r}', f'=IF(CP{r}=1,{W_}&"","")')
         put(f'CT{r}', f'=IF($CV{r}="","",N({H2})*N(IFERROR(INDEX(库存结余!$I$4:$I${KC_END},'
                       f'MATCH($A{r + P_OUT0 - 4},$K$4:$K${KC_END},0)),0)))')
+        # 库存总结余 用：加工类（出库加工、二次加工）、报损 的估算重量（＝出库数量×该等级平均重量）
+        put(f'CZ{r}', f'=IF($CV{r}="",0,IF(OR({N_}="出库加工",{N_}="二次加工"),N($CT{r}),0))')
+        put(f'DA{r}', f'=IF($CV{r}="",0,IF({N_}="报损",N($CT{r}),0))')
     put('CP1', f'=MAX($CQ$4:$CQ${OUT_END})')
     put('CR1', f'=MAX($CS$4:$CS${OUT_END})')
 
@@ -411,19 +557,8 @@ def _move_cols(ws, mapping, max_row, max_col):
         x.value = v
         if st is not None:
             x._style = st
-    dims = []
-    for k, d in ws.column_dimensions.items():
-        lo, hi = (d.min or CI(k)), (d.max or CI(k))
-        for c in range(lo, hi + 1):
-            dims.append((c, d.width, d.hidden))
-    for k in list(ws.column_dimensions):
-        del ws.column_dimensions[k]
-    for c, w, h in dims:
-        nk = L(mapping(c))
-        if w:
-            ws.column_dimensions[nk].width = w
-        if h:
-            ws.column_dimensions[nk].hidden = h
+    # 列宽定义按组搬（保留宽度/样式/隐藏；不逐列展开，不超过 XFD）
+    _remap_dims(ws, mapping)
 
 
 def stock(wb):
@@ -447,7 +582,8 @@ def stock(wb):
     ws['A2'] = ('★ 全自动。填右边【开始日期／结束日期】按区间统计（留空＝不限）。平均重量＝全部入库总重÷入库数量（不随日期）；'
                 '出库总重＝出库数量×平均重量；在库成品（含损耗）＝加工类出库（出库加工、二次加工）数量×平均重量－成品出库总重；'
                 '损耗只在原料出完（结余数量＝0）后才算＝入库总重－直接出库数量×平均重量－成品出库总重（报损算损耗）。'
-                '负数标红：多半是加工时重新分级，按货主＋品种合起来看。')
+                '负数标红：多半是加工时重新分级，或只有成品的等级（扎伤、公司买的成品）。'
+                '按等级的损耗会正负相抵，看损耗请到【库存总结余】按货主＋品种。')
     ws.row_dimensions[2].height = 45
 
     IN = lambda col: R(IN_S, col, IN_END)
@@ -481,8 +617,14 @@ def stock(wb):
         ws[f'R{r}'] = f'=IF($B{r}="","",IF(OR($Q{r}="",N($Y{r})*N($I{r})=0),"",ROUND(N($Q{r})/(N($Y{r})*N($I{r})),4)))'
         ws[f'S{r}'] = (f'=IF($B{r}="","",IF($L{r}<=0,"无库存",IF($L{r}>=基础资料!$V$4,"充足",'
                        f'IF($L{r}>=基础资料!$V$5,"正常","偏低"))))')
-        ws[f'T{r}'] = (f'=IF($B{r}="","",IF(N($L{r})<>0,"原料未出完","")&IF(AND(N($L{r})<>0,N($P{r})<0),"；","")'
-                       f'&IF(N($P{r})<0,"本等级成品多于加工出库（可能加工时重新分级）",""))')
+        # 备注：各种情况都写，用「；」连起来（每段前面带「；」，最后 MID 去掉开头那个）
+        ws[f'T{r}'] = (f'=IF($B{r}="","",MID('
+                       f'IF($I{r}="","；只有成品、没有原料入库（扎伤或公司买的成品）：负数正常，按货主＋品种合计看",'
+                       f'IF(N($I{r})=0,"；入库没填总重，平均重量算不出",""))'
+                       f'&IF(N($L{r})<0,"；出库多于入库，查等级/货主是否录错",IF(N($L{r})>0,"；原料未出完",""))'
+                       f'&IF($I{r}="","",IF(N($P{r})<0,"；本等级成品多于加工出库（多半加工时重新分级），按货主＋品种合看",'
+                       f'IF(AND(ISNUMBER($R{r}),N($R{r})>=0.3),"；损耗率≥30%：多半成品记在同货主同品种别的等级，按货主＋品种合看",'
+                       f'""))),2,200))')
         ws[f'Y{r}'] = (f'=IF($B{r}="","",SUMIFS({OUT("H")},{k3(OUT, r)},{OUT("N")},"出库加工",{dt(OUT)})'
                        f'+SUMIFS({OUT("H")},{k3(OUT, r)},{OUT("N")},"二次加工",{dt(OUT)}))')
         ws[f'Z{r}'] = f'=IF($B{r}="","",SUMIFS({OUT("H")},{k3(OUT, r)},{OUT("N")},"报损",{dt(OUT)}))'
@@ -506,25 +648,106 @@ def stock(wb):
         style_from(ws[f'{c}{T}'], ws[f'B{T}'])
     for c in 'YZ':
         ws[f'{c}3'].font = F_HELP
-    for c, w in {'I': 11, 'P': 15, 'Q': 11, 'R': 9, 'T': 30, 'Y': 10, 'Z': 10}.items():
-        ws.column_dimensions[c].width = w
+    q = ws[f'Q{T}']
+    q.comment = Comment('只含原料已出完的等级，正负相抵（重新分级的等级、只有成品的等级会出负数），'
+                        '看损耗请到【库存总结余】按货主＋品种。', '果然鲜')
+    q.comment.width, q.comment.height = 260, 80
+    # 新空出来的 I、P、Q、R 列借 H 列的列样式；R 放「开始日期」输入格，宽 11；Y、Z 在 Y:XFD 组里，先拆出来再隐藏
+    h_style = copy.copy(ws.column_dimensions['H']._style)
+    for c, w in {'I': 11, 'P': 15, 'Q': 11, 'R': 11, 'T': 56, 'Y': 10, 'Z': 10}.items():
+        d = _col(ws, c)
+        d.width = w
+        if c in 'IPQR':
+            d._style = copy.copy(h_style)
     for c in ('Y', 'Z'):
-        ws.column_dimensions[c].hidden = True
+        _col(ws, c).hidden = True
+    fit_note(ws, 'A2')
     ws.auto_filter.ref = f'A3:T{T}'
     ws.print_area = 'A1:U20'
 
 
 def stock_total(wb):
-    """库存总结余 H（出库总重）改成按等级平均重量估：SUMIFS(_自动清单 估算出库重量)，跟库存结余同口径、照样按本表日期筛"""
+    """库存总结余（货主＋品种，等级合并；照样按本表 K2/M2 日期筛）：
+    ① H 出库总重＝Σ每笔出库数量×该等级平均重量（_自动清单 CT），跟【库存结余】同口径；
+    ② L（成品出库总重）后插三列——看损耗以这张为准（等级合起来，加工时重新分级、扎伤等只有成品的等级都抵掉了）：
+       M 在库成品吨位（含损耗）＝加工类出库（出库加工、二次加工）重量－成品出库总重（＝库存结余 P 按货主＋品种合计）；
+       N 损耗＝这个货主这个品种原料全部出完（结余数量＝0）后才算＝结余总重＋在库成品＋报损重量
+         （＝库存结余各等级 Q 合计；没出完留空，备注写「原料未出完」，跟库存结余的方案 A 一致）；
+       O 损耗率＝损耗÷加工出库重量。
+       原 M 库存状态、N 备注 → P、Q；O 空隔列 → R；日期辅助格 P1/P2 → S1/S2（日期输入格 K2、M2 不动）。"""
     ws = wb['库存总结余']
     A = '_自动清单!'
-    for r in range(4, 304):
-        ws[f'H{r}'] = (f'=IF($B{r}="","",ROUND(SUMIFS({A}$CT$4:$CT${OUT_END},{A}$CV$4:$CV${OUT_END},$B{r},'
-                       f'{A}$CW$4:$CW${OUT_END},$C{r},{A}$CU$4:$CU${OUT_END},">="&$P$1,{A}$CU$4:$CU${OUT_END},"<="&$P$2),2))')
+    T = 304
+    if ws['M3'].value == '在库成品吨位\n（含损耗）KG':
+        raise SystemExit('库存总结余 已经插过列（apply 只能对底稿跑一次）')
+    # 1) 第 3～304 行 M～Q → P～T（值＋样式）；第 1、2 行只搬日期辅助格 P1/P2 → S1/S2
+    mp = lambda c: c if c <= 12 else c + 3
+    cells = {}
+    for r in range(3, T + 1):
+        for c in range(13, 18):
+            x = ws.cell(row=r, column=c)
+            cells[(r, c)] = (x.value, copy.copy(x._style) if x.has_style else None)
+            x.value = None
+    for (r, c), (v, st) in cells.items():
+        x = ws.cell(row=r, column=mp(c))
+        x.value = v
+        if st is not None:
+            x._style = st
+    for r in (1, 2):
+        s, d = ws[f'P{r}'], ws[f'S{r}']
+        d.value, d._style = s.value, copy.copy(s._style)
+        s.value = None
+    _remap_dims(ws, mp)
+    pat = re.compile(r'\$P\$([12])(?!\d)')
+    for row in ws.iter_rows(min_row=3, max_row=T):
+        for x in row:
+            if isinstance(x.value, str) and x.value.startswith('=') and '$P$' in x.value:
+                x.value = pat.sub(r'$S$\1', x.value)
+    # 2) 公式
+    crit = lambda r: (f'{A}$CV$4:$CV${OUT_END},$B{r},{A}$CW$4:$CW${OUT_END},$C{r},'
+                      f'{A}$CU$4:$CU${OUT_END},">="&$S$1,{A}$CU$4:$CU${OUT_END},"<="&$S$2')
+    for c, t in {'M': '在库成品吨位\n（含损耗）KG', 'N': '损耗KG\n（原料出完才算）', 'O': '损耗率'}.items():
+        ws[f'{c}3'] = t
+        style_from(ws[f'{c}3'], ws['L3'])
+    for r in range(4, T):
+        ws[f'H{r}'] = f'=IF($B{r}="","",ROUND(SUMIFS({A}$CT$4:$CT${OUT_END},{crit(r)}),2))'
+        ws[f'M{r}'] = f'=IF($B{r}="","",ROUND(SUMIFS({A}$CZ$4:$CZ${OUT_END},{crit(r)})-N($L{r}),2))'
+        ws[f'N{r}'] = (f'=IF($B{r}="","",IF(N($I{r})<>0,"",ROUND(N($J{r})+N($M{r})'
+                       f'+SUMIFS({A}$DA$4:$DA${OUT_END},{crit(r)}),2)))')
+        ws[f'O{r}'] = (f'=IF(OR($B{r}="",$N{r}=""),"",IF(ROUND(N($M{r})+N($L{r}),2)=0,"",'
+                       f'ROUND(N($N{r})/(N($M{r})+N($L{r})),4)))')
+        ws[f'Q{r}'] = (f'=IF($B{r}="","",$B{r}&" 的"&$C{r}&"：入库 "&TEXT(N($E{r}),"#,##0")&"，出库 "'
+                       f'&TEXT(N($G{r}),"#,##0")&"，结余 "&TEXT(N($I{r}),"#,##0")'
+                       f'&IF(AND(N($I{r})<>0,N($M{r})<>0),"；原料未出完：在库成品含损耗，损耗出完才算",'
+                       f'IF(AND(ISNUMBER($O{r}),N($O{r})>=0.3),"；损耗率偏高，查成品是否记到别的品种/货主","")))')
+        for c, fmt in (('M', MONEY_FMT), ('N', MONEY_FMT), ('O', PCT_FMT)):
+            style_from(ws[f'{c}{r}'], ws[f'L{r}'])
+            ws[f'{c}{r}'].number_format = fmt
+    for c in 'MNO':
+        style_from(ws[f'{c}{T}'], ws[f'L{T}'])
+    ws[f'M{T}'] = f'=ROUND(SUM(M4:M{T - 1}),2)'
+    ws[f'N{T}'] = f'=ROUND(SUM(N4:N{T - 1}),2)'
+    ws[f'O{T}'].value = None
+    n = ws[f'N{T}']
+    n.comment = Comment('只含原料已经全部出完的货主＋品种；还没出完的，损耗含在 M「在库成品（含损耗）」里。', '果然鲜')
+    n.comment.width, n.comment.height = 240, 70
     ws['H3'] = '出库总重KG\n（数量×平均重量）'
-    a2 = ws['A2'].value or ''
-    if '平均重量' not in a2:
-        ws['A2'] = a2 + ' 出库总重＝每笔出库数量×该等级平均重量（跟【库存结余】同口径）。'
+    # 3) 合并、筛选、列宽（新列借 L 列的列样式）
+    for m in [str(m) for m in ws.merged_cells.ranges]:
+        if m == 'A1:N1':
+            ws.unmerge_cells(m)
+            ws.merge_cells('A1:Q1')
+    ws.auto_filter.ref = f'A3:Q{T}'
+    l_style = copy.copy(ws.column_dimensions['L']._style)
+    for c, w in {'M': 15, 'N': 13, 'O': 9}.items():
+        d = _col(ws, c)
+        d.width = w
+        d._style = copy.copy(l_style)
+    ws['A2'] = ('★ 就是你要的那个直观数：一个货主一个品种一行，等级全部合并；要看细到等级的，翻【库存结余】。'
+                '填右边【开始日期／结束日期】可按区间统计（留空＝不限）。出库总重＝每笔出库数量×该等级平均重量（跟【库存结余】同口径）。'
+                '在库成品（含损耗）＝出库加工、二次加工的重量－成品出库总重；损耗＝这个货主这个品种的原料全部出完后才算'
+                '（各等级合起来，加工时重新分级也不影响），损耗率＝损耗÷加工出库重量——看损耗以这张为准。')
+    fit_note(ws, 'A2')
 
 
 def stock_check(wb):
@@ -589,6 +812,7 @@ def stock_iface(wb):
                 '《03》按固定位置引用本表 A3:M403，请勿插入/删除行列、改表名。I 平均重量＝入库总重÷入库数量；'
                 'J 在库成品（含损耗）＝M 加工出库重量－K 成品出库总重；L 损耗：原料没出完留空，出完后＝在库成品＋报损重量。')
     ws.row_dimensions[2].height = 45
+    fit_note(ws, 'A2')
     for c, w in {'I': 11, 'J': 14, 'K': 13, 'L': 11, 'M': 13, 'R': 9, 'S': 7}.items():
         ws.column_dimensions[c].width = w
 
@@ -686,6 +910,8 @@ def recon(wb):
                 f'{DZ_END - 3} 个的显示上限，请联系维护人员扩容（《04》也要一起扩）","★《04》按固定位置引用本表 A3:AF{DZ_END}，'
                 f'请勿插入/删除行列或改表名。原料出库「公司购买」的行也带采购单价/金额/付款状态（T～X、AF）。'
                 f'【业务笔数 "&N(_自动清单!$BX$1)&"/{DZ_END - 3}】")')
+    fit_note(ws, 'A2', text=f'★《04》按固定位置引用本表 A3:AF{DZ_END}，请勿插入/删除行列或改表名。原料出库「公司购买」的行也带'
+                            f'采购单价/金额/付款状态（T～X、AF）。【业务笔数 1234/{DZ_END - 3}】')
     # 条件格式：超过上限变色
     cf = ws.conditional_formatting
     for rng in list(cf._cf_rules):
@@ -705,9 +931,9 @@ def purchase(wb):
     style_from(ws['P3'], ws['O3'])
     ws['R3'] = '源位置'
     ws['R3'].font = F_HELP
-    ws.column_dimensions['P'].hidden = False
-    ws.column_dimensions['P'].width = 10
-    ws.column_dimensions['R'].hidden = True
+    _col(ws, 'P').hidden = False
+    _col(ws, 'P').width = 10
+    _col(ws, 'R').hidden = True          # 底稿 R 是 R:XFD 一整组，拆出来只藏 R，S:XFD 照旧
     F = lambda col, r: IX(FIN_S, col, FIN_END, f'$R{r}')
     O = lambda col, r: IX(OUT_S, col, OUT_END, f'$R{r}')
     fv = lambda col, r: V(FIN_S, col, FIN_END, f'$R{r}')
@@ -740,25 +966,44 @@ def purchase(wb):
         ws[f'M{r}'] = sel(m_out, m_fin)
         ws[f'N{r}'] = sel(ov('X', r), f'IF({F("H", r)}<>"",{F("H", r)},{fv("G", r)})')
         ws[f'O{r}'] = sel(ogm(r), f'IF(N({F("AJ", r)})=0,"",N({F("AJ", r)}))')
-    # 底部按货主汇总：523～527 行跟上面统一
+    # 合计行：数量按单位分开（成品多是箱，原料公司购买是筐），不再箱、筐相加
+    G_, H_ = '$G$4:$G$403', '$H$4:$H$403'
+    ws['G404'] = f'=SUMIFS({G_},{H_},"箱")'
+    ws['G404'].number_format = '#,##0" 箱"'
+    ws['H404'] = f'=SUMIFS({G_},{H_},"<>箱")'
+    style_from(ws['H404'], ws['G404'])
+    ws['H404'].number_format = '#,##0" 筐"'
+    ws['M404'] = (f'=IF(SUMIFS({G_},{H_},"<>箱")-SUMIFS({G_},{H_},"筐")<>0,"数量里有 "&(SUMIFS({G_},{H_},"<>箱")'
+                  f'-SUMIFS({G_},{H_},"筐"))&" 不是箱也不是筐（算在筐里），请核对单位","数量：箱、筐分开合计，不相加")')
+    ws['M404'].alignment = Alignment(horizontal='left', vertical='center', wrap_text=False)
+    # 底部按货主汇总：523～527 行跟上面统一；D＝数量（箱），空着的 J＝数量（筐）
+    ws['D407'] = '数量（箱）'
+    ws['J407'] = '数量（筐）'
+    style_from(ws['J407'], ws['D407'])
     for r in range(408, 528):
         ws[f'A{r}'] = f'=IF($B{r}="","",ROW()-407)'
         ws[f'B{r}'] = f'=IFERROR(INDEX(_自动清单!$BO$4:$BO$1203,ROW()-407),"")'
         ws[f'C{r}'] = f'=IF($B{r}="","",COUNTIF($D$4:$D$403,$B{r}))'
-        ws[f'D{r}'] = f'=IF($B{r}="","",SUMIF($D$4:$D$403,$B{r},$G$4:$G$403))'
+        ws[f'D{r}'] = f'=IF($B{r}="","",SUMIFS($G$4:$G$403,$D$4:$D$403,$B{r},$H$4:$H$403,"箱"))'
         ws[f'E{r}'] = f'=IF($B{r}="","",ROUND(SUMIF($D$4:$D$403,$B{r},$J$4:$J$403),2))'
         ws[f'F{r}'] = f'=IF($B{r}="","",ROUND(SUMIF($D$4:$D$403,$B{r},$K$4:$K$403),2))'
         ws[f'G{r}'] = f'=IF($B{r}="","",ROUND(N($E{r})+N($F{r}),2))'
         ws[f'H{r}'] = f'=IF($B{r}="","",ROUND(SUMIFS($O$4:$O$403,$D$4:$D$403,$B{r},$L$4:$L$403,"已付清"),2))'
         ws[f'I{r}'] = f'=IF($B{r}="","",ROUND(N($G{r})-N($H{r}),2))'
+        ws[f'J{r}'] = f'=IF($B{r}="","",SUMIFS($G$4:$G$403,$D$4:$D$403,$B{r},$H$4:$H$403,"<>箱"))'
         for c in 'GHI':
             if not ws[f'{c}{r}'].has_style or r >= 523:
                 style_from(ws[f'{c}{r}'], ws[f'{c}408'])
+        style_from(ws[f'J{r}'], ws[f'D{r}'] if ws[f'D{r}'].has_style else ws['D408'])
     ws['I528'] = '=ROUND(SUM(I408:I527),2)'
     style_from(ws['I528'], ws['H528'])
+    ws['J528'] = '=ROUND(SUM(J408:J527),2)'
+    style_from(ws['J528'], ws['D528'])
     ws['A2'] = ('按【成品出库明细】填了采购单价/采购金额的行，加上【原料出库明细】出库原因＝「公司购买」的行（P 列标来源），'
-                '没填单价的也列出来、备注写「未填采购单价」。采购金额只是货款，应付合计另加采购代发运费。右边日期筛选。')
+                '没填单价的也列出来、备注写「未填采购单价」。采购金额只是货款，应付合计另加采购代发运费。'
+                '数量按单位分开合计（箱、筐不相加）。右边日期筛选。')
     ws.row_dimensions[2].height = 36
+    fit_note(ws, 'A2')
     ws.auto_filter.ref = 'A3:P404'
 
 
@@ -791,8 +1036,8 @@ def sales(wb):
     ws['AA1'] = '=MAX($AA$4:$AA$403)'
     for c in ('Z3', 'AA3', 'AB3', 'AA1'):
         ws[c].font = F_HELP
-    for c in ('Z', 'AA', 'AB'):
-        ws.column_dimensions[c].hidden = True
+    for c in ('Z', 'AA', 'AB'):          # 底稿 Y 是 Y:XFD 一整组：拆出 Z、AA、AB 再藏，AC:XFD 照旧
+        _col(ws, c).hidden = True
     # 二、按货主/客户（416～475）：扫全部 400 行明细；品种数改真的品种数
     for r in range(416, 476):
         for c in ('Z', 'AA', 'AB'):
@@ -800,7 +1045,9 @@ def sales(wb):
         n = f'ROW()-415'
         ws[f'B{r}'] = f'=IF({n}>$AA$1,"",INDEX($E$4:$E$403,MATCH({n},$AA$4:$AA$403,0)))'
         ws[f'C{r}'] = f'=IF($B{r}="","",SUMIFS($AB$4:$AB$403,$E$4:$E$403,$B{r}))'
-    ws.column_dimensions['J'].width = 13
+    # 截图 25 的 #####：J（数量）、G（明细品种／三段运费）、I（三段应收合计）都放到 13
+    for c in ('G', 'I', 'J'):
+        _col(ws, c).width = 13
 
     # 三、按购买方汇总（搬自果然鲜销售汇总）
     ws.merge_cells(f'A{S3_T}:T{S3_T}')
@@ -856,8 +1103,11 @@ def sales(wb):
                          '第 478 行「三、按购买方」（原【果然鲜销售汇总】已并到这里）。')
     ws.row_dimensions[2].height = 45
     for c, w in {'B': 14, 'L': 11, 'Q': 11}.items():
-        if (ws.column_dimensions[c].width or 0) < w:
-            ws.column_dimensions[c].width = w
+        d = _col(ws, c)                  # 底稿 P:Q 是一组：先拆出 Q，读到的才是它真正的宽度
+        if (d.width or 0) < w:
+            d.width = w
+    fit_note(ws, 'A2')
+    fit_note(ws, f'A{S3_NOTE}')
     wb.remove(old)
 
 
@@ -880,6 +1130,7 @@ def finance(wb):
     a = ws['A205'].value or ''
     if '原料出库' not in a:
         ws['A205'] = a.replace('公司购买果品款＝应付抵扣', '公司购买果品款＝应付抵扣，含原料出库「公司购买」')
+    fit_note(ws, 'A205', horizontal=ws['A205'].alignment.horizontal or 'left')
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -897,10 +1148,18 @@ def buy_iface(wb):
          F_TITLE, FL_TITLE, AC, border=NOB)
     ws.row_dimensions[1].height = 30
     ws.merge_cells('A2:N2')
-    cell(ws, 'A2', '★ 只收【原料出库明细】出库原因＝「公司购买」的行，从第 4 行起紧凑排列，不带日期筛选（全部日期）；'
-                   '没填采购单价的也收，金额记 0。B1＝笔数。《03》按固定位置引用本表 A3:N403，请勿插入/删除行列、改表名。',
+    note = ('★ 只收【原料出库明细】出库原因＝「公司购买」的行，从第 4 行起紧凑排列，不带日期筛选（全部日期）；'
+            '没填采购单价的也收，金额记 0。B1＝笔数。《03》按固定位置引用本表 A3:N403，请勿插入/删除行列、改表名。')
+    warn = ('★★ 注意：公司购买已有 "&N($B$1)&" 笔，超过本表 400 笔上限，第 401 笔起《03》不会挂应付，'
+            '请联系维护人员扩容（《03》往来业务明细要一起扩）')
+    cell(ws, 'A2', f'=IF(N($B$1)>{GM_END - 3},"{warn}","{note}")',
          Font(name='微软雅黑', size=9, color='808080'), FL_NONE, AL, border=NOB)
+    red = dict(fill=PatternFill('solid', start_color='C00000', end_color='C00000'),
+               font=Font(name='微软雅黑', size=9, bold=True, color='FFFFFF'))
+    ws.conditional_formatting.add('A2:N2', FormulaRule(formula=[f'N($B$1)>{GM_END - 3}'], stopIfTrue=False, **red))
+    ws.conditional_formatting.add('B1', FormulaRule(formula=[f'N($B$1)>{GM_END - 3}'], stopIfTrue=False, **red))
     ws.row_dimensions[2].height = 32
+    fit_note(ws, 'A2', text=max(note, warn, key=len))
     heads = ['序号', '日期', '卖方\n（原料货主）', '品种', '等级', '数量', '单位', '采购单价\n（元/件）', '采购金额\n（应付）',
              '付款状态', '购买方/去向', '单号', '原表行号', '备注']
     for i, t in enumerate(heads):
@@ -933,6 +1192,7 @@ def buy_iface(wb):
     for c, w in {'A': 6, 'B': 11, 'C': 12, 'D': 7, 'E': 11, 'F': 8, 'G': 6, 'H': 10, 'I': 11, 'J': 10,
                  'K': 13, 'L': 12, 'M': 8, 'N': 28}.items():
         ws.column_dimensions[c].width = w
+    ws.sheet_view.selection = [Selection()]
     ws.freeze_panes = 'C4'
     ws.print_title_rows = '3:3'
 
@@ -955,6 +1215,10 @@ def home(wb):
     ws[f'C{r}'] = '★原料出库「公司购买」逐笔（卖方、单价、金额、付款状态、去向），供《03》往来取应付'
     ws[f'D{r}'] = '自动'
     ws.row_dimensions[r].height = ws.row_dimensions[40].height
+    ws['C37'] = ('★按货主＋品种汇总，不分等级 —— 入库、出库、结余，以及在库成品（含损耗）、损耗、损耗率'
+                 '（看损耗以这张为准）')
+    for a in ('C13', 'C16', 'C37', 'C38', 'C39', 'C40', 'C41'):
+        fit_note(ws, a, horizontal=ws[a].alignment.horizontal or 'left')
 
 
 def manual(wb):
@@ -976,6 +1240,8 @@ def manual(wb):
          '直接买货主加工好的成品，才填【成品出库明细】的采购单价——同一批货别两头都填。', False),
         ('4、【果然鲜采购明细】把原料出库「公司购买」的行也列进来（P 列标来源，没填单价的也列）；新表【公司购买接口】给《03》用。', False),
         ('5、【库存等级接口】补回「平均重量」，新增在库成品、成品出库总重、损耗、加工出库重量，不随日期筛选。', False),
+        ('6、【库存总结余】新增「在库成品（含损耗）」「损耗」「损耗率」：按货主＋品种（等级合起来），原料全部出完后才算损耗——'
+         '看损耗以这张为准（【库存结余】按等级的损耗会因重新分级、扎伤正负相抵）。【果然鲜采购明细】数量按箱、筐分开合计。', False),
     ]
     r0 = 82
     for i, (t, head) in enumerate(items):
@@ -986,6 +1252,9 @@ def manual(wb):
         ws.row_dimensions[r].height = ws.row_dimensions[74 if head else 75].height or (22 if head else 36)
         if not head:
             ws.row_dimensions[r].height = max(ws.row_dimensions[r].height or 0, 36)
+            fit_note(ws, f'A{r}', horizontal=ws[f'A{r}'].alignment.horizontal or 'left')
+    for a in ('A77', 'B39', 'B40'):
+        fit_note(ws, a, horizontal=ws[a].alignment.horizontal or 'left')
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -1006,6 +1275,10 @@ def apply(wb):
     buy_iface(wb)
     home(wb)
     manual(wb)
+    # 兜底：每张表的列宽定义不重叠、不超过 XFD（上面都已按单列拆好，这里正常不会再改动）
+    for ws in wb.worksheets:
+        if _tidy_cols(ws):
+            print(f'   《01》{ws.title}：列宽定义有重叠/越界，已重排')
 
 
 def post(path):

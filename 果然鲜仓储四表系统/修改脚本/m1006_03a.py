@@ -34,10 +34,20 @@
     借各收入类科目、贷本年利润；借本年利润、贷各成本费用类科目），只有开关＝是 才出金额；合计行挪到 10842。
     结转表的取数范围只到 10457（含物料成本、不含结转凭证本身），不会循环引用。
     【利润表】改成按净额取（收入＝贷−借，费用＝借−贷）并排除结转凭证（O 列＝结转），利息收入 106.75 不再漏；
-    【资产负债表】未分配利润始终并入「还没结转的损益余额」（已结转的月份损益余额是 0，不会重复），B3 开关不用再改。
+    【资产负债表】未分配利润始终并入「还没结转的损益余额」（已结转的月份损益余额是 0，不会重复），B3 改成公式自动显示
+    「x 个月已结转」（取【结转损益】C18），原来的下拉删掉。
     【收入成本映射】里 3 个科目表没有的科目（主营业务收入—周转费、其他业务收入—筐子租赁费、其他业务收入—其他服务费）
     补进【科目表】69～71 行和【科目余额表】69～71 行（科目余额表 69～81 行公式统一成跟上面一样的按日期口径）。
  7. 【主页】加【结转损益】入口；【使用说明】补「每月怎么结转」「资金日记账只在最后一行下面接着录」等本轮要点。
+
+ 8. 复核后修正（同一轮）：
+    ① 【结转损益】I 列提示每条单独一行（CHAR(10)），新增三条：【期初余额】原材料—包装物料还没登记《02》建账期初物料
+       （金额取【对接源_02物料】W29:AB91 新块：逐格读《02》物料成本接口隐藏网格 60 种物料起始月的月初结存，不含筐；
+       《02》网格表头变了 AB30 显示 ✘，提示改成「见《02》其他包装物料汇总」）；本月有水果销售收入、进销存对接「自购水果销售成本」
+       为 0；本月有筐子销售收入、凭证没贷记周转材料—周转筐托盘。I:O 列宽放到 14/15、提示用 9 号字、行高按 6 条提示同时出现给够。
+    ② 起始月锁定：B2 数据验证改成自定义公式，已有任一月选「是」就不能改（出错提示让满 12 个月另起下一年账套），G2、使用说明各补一句。
+    ③ 【资产负债表】B3:C3 合并成公式格显示「x 个月已结转」，A3 文字改，原 C3 长说明删掉，删掉 B3 的下拉。
+    ④ 设冻结前先清 sheet_view.selection（只有【结转损益】一处）。
 
 post(path)：把《03》externalLink 里 WPS 写的绝对路径（/Users/Administrator/Desktop/…/02_物料与周转物台账模板.xlsx）
             改回相对路径 02_物料与周转物台账模板.xlsx。
@@ -55,6 +65,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from openpyxl.utils import get_column_letter as L, column_index_from_string as CI
 from openpyxl.worksheet.cell_range import MultiCellRange
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.views import Selection
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font, PatternFill, Alignment
 
@@ -89,6 +100,8 @@ KM_OLD, KM_NEW = 81, 123                    # 科目表 科目区 4～81 → 4�
 FY_OLD, FY_NEW = 123, 203                   # 科目表 费用项目 4～123 → 4～203（200 行）
 POOL_OLD, POOL_NEW = 1925, 5325             # 03 _自动清单 往来单位池子
 JZ = '结转损益'                              # K12
+QC0, QC_N = 31, 60                          # 对接源_02物料 W31:Z90＝《02》物料成本接口 60 种物料起始月的月初结存
+QC_TOT = QC0 + QC_N                         # 91：合计（不含筐）→【结转损益】期初物料提示
 
 HELPER_SHEETS = ['收入月度汇总', '支出月度汇总', '费用月度支出汇总', '费用月度明细汇总',
                  '家用月度支出汇总', '家用月度明细汇总', '国外费用汇总', '借款汇总']
@@ -117,6 +130,17 @@ def _tmpl(f, r):
 
 def _fill(t, r):
     return t.replace('{r-1}', str(r - 1)).replace('{r-3}', str(r - 3)).replace('{r}', str(r))
+
+
+def _units(s):
+    """估算文字宽度（列宽单位）：中文/全角 2，其余 1.1"""
+    return sum(2 if ord(ch) > 255 else 1.1 for ch in s)
+
+
+def _lines(text, width, size=10):
+    """按列宽 width（合并区各列宽之和）估算自动换行后的行数；\n 是硬换行"""
+    k = size / 10
+    return sum(max(1, -(-int(_units(p) * k) // int(width * 0.95))) for p in text.split('\n'))
 
 
 def _each_formula(wb, sheets=None):
@@ -663,7 +687,7 @@ def duijie02(wb):
             src = f'[2]物料成本接口!${"ABCDEF"[j]}${r}'
             cell(ws, f'{col}{r}', f'=IFERROR(IF({src}=0,"",{src}),"")', F_AUTOB if col in ('W', 'AB') else F_AUTO,
                  FL_AUTO, AC, fmt=MONTH if col == 'W' else (QTY if col in ('X', 'Z') else MONEY))
-    widths(ws, {'W': 12, 'X': 11, 'Y': 13, 'Z': 12, 'AA': 13, 'AB': 13})
+    widths(ws, {'W': 14, 'X': 11, 'Y': 13, 'Z': 12, 'AA': 13, 'AB': 13})
     # 装筐费一组（第 101～124 行，24 个月）：跟上面四组一样从往来业务明细按月汇总
     for i in range(24):
         r = 101 + i
@@ -681,6 +705,36 @@ def duijie02(wb):
         ws[f'F{r}'] = ws[f'F{r}'].value.replace('"筐子托盘采购"', '"装筐费"')
         ws[f'H{r}'] = '装筐费挂应付装卸方；实际付款只从资金日记账记账'
         assert '"装筐费"' in ws[f'D{r}'].value and '"应付"' in ws[f'D{r}'].value
+    # 四、建账期初物料（W29:AB91）：逐格读《02》物料成本接口隐藏网格每种物料「起始月」那一行（4、28、52…）的
+    #     类别 O、月初数量 P、月初金额 Q，合计（不含筐）给【结转损益】提示【期初余额】原材料有没有登记。
+    #     AB30 核对《02》网格表头没变，变了合计就留空，提示改成「见《02》其他包装物料汇总」。
+    for c in ('W', 'X', 'Y', 'Z', 'AA', 'AB'):
+        assert ws[f'{c}29'].value is None and ws[f'{c}{QC_TOT}'].value is None, c
+    g = '[2]物料成本接口!'
+    ws.merge_cells('W29:AB29')
+    cell(ws, 'W29', '四、建账期初物料（取《02》【物料成本接口】每种物料起始月的月初结存，不含筐）', F_SEC, FL_SEC, AL)
+    for c in ('X', 'Y', 'Z', 'AA', 'AB'):
+        ws[f'{c}29'].border = BOX
+    for col, t in zip(('W', 'X', 'Y', 'Z'), ('物料', '类别', '月初数量', '月初金额')):
+        cell(ws, f'{col}30', t, F_HDR, FL_HDR, AC)
+    cell(ws, 'AA30', '接口核对', F_LBL, FL_LBL, AC)
+    cell(ws, 'AB30', (f'=IFERROR(IF(AND({g}$K$3="物料",{g}$O$3="类别",{g}$P$3="月初数量",{g}$Q$3="月初金额",'
+                      f'{g}$L$5=1),"✔","✘ 接口变了"),"✘ 没取到")'), F_AUTOB, FL_AUTO, AC)
+    for k in range(QC_N):
+        r, s = QC0 + k, 4 + 24 * k
+        cell(ws, f'W{r}', f'=IFERROR(IF({g}$K${s}="","",{g}$K${s}),"")', F_AUTO, FL_AUTO, AL)
+        cell(ws, f'X{r}', f'=IF($W{r}="","",IFERROR({g}$O${s}&"",""))', F_AUTO, FL_AUTO, AC)
+        cell(ws, f'Y{r}', f'=IF($W{r}="","",IFERROR(N({g}$P${s}),0))', F_AUTO, FL_AUTO, AC, fmt=QTY)
+        cell(ws, f'Z{r}', f'=IF($W{r}="","",IFERROR(N({g}$Q${s}),0))', F_AUTO, FL_AUTO, AC, fmt=MONEY)
+    cell(ws, f'W{QC_TOT}', '合计（不含筐）', F_TOT, FL_TOT, AC)
+    cell(ws, f'X{QC_TOT}', None, F_TOT, FL_TOT, AC)
+    cell(ws, f'Y{QC_TOT}', None, F_TOT, FL_TOT, AC)
+    cell(ws, f'Z{QC_TOT}', (f'=IF($AB$30<>"✔","",ROUND(SUMIF($X${QC0}:$X${QC_TOT - 1},"<>筐",'
+                            f'$Z${QC0}:$Z${QC_TOT - 1}),2))'), F_TOTN, FL_TOT, AC, fmt=MONEY)
+    ws.merge_cells(f'AA{QC0}:AB{QC0 + 8}')
+    cell(ws, f'AA{QC0}', ('← 只用来提示：【期初余额】原材料—包装物料还没登记时，【结转损益】提示栏显示这里的合计'
+                          '（《02》建账期初库存＋起始月以前的进出）。AB30 显示 ✘ 时合计留空，提示改成「见《02》其他包装物料汇总」。'),
+         F_NOTE, FL_NONE, AL, border=NOB)
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -690,6 +744,18 @@ TA0 = 6            # 表 A：第 6～17 行＝12 个月
 TB_H = 21          # 表 B 表头
 TB0 = 22           # 表 B：第 22～51 行＝30 个损益科目
 TB1 = TB0 + N_ACC - 1
+TIP_COLS = {'I': 14, 'J': 14, 'K': 14, 'L': 14, 'M': 14, 'N': 14, 'O': 15}    # 表 A 提示栏 I:O 合并（也是表 B 后 6 个月＋合计列）
+F_TIP = Font(name='宋体', size=9, color='006100')
+# 行高按「一个月同时出 6 条提示」（现在 9 月就是这样）估：每条一行，太长的折两行
+_TIP_SAMPLE = '\n'.join([
+    '数据录完、核对无误后在 C 列选「是」。',
+    '⚠ 本月有 87 笔「家用」记进了费用/成本，会拉低利润（要不要改走其他应收款请定）。',
+    '⚠ 【原料入库计价】有 46 行有金额没填计价日期，仓储/周转/装卸费还没进总账。',
+    '⚠ 物料成本含《02》建账期初库存 16,874，【期初余额】原材料—包装物料还没填，资产负债表原材料会偏低。',
+    '⚠ 本月有水果销售收入 1,150.00，采购果品成本还没进总账（见【果然鲜总表】块三「采购果品」）。',
+    '⚠ 本月有筐子销售收入 588.00，筐子成本还没结转：在凭证手工区补「借 其他业务成本、贷 周转材料—周转筐托盘」（金额见【果然鲜总表】块三「筐子成本」）。',
+])
+TIP_H = max(36, _lines(_TIP_SAMPLE, sum(TIP_COLS.values()), 9) * 12.5 + 6)
 
 
 def _pz_rng(col, r1=PZ_D1):
@@ -711,7 +777,8 @@ def build_jiezhuan(wb):
     cell(ws, 'E2', '贷', F_LBL, FL_LBL, AC)
     cell(ws, 'F2', mp('F', '原材料—包装物料'), F_AUTOB, FL_AUTO, AC)
     ws.merge_cells('G2:O2')
-    cell(ws, 'G2', '← 起始月蓝格可改（默认 2026年8月，排 12 个月）；物料成本凭证的科目在【收入成本映射】「物料销售成本」一行改。',
+    cell(ws, 'G2', ('← 起始月蓝格可改（默认 2026年8月，排 12 个月）；物料成本凭证的科目在【收入成本映射】「物料销售成本」一行改。'
+                    '★ 已有月份选了「是」就不能再改起始月（改了已结转的凭证会整组挪月）；满 12 个月请另起下一年账套（期初余额填本年期末）。'),
          F_NOTE, FL_NONE, AL, border=NOB)
     note(ws, '每月怎么结转：① 当月【资金日记账】和《01》《02》台账录完；② 看下面这个月的收入、成本、利润和「提示」，有 ⚠ 的先处理；'
              '③ 在 C 列把这个月改成「是」——【记账凭证】最后的自动D区就生成「记-年月-结转」凭证（借各收入类科目、贷本年利润；'
@@ -726,6 +793,19 @@ def build_jiezhuan(wb):
     cell(ws, 'Q2', '计价未填', F_HELP, FL_NONE, AC, border=NOB)
     cell(ws, 'R2', '=COUNTIFS(原料入库计价!$K$5:$K$904,">0")-COUNTIFS(原料入库计价!$K$5:$K$904,">0",原料入库计价!$M$5:$M$904,">0")',
          F_HELP, FL_NONE, AC, border=NOB)
+    # 隐藏辅助：T2＝【期初余额】里物料成本贷方科目（F2，默认 原材料—包装物料）的期初借方净额；
+    #           T3＝《02》物料成本接口起始月的月初结存合计（对接源_02物料 Z91，取不到时为空）
+    cell(ws, 'S2', '期初原材料', F_HELP, FL_NONE, AC, border=NOB)
+    cell(ws, 'T2', ('=ROUND(SUMIF(期初余额!$B$4:$B$81,$F$2,期初余额!$D$4:$D$81)'
+                    '-SUMIF(期初余额!$B$4:$B$81,$F$2,期初余额!$E$4:$E$81),2)'), F_HELP, FL_NONE, AC, border=NOB)
+    cell(ws, 'S3', '《02》期初物料', F_HELP, FL_NONE, AC, border=NOB)
+    cell(ws, 'T3', f'=对接源_02物料!$Z${QC_TOT}', F_HELP, FL_NONE, AC, border=NOB)
+    assert wb['期初余额']['B82'].value == '合计' and wb['期初余额']['B15'].value == '原材料—包装物料'
+    jx = wb['进销存对接']
+    jx1 = [r for r in range(4, jx.max_row + 1) if jx[f'D{r}'].value == '合计']
+    assert len(jx1) == 1, jx1
+    jx1 = jx1[0] - 1                                    # 进销存对接 数据区 4～305
+    jxr = lambda c: f'进销存对接!${c}$4:${c}${jx1}'
     b2 = 'IF(N($B$2)>0,$B$2,DATE(2026,8,1))'
     for k in range(12):
         r = TA0 + k
@@ -745,14 +825,35 @@ def build_jiezhuan(wb):
         jy = (f'COUNTIFS(资金日记账!$F$4:$F${JR1},"家用",资金日记账!$B$4:$B${JR1},">="&$A{r},资金日记账!$B$4:$B${JR1},"<="&$B{r},'
               f'资金日记账!$K$4:$K${JR1},"{{}}")')
         njy = '+'.join(jy.replace('{}', k2) for k2 in ('管理费用', '销售费用', '主营业务成本'))
-        sale = f'SUMIF($A${TB0}:$A${TB1},"其他业务收入—物料销售",{mc}${TB0}:{mc}${TB1})'
+        acc = lambda name: f'SUMIF($A${TB0}:$A${TB1},"{name}",{mc}${TB0}:{mc}${TB1})'     # 表 B 这个月某科目净额
+        sale = acc('其他业务收入—物料销售')
+        fs, bsl = acc('主营业务收入—水果销售'), acc('其他业务收入—筐子租售')
+        fc = f'SUMIFS({jxr("K")},{jxr("D")},"自购水果销售成本",{jxr("C")},$A{r})'
+        bc = (f'SUMIFS({_pz_rng("I")},{_pz_rng("E")},"周转材料—周转筐托盘",'
+              f'{_pz_rng("B")},">="&$A{r},{_pz_rng("B")},"<="&$B{r})')                     # 本月贷记周转筐托盘
+        act = f'OR(D{r}<>0,E{r}<>0)'
+        nl = 'CHAR(10)&'                                  # 每条提示单独一行；最后 MID(…,2,…) 去掉开头那个换行
+        parts = [
+            f'IF(AND($C{r}<>"是",{act}),{nl}"数据录完、核对无误后在 C 列选「是」。","")',
+            f'IF({njy}>0,{nl}"⚠ 本月有 "&({njy})&" 笔「家用」记进了费用/成本，会拉低利润（要不要改走其他应收款请定）。","")',
+            (f'IF(AND(N({sale})>0,N(G{r})=0),{nl}"⚠ 本月有物料销售收入、没有物料销售成本：'
+             f'看【对接源_02物料】W:AB 是否取到《02》物料成本接口。","")'),
+            f'IF(AND(N($R$2)>0,{act}),{nl}"⚠ 【原料入库计价】有 "&$R$2&" 行有金额没填计价日期，仓储/周转/装卸费还没进总账。","")',
+            (f'IF(AND({act},N($T$2)=0,OR(N($T$3)>0,AND($T$3="",N(G{r})<>0))),{nl}"⚠ 物料成本含《02》建账期初库存"'
+             f'&IF(N($T$3)>0," "&TEXT($T$3,"#,##0"),"（金额见《02》【其他包装物料汇总】期初金额合计）")'
+             f'&"，【期初余额】"&$F$2&"还没填，资产负债表原材料会偏低。","")'),
+            (f'IF(AND(N({fs})>0,N({fc})=0),{nl}"⚠ 本月有水果销售收入 "&TEXT({fs},"#,##0.00")'
+             f'&"，采购果品成本还没进总账（见【果然鲜总表】块三「采购果品」）。","")'),
+            (f'IF(AND(N({bsl})>0,N({bc})=0),{nl}"⚠ 本月有筐子销售收入 "&TEXT({bsl},"#,##0.00")'
+             f'&"，筐子成本还没结转：在凭证手工区补「借 其他业务成本、贷 周转材料—周转筐托盘」（金额见【果然鲜总表】块三「筐子成本」）。","")'),
+        ]
+        f_tip = '=MID(' + '&'.join(parts) + ',2,2000)'
+        assert len(f_tip) < 8000, len(f_tip)
+        for s in re.findall(r'"([^"]*)"', f_tip):
+            assert len(s) <= 255, s
         ws.merge_cells(f'I{r}:O{r}')
-        cell(ws, f'I{r}', (f'=IF(AND($C{r}<>"是",OR(D{r}<>0,E{r}<>0)),"数据录完、核对无误后在 C 列选「是」。","")'
-                           f'&IF({njy}>0,"⚠ 本月有 "&({njy})&" 笔「家用」记进了费用/成本，会拉低利润（要不要改走其他应收款请定）。","")'
-                           f'&IF(AND(N({sale})>0,N(G{r})=0),"⚠ 本月有物料销售收入、没有物料销售成本：看【对接源_02物料】W:AB 是否取到《02》物料成本接口。","")'
-                           f'&IF(AND(N($R$2)>0,OR(D{r}<>0,E{r}<>0)),"⚠ 【原料入库计价】有 "&$R$2&" 行有金额没填计价日期，仓储/周转/装卸费还没进总账。","")'),
-             F_AUTO, FL_AUTO, AL)
-        ws.row_dimensions[r].height = 36
+        cell(ws, f'I{r}', f_tip, F_TIP, FL_AUTO, AL)
+        ws.row_dimensions[r].height = TIP_H
     rt = TA0 + 12
     cell(ws, f'A{rt}', '合　计', F_TOT, FL_TOT, AC)
     for c in 'BCHI':
@@ -768,8 +869,14 @@ def build_jiezhuan(wb):
                         errorTitle='是否结转', error='请从下拉选「是」或「否」')
     dv.add(f'C{TA0}:C{TA0 + 11}')
     ws.add_data_validation(dv)
-    dvd = DataValidation(type='date', operator='between', formula1='36526', formula2='73050', allow_blank=True,
-                         showErrorMessage=True, errorTitle='起始月', error='请填每月 1 日的日期，如 2026/8/1')
+    # 起始月锁定：已有任一月选「是」就不让改 B2（改了已结转月份的凭证会整组挪到别的月份）
+    dvd = DataValidation(type='custom',
+                         formula1=f'AND(ISNUMBER($B$2),$B$2>=36526,$B$2<=73050,COUNTIF($C${TA0}:$C${TA0 + 11},"是")=0)',
+                         allow_blank=False, showErrorMessage=True, errorTitle='起始月',
+                         error='已有结转的月份，不能改起始月；满 12 个月请另起下一年账套（期初余额填本年期末）。'
+                               '还没有结转时，请填每月 1 日的日期，如 2026/8/1。',
+                         showInputMessage=True, promptTitle='起始月',
+                         prompt='填每月 1 日的日期。已有月份选了「是」以后就不能再改。')
     dvd.add('B2')
     ws.add_data_validation(dvd)
     ws.conditional_formatting.add(f'I{TA0}:I{TA0 + 11}', FormulaRule(formula=[f'ISNUMBER(FIND("⚠",$I{TA0}))'],
@@ -815,9 +922,12 @@ def build_jiezhuan(wb):
              f'（含自动D区的物料销售成本，不含 {PZ_J0} 行以后的结转凭证本身），所以不会循环引用。'
              f'12 月（或年度最后一个月）结转后，本年利润转利润分配的分录请在手工区录（资产负债表两者都并入未分配利润，不影响平衡）。',
          'A', 'O', TB1 + 4, 44)
-    widths(ws, {'A': 26, 'B': 12, 'C': 12, 'D': 13, 'E': 14, 'F': 13, 'G': 13, 'H': 14, 'I': 13, 'J': 13,
-                'K': 13, 'L': 13, 'M': 13, 'N': 13, 'O': 14, 'Q': 7, 'R': 7})
-    hide(ws, 'Q', 'R')
+    widths(ws, {'A': 26, 'B': 12, 'C': 12, 'D': 13, 'E': 14, 'F': 13, 'G': 13, 'H': 14, **TIP_COLS,
+                'Q': 7, 'R': 7, 'S': 7, 'T': 7})
+    hide(ws, 'Q', 'R', 'S', 'T')
+    # 第 2 行：G2 说明（G:O 合并）按字数给够行高；D2/F2 科目名也可能折两行
+    ws.row_dimensions[2].height = max(30, _lines(ws['G2'].value, 13 + 14 + sum(TIP_COLS.values()), 9) * 12.5 + 6)
+    ws.sheet_view.selection = [Selection()]
     ws.freeze_panes = 'B6'
     return ws
 
@@ -945,7 +1055,27 @@ def reports(wb):
         m = re.search(r'\+IF\(\$B\$3="否",(.*),0\),2\)$', v)
         assert m, v
         bs[c] = v[:m.start()] + '+' + m.group(1) + ',2)'
-    bs['C3'] = ('（已改成自动，本格不用再改：按月结转后已结转月份的损益余额是 0，还没结转的损益自动并进未分配利润，不会重复计算）')
+    # 第 3 行：原来的「本期是否已做结转损益凭证」下拉开关已经不起作用，改成自动显示已结转几个月（取【结转损益】合计行）
+    assert bs['D3'].value is None and bs['E3'].value == '编制单位：' and bs['G3'].value == '报表日期：'
+    left, hit = [], 0
+    for dv in bs.data_validations.dataValidation:
+        rng = [str(x) for x in dv.sqref.ranges]
+        assert not any(':' in x and 'B3' in MultiCellRange(x) for x in rng), rng
+        if 'B3' in rng:
+            hit += 1
+            rng.remove('B3')
+            if not rng:
+                continue
+            dv.sqref = MultiCellRange(' '.join(rng))
+        left.append(dv)
+    assert hit == 1, hit
+    bs.data_validations.dataValidation = left
+    bs['A3'] = '已结转月数（看【结转损益】）：'
+    bs['C3'] = None
+    bs.merge_cells('B3:C3')
+    cell(bs, 'B3', f'={JZ}!$C${TA0 + 12}', F_AUTOB, FL_AUTO, AC)
+    cell(bs, 'C3', None, F_AUTOB, FL_AUTO, AC)        # B3:C3 合并（B 列只有 8 宽，放不下「x 个月已结转」）；原 C3 的长说明删掉，
+                                                     # E3～H3 是编制单位/报表日期，没地方放，A3 已写明去【结转损益】看
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -992,15 +1122,22 @@ def manual(wb):
         '4、每月怎么结转：当月数据录完 → 打开【结转损益】看这个月的收入、成本、利润和提示（有 ⚠ 先处理）→ C 列选「是」。'
         '记账凭证最后自动生成「记-年月-结转」凭证，损益类清零转入本年利润；资产负债表、利润表不用动。以后改了这个月的数，结转凭证自动跟着变。',
         '5、物料销售成本：按《02》【物料成本接口】（月末一次加权平均）每月自动结转「借 其他业务成本 贷 原材料—包装物料」，跟结转开关无关。',
-        '6、【利润表】改成按净额取数并排除结转凭证（利息收入不再漏掉）；【资产负债表】的「是否已结转」开关不用再改。',
+        '6、【利润表】改成按净额取数并排除结转凭证（利息收入不再漏掉）；【资产负债表】B3 改成自动显示「几个月已结转」（取【结转损益】），不用再选。',
         '7、【往来业务明细】新接四段：日记账 604 行以后、周转筐 2005 行以后、《01》原料出库「公司购买」（应付卖方）、《02》装筐费（应付装卸方）。',
+        '8、【结转损益】起始月（B2）只能在还没有任何月份选「是」的时候改，选过「是」就锁住（改了已结转的凭证会整组挪到别的月份）。'
+        '满 12 个月请另起下一年账套：复制一份，把本年期末余额填进新账套的【期初余额】。',
+        '9、【结转损益】提示栏新增三条：【期初余额】原材料—包装物料还没登记《02》建账期初物料（金额取《02》物料成本接口）；'
+        '本月有水果销售收入、采购果品成本还没进总账；本月卖了筐子、筐子成本还没结转（在凭证手工区补「借 其他业务成本 贷 周转材料—周转筐托盘」）。',
     ]
+    width = sum(ws.column_dimensions[c].width if c in ws.column_dimensions else ws.sheet_format.defaultColWidth or 9
+                for c in 'ABCDEFGH')
     for i, t in enumerate(lines):
         r = r0 + i
         ws.merge_cells(f'A{r}:H{r}')
         ws[f'A{r}'] = t
         _st(ws['A123' if i == 0 else 'A124'], ws[f'A{r}'])
-        ws.row_dimensions[r].height = ws.row_dimensions[123 if i == 0 else 124].height or (20 if i == 0 else 36)
+        h0 = ws.row_dimensions[123 if i == 0 else 124].height or (20 if i == 0 else 36)
+        ws.row_dimensions[r].height = h0 if i == 0 else max(h0, _lines(t, width, 10) * 15 + 4)
 
 
 # ════════════════════════════════════════════════════════════════════════════

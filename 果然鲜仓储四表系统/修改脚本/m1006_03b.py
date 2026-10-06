@@ -48,6 +48,17 @@
 ④ 【主页】最后另起一块「本轮（10/6）新增/改动 · 报表」：果然鲜总表、库存价值与欠款比对、对接源_01库存 三个入口；
    改两条旧说明；【使用说明】末尾补两条（接在 03A 的「账务」几条后面）。
 ⑤ 【杨洋欠款】不动。
+
+复核后修正（10/6 第二轮）：
+· 果然鲜总表：重建前按格子文字记下她的批注（原 B46「公司利润」、H46「营业外利润」），重建后挂回同样文字的
+  标签格（B201、H201），每格 new 一个 Comment；说明 6 补「单价为 0 的销售出库不算卖筐」；说明各行按字数给行高。
+· 库存价值与欠款比对：清掉底稿遗留的筛选条件（filterColumn、sortState）；上半段她手工隐藏的客户行按原行号回放
+  （客户顺序不变），下半段不回放；设冻结前先把 selection 清成一个（不再堆出 6 个）。
+· 二表 O 备注加两支：原料已出完（F＝0）、J＞0 且《01》损耗≠0 →「原料已出完：这 x KG 在《01》按方案 A 算作损耗…」；
+  没有原料入库（F＝0、Q＝0、J≠0，扎伤/果然鲜成品组合）→「这个等级没有原料入库，只有成品出库，负数正常…」；
+  负数那支补「填成品单价时负数等级按同价一起填，正负才抵得掉」。O 列放宽到 60。
+· 一表：应收款＜0（我方欠对方）的单位 K 差额留空；J 合计只加＞0 的，L/M 另列「我方欠对方合计」，N:Q 注明口径。
+· N4 加跳到二表的链接，二表标题右边（P:Q）加回顶部的链接；A2 说明补「按货主＋品种统一填价」「下半段从第 208 行开始」。
 """
 import copy
 import re
@@ -56,6 +67,7 @@ from openpyxl.comments import Comment
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter as L
+from openpyxl.worksheet.views import Selection
 
 from common0928 import (F_TITLE, F_NOTE, F_HDR, F_SEC, F_LBL, F_IN, F_AUTO, F_AUTOB, F_TOT, F_TOTN, F_CHK, F_HELP,
                         FL_TITLE, FL_HDR, FL_SEC, FL_AUTO, FL_IN, FL_LBL, FL_TOT, FL_NOTE, FL_NONE,
@@ -81,6 +93,13 @@ PARAM = '$D$3'                    # 净毛比参数格
 
 WEIGHT = '#,##0.00;[Red]\\-#,##0.00;\\-'
 AL_NW = Alignment(horizontal='left', vertical='center', wrap_text=False)
+F_LINK = Font(name='微软雅黑', size=9, bold=True, color='0563C1', underline='single')
+
+
+def _freeze(ws, ref):
+    """设冻结前先把 selection 清成一个，免得 openpyxl 在旧的 4 个 selection 上再插 2 个（规范上限 4 个、pane 不能重复）"""
+    ws.sheet_view.selection = [Selection()]
+    ws.freeze_panes = ref
 
 
 def _is_formula(v):
@@ -132,10 +151,15 @@ def _grab_user_values(ws):
     """把用户手填的值读出来：{行偏移: 值}。认底稿版式（下半段 69～468）和本模块跑过的版式（210～609）。"""
     if isinstance(ws['A67'].value, str) and ws['A67'].value.startswith('二、'):
         r0, r1, pcol, lcol = OLD_L0, OLD_L1, 'K', None
+        u1 = 65                                   # 底稿上半段数据 6～65
     elif isinstance(ws[f'A{L_SEC}'].value, str) and ws[f'A{L_SEC}'].value.startswith('二、'):
         r0, r1, pcol, lcol = L0, L1, 'P', 'L'
+        u1 = U1
     else:
         raise SystemExit('【库存价值与欠款比对】版式认不出来，停下来查一下')
+    # 上半段她手工隐藏的客户行：客户按 _自动清单 E 列顺序逐行 INDEX（ROW()-5），新旧版式同一行是同一家，原行号回放。
+    # 下半段的隐藏是旧筛选（F 列结余数量）留下的，不回放（行号已变、筛选条件也清掉）。
+    hidden = [r for r in range(U0, u1 + 1) if ws.row_dimensions[r].hidden]
     price, net, fprice = {}, {}, {}
     for r in range(r0, r1 + 1):
         i = r - r0
@@ -157,12 +181,12 @@ def _grab_user_values(ws):
     if 'O16' in user and user['O16'][0] == '=I16+I44+I47':      # 应收款从 I 挪到 J
         user['O16'] = ('=J16+J44+J47', user['O16'][1])
     param = ws['D3'].value if r0 == L0 and isinstance(ws['D3'].value, (int, float)) else 0.87
-    return price, net, fprice, user, param
+    return price, net, fprice, user, param, hidden
 
 
 def stock_compare(wb):
     ws = wb[SHEET_LV]
-    price, net, fprice, user, param = _grab_user_values(ws)
+    price, net, fprice, user, param, hidden = _grab_user_values(ws)
     grid = ws.sheet_view.showGridLines
     wipe(ws)
     ws.sheet_view.showGridLines = grid
@@ -173,9 +197,16 @@ def stock_compare(wb):
              '第 3 行 D3「净毛比」。下半段每行：结余净重＝结余数量×单箱净重（P 没填就用 平均重量×净毛比），'
              '库存价值＝结余净重×单价；在库成品毛重取《01》库存等级接口（加工出库的原料重－成品已发出的重量，含损耗），'
              '估算在库净重＝毛重×净毛比（净毛比＝P÷Q，P 没填用 D3），未发成品价值＝估算净重×成品单价。'
-             '上半段按客户合计：差额＝库存价值＋未发成品价值－应收款（应收款取【往来对账单明细】期末余额）。'
-             '注意：手填的值是跟着行走的，《01》里删行、改历史行的货主/等级会让顺序变，填完请核对一下客户和等级。',
-         'A', 'Q', 2, 60)
+             '未发成品价值请按「货主＋品种」统一填价（同一货主同一品种的各等级填同一个成品单价，重新分级造成的正负才抵得掉）。'
+             '上半段按客户合计：差额＝库存价值＋未发成品价值－应收款（应收款取【往来对账单明细】期末余额）；'
+             '应收款为负的单位（借款人、出借方、押金等我方欠对方的）差额留空，合计行的应收款也不含它们。'
+             '注意：手填的值是跟着行走的，《01》里删行、改历史行的货主/等级会让顺序变，填完请核对一下客户和等级。'
+             f'下半段从第 {L_SEC} 行开始。',
+         'A', 'Q', 2, 72)
+    # 跳到二表（A4:M4 是一表的区块标题，N4:Q4 空着）
+    ws.merge_cells('N4:Q4')
+    cell(ws, 'N4', f'=HYPERLINK("#\'{SHEET_LV}\'!A{L_SEC}","↓ 二表（客户＋等级明细，填单价/单箱净重）在第 {L_SEC} 行")',
+         F_LINK, FL_NONE, AL_NW, border=NOB)
     ws.merge_cells('A3:C3')
     cell(ws, 'A3', '净毛比（P 没填单箱净重时用）', F_LBL, FL_LBL, AC)
     for c in 'BC':
@@ -209,7 +240,8 @@ def stock_compare(wb):
         cell(ws, f'I{r}', sumif(r, 'M'), al=AR, fmt=MONEY)
         cell(ws, f'J{r}', f'=IF($B{r}="","",ROUND(IFERROR(INDEX(往来对账单明细!$F$7:$F$206,'
                           f'MATCH($B{r},往来对账单明细!$B$7:$B$206,0)),0),2))', al=AR, fmt=MONEY)
-        cell(ws, f'K{r}', f'=IF($B{r}="","",ROUND(N($H{r})+N($I{r})-N($J{r}),2))', al=AR, fmt=MONEY)
+        # 应收款为负（我方欠对方：借款人、出借方、押金等）不算差额，留空；合计行自动不含
+        cell(ws, f'K{r}', f'=IF($B{r}="","",IF(N($J{r})<0,"",ROUND(N($H{r})+N($I{r})-N($J{r}),2)))', al=AR, fmt=MONEY)
         cell(ws, f'L{r}', f'=IF($B{r}="","",IF(N($J{r})<0,"我方欠对方 · 不用催收",IF(N($J{r})=0,"没有欠款",'
                           f'IF(N($K{r})>=0,"货够抵账 · 可以先不收","货不够抵 · 该收钱了"))))', al=ACN)
         cell(ws, f'M{r}', f'=IF($B{r}="","",$B{r}&" 库里压着原料 "&TEXT(N($H{r}),"#,##0.00")&" 元、未发成品 "'
@@ -221,9 +253,14 @@ def stock_compare(wb):
     cell(ws, f'B{UT}', None, F_TOT, FL_TOT, ACN)
     for col, fmt in zip('CDEFGHIJK', (INT, INT, WEIGHT, WEIGHT, WEIGHT, MONEY, MONEY, MONEY, MONEY)):
         cell(ws, f'{col}{UT}', f'=ROUND(SUM({col}{U0}:{col}{U1}),2)', F_TOTN, FL_TOT, AR, fmt)
-    for col in 'LM':
-        cell(ws, f'{col}{UT}', None, F_TOT, FL_TOT, ACN)
-    ws.row_dimensions[UT].height = 18
+    # 应收款合计只加 >0 的（不含我方欠对方的单位）；我方欠对方的另列
+    cell(ws, f'J{UT}', f'=ROUND(SUMIF(J{U0}:J{U1},">0"),2)', F_TOTN, FL_TOT, AR, MONEY)
+    cell(ws, f'L{UT}', '我方欠对方合计', F_TOT, FL_TOT, ACN)
+    cell(ws, f'M{UT}', f'=ROUND(-SUMIF(J{U0}:J{U1},"<0"),2)', F_TOTN, FL_TOT, AR, MONEY)
+    ws.merge_cells(f'N{UT}:Q{UT}')
+    cell(ws, f'N{UT}', '← J 合计只加应收款＞0 的，不含我方欠对方的单位（借款人、出借方、押金等，K 差额留空）；'
+                       '我方欠对方的合计在左边 M 格', F_NOTE, FL_NONE, AL, border=NOB)
+    ws.row_dimensions[UT].height = 30
     rng = f'K{U0}:K{U1}'
     ws.conditional_formatting.add(rng, FormulaRule(formula=[f'AND($B{U0}<>"",$K{U0}<0)'],
                                                    font=Font(b=True, color='FF9C0006'),
@@ -232,7 +269,10 @@ def stock_compare(wb):
                                                    fill=PatternFill('solid', bgColor='FFE2EFDA', fgColor='FFE2EFDA')))
 
     # ── 下半段 ──
-    section(ws, '二、按 客 户 ＋ 等 级 明 细（淡蓝格手工填：I 单价、L 成品单价、P 单箱净重；其余自动）', 'A', 'Q', L_SEC)
+    section(ws, '二、按 客 户 ＋ 等 级 明 细（淡蓝格手工填：I 单价、L 成品单价、P 单箱净重；其余自动）', 'A', 'O', L_SEC)
+    ws.merge_cells(f'P{L_SEC}:Q{L_SEC}')
+    cell(ws, f'P{L_SEC}', f'=HYPERLINK("#\'{SHEET_LV}\'!A1","↑ 回到顶部（一表）")', F_LINK, FL_SEC, ACN)
+    ws[f'Q{L_SEC}'].border = BOX
     header(ws, L_HDR, 'A', ['序号', '客户', '品种', '等级', '单位', '结余数量', '结余净重KG\n（数量×单箱净重）', '库存价值',
                             '单价（手工填）\n元/KG', '在库成品吨位\n毛重KG（自动）', '估算在库\n净重KG', '成品单价\n（手工填）元/KG',
                             '未发成品价值', '库存状态', '备注', '单箱净重KG\n（手工填）', '平均重量\nKG/件（自动）'], 40)
@@ -256,11 +296,17 @@ def stock_compare(wb):
         cell(ws, f'L{r}', fprice.get(i), F_IN, FL_IN, ACN, fmt='0.00')
         cell(ws, f'M{r}', f'=IF({b}="","",ROUND(N($K{r})*N($L{r}),2))', al=AR, fmt=MONEY)
         cell(ws, f'N{r}', f'=IF({b}="","",{src("H")})', al=ACN)
+        loss, outw = f'N({src("N")})', f'N({src("M")})'      # 《01》损耗KG、成品出库总重KG（对接源 N、M）
         cell(ws, f'O{r}', f'=IF({b}="","",IF(AND(N($F{r})<>0,N($I{r})=0),"← 还有原料结余，没填单价",'
                           f'IF(AND(N($F{r})<>0,NOT(ISNUMBER($P{r})),N($Q{r})=0),"← 没有入库件重，净重算不出",'
                           f'IF(AND(N($F{r})<>0,ISNUMBER($P{r}),N($P{r})=0),"← 单箱净重填的是 0，净重按 0 算",'
-                          f'IF(N($J{r})<0,"← 在库成品为负：成品比加工出库的原料多（加工时可能重新分级），看客户合计",'
-                          f'IF(AND(N($J{r})>0,N($L{r})=0),"← 有在库成品，没填成品单价",""))))))', al=AL_NW)
+                          f'IF(AND(N($F{r})=0,N($Q{r})=0,N($J{r})<>0),"← 这个等级没有原料入库，只有成品出库，负数正常，按客户合计看",'
+                          f'IF(N($J{r})<0,"← 在库成品为负：成品比加工出库的原料多（加工时可能重新分级），看客户合计；'
+                          f'填成品单价时负数等级按同价一起填，正负才抵得掉",'
+                          f'IF(AND(N($F{r})=0,N($J{r})>0,{loss}<>0),"← 原料已出完：这 "&TEXT($J{r},"#,##0.0")&'
+                          f'" KG 在《01》按方案 A 算作损耗（损耗率 "&TEXT({loss}/(N($J{r})+{outw}),"0%")&'
+                          f'"），多半是加工时重新分级；确认库里真有成品再填单价",'
+                          f'IF(AND(N($J{r})>0,N($L{r})=0),"← 有在库成品，没填成品单价",""))))))))', al=AL_NW)
         cell(ws, f'P{r}', net.get(i), F_IN, FL_IN, ACN, fmt='0.###')
         cell(ws, f'Q{r}', f'=IF({b}="","",N({src("K")}))', al=AR, fmt='0.000')
         ws.row_dimensions[r].height = 18
@@ -271,6 +317,11 @@ def stock_compare(wb):
         cell(ws, f'{col}{LT}', f'=ROUND(SUM({col}{L0}:{col}{L1}),2)', F_TOTN, FL_TOT, AR, fmt)
     ws.row_dimensions[LT].height = 18
     ws.auto_filter.ref = f'A{L_HDR}:Q{LT}'
+    ws.auto_filter.filterColumn = []          # 底稿的筛选条件（F 列结余数量的值清单）是旧版式的，清掉
+    ws.auto_filter.sortState = None
+    # 上半段她手工隐藏的客户行按原行号回放（客户顺序不变）
+    for r in hidden:
+        ws.row_dimensions[r].hidden = True
 
     # 用户的 N16:P16 留在原位
     for ref, (v, st) in user.items():
@@ -286,9 +337,9 @@ def stock_compare(wb):
         ws['N16'].comment.height = 140
 
     widths(ws, {'A': 6, 'B': 15, 'C': 11, 'D': 13, 'E': 13, 'F': 14, 'G': 14, 'H': 15, 'I': 15, 'J': 17,
-                'K': 17, 'L': 20, 'M': 16, 'N': 12, 'O': 34, 'P': 13, 'Q': 13})
-    ws.freeze_panes = 'C6'
-    return {'price': len(price), 'net': len(net), 'fprice': len(fprice), 'user': sorted(user)}
+                'K': 17, 'L': 20, 'M': 16, 'N': 12, 'O': 60, 'P': 13, 'Q': 13})
+    _freeze(ws, 'C6')
+    return {'price': len(price), 'net': len(net), 'fprice': len(fprice), 'user': sorted(user), 'hidden': len(hidden)}
 
 
 # ───────────────────────────── ③ 果然鲜总表 ─────────────────────────────
@@ -340,8 +391,41 @@ def _find_profit_cells(wb):
     return net, s, e
 
 
+def _grab_comments(ws):
+    """她在格子上写的批注：按格子文字记下来（重建后挂回同样文字的标签格）。{文字: (批注内容, 作者)}"""
+    keep = {}
+    for row in ws.iter_rows():
+        for c in row:
+            if c.comment is not None and isinstance(c.value, str) and c.value.strip():
+                keep.setdefault(c.value.strip(), (c.comment.text, c.comment.author))
+    return keep
+
+
+def _put_comments(ws, keep, rows):
+    """先在给定的行里找同样文字的格子，找不到再全表找；每格 new 一个 Comment（不能共用）。返回挂上的格子。"""
+    done = []
+    for text, (body, author) in keep.items():
+        hit = None
+        for r in list(rows) + list(range(1, ws.max_row + 1)):
+            for c in range(1, 13):
+                v = ws.cell(r, c).value
+                if isinstance(v, str) and v.strip() == text:
+                    hit = ws.cell(r, c)
+                    break
+            if hit is not None:
+                break
+        if hit is None:
+            continue
+        cm = Comment(body, author or '')
+        cm.width, cm.height = 240, 80
+        hit.comment = cm
+        done.append(hit.coordinate)
+    return done
+
+
 def summary(wb):
     ws = wb[ZB]
+    keep = _grab_comments(ws)
     wipe(ws)
     P = _period_crit(WL('C'))
     PR = _period_crit(RJ('B'))
@@ -363,13 +447,13 @@ def summary(wb):
     ws.merge_cells('E4:L4')
     cell(ws, 'E4', '← 块一「发泡网」＝这几个品名卖出去的；其余包装物料算「包装物料」。以后有新的发泡网品名填在蓝格里'
                    '（跟《02》【发泡网销售汇总】一个口径）。', F_NOTE, FL_NONE, AL, border=NOB)
-    ws.row_dimensions[4].height = 22
+    ws.row_dimensions[4].height = 30               # E4:L4 说明约 70 字，要两行
     ws.merge_cells('A5:L5')
     cell(ws, 'A5', f'=IF($T$5=0,"",IF({UND}=1,"⚠ 【原料入库计价】有 "&TEXT($T$5,"#,##0.00")&" 元仓储/周转/装卸费'
                    f'没填计价日期：现在没填起止日，这部分算进块一了；填了起止日（按月看）就算不进去。",'
                    f'"⚠ 【原料入库计价】有 "&TEXT($T$5,"#,##0.00")&" 元仓储/周转/装卸费没填计价日期，填了起止日时这部分'
                    f'没算进块一（仓储/周转/装卸费偏少）。"))', F_CHK, FL_NONE, AL, border=NOB)
-    ws.row_dimensions[5].height = 22
+    ws.row_dimensions[5].height = 28
 
     # 隐藏辅助：标量
     for r, lab, f in ((1, '辅助（勿改）', None),
@@ -662,7 +746,8 @@ def summary(wb):
         '福利、商务、送礼；再加【成本费用登记表】登记的（装卸费除外）。还贷款、家用、往来付款不算。',
         '5. 装卸费成本：《02》装筐费单价设了以后取往来业务明细「02装筐费」（应付口径）；没设之前先按日记账「装卸费支出」'
         '（付给装卸队的钱）算。《02》写「依力」、日记账写「伊利」，要统一成一个名字，不然应付和付款冲不掉。',
-        '6. 筐子成本＝卖出去的筐 × 这种筐的采购均价（往来业务明细 02筐子 采购金额÷采购数量，不含期初）。',
+        '6. 筐子成本＝卖出去的筐 × 这种筐的采购均价（往来业务明细 02筐子 采购金额÷采购数量，不含期初）。'
+        '单价为 0、无需收款的销售出库（如荆建君 10/3 损耗 1 个）不算卖筐，不计成本，所以这里的筐数可能比《02》筐子销售汇总少。',
         '7. 发泡网成本、包装物料成本：取《02》【物料成本接口】（月末一次加权平均，含期初）→【对接源_02物料】W:AB，按整月算；'
         '《02》没更新链接时是 0。',
         '8. 采购果品＝往来业务明细「01果品」应付（成品出库填的采购单价＋原料出库「公司购买」）。赔付取日记账费用项目＝赔付出库，'
@@ -685,13 +770,16 @@ def summary(wb):
             ws.row_dimensions[r].height = 20
         else:
             cell(ws, f'A{r}', t, Font(name='宋体', size=10, color='1F3864'), FL_NONE, AL, border=NOB)
-            ws.row_dimensions[r].height = 30
+            # A:L 合并约 166 字符宽，宋体 10 号一行放得下 75 个左右汉字；按字数给够行高（每行 15）
+            ws.row_dimensions[r].height = max(30, 15 * -(-len(t) // 70) + 4)
         r += 1
 
     widths(ws, {'A': 16, 'B': 15, 'C': 13, 'D': 13, 'E': 13, 'F': 13, 'G': 13, 'H': 14, 'I': 13, 'J': 14,
                 'K': 15, 'L': 14, 'S': 10, 'T': 11, 'U': 11, 'V': 12})
-    ws.freeze_panes = 'B3'
-    return {'rows': (R_D1, R_E1, R_D2, R_E2, R_M0, R_REST, R_AMT4, R_CHK4), 'profit_cells': (net, ps, pe)}
+    _freeze(ws, 'B3')
+    comments = _put_comments(ws, keep, [R_L4, R_TAG4])
+    return {'rows': (R_D1, R_E1, R_D2, R_E2, R_M0, R_REST, R_AMT4, R_CHK4), 'profit_cells': (net, ps, pe),
+            'comments': comments}
 
 
 def _grp(ws, r1, r2, c1, c2, text, fill, font):

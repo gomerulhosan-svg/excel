@@ -28,7 +28,9 @@
 ⑥ 应收应付汇总：成品出库的应收改按购买方算（《01》接口 X＝购买方，没填购买方的用货主），不再记在货主头上；
    新增「公司购买果品（应付）」列＝按采购货主汇总应付合计（负数）、「物料/筐子采购（应付）」列＝《02》
    包装物料和周转筐「采购入库」的金额（负数，原来混在包装物料、周转筐列里当成应收）；已收/已付里
-   采购已付款记负数；往来单位名单并入购买方。
+   采购已付款记负数；往来单位名单并入购买方。G 列表头注明「使用费，不含押金」（《02》接口次果段只给使用费）；
+   A2 说明末尾提示已收/已付只是《01》《02》上标的收付款状态，欠多少以《03》往来对账单明细为准。
+   列宽用 set_col_widths 拆列组后再设，<col> 不重叠。本模块不设冻结窗格（各表冻结沿用底稿）。
 ⑦ 主页、使用说明简短更新；对接源表头显示「已取到 N/6000 笔」。
 
 post(path)：存盘后把【_自动清单】和各对账单辅助列里上下行写法一样的公式改成「共享公式」
@@ -42,6 +44,7 @@ import shutil
 from openpyxl.utils import get_column_letter as L, column_index_from_string as CI
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.worksheet.dimensions import ColumnDimension
 
 S1, S2, AUTO = '对接源_01水果', '对接源_02物料', '_自动清单'
 N1, N2 = 6000, 3000                 # K1：01 对账明细接口 6,000 行；K2：02 对账明细接口 3,000 行
@@ -129,6 +132,35 @@ def put(ws, ref, value=None, style=None):
 def drop(ws, r, c):
     """整格删掉（值和样式），比写 None 干净"""
     ws._cells.pop((r, c), None)
+
+
+def set_col_widths(ws, widths):
+    """按列设宽度，不让 <col> 定义互相重叠：先把覆盖到这些列的列组（如 C:J、M:XFD）拆开，
+    拆出来的每一段照抄原组的样式/隐藏等属性，只改指定列的宽度；结果按列号连续、互不重叠、最大到 XFD（16384）。"""
+    cd = ws.column_dimensions
+    owner = {}
+    for k, d in sorted(cd.items(), key=lambda kv: kv[1].min or CI(kv[0])):
+        lo = d.min or CI(k)
+        hi = min(d.max or lo, 16384)
+        for c in range(lo, hi + 1):
+            owner[c] = d                      # 万一原来就有重叠：按起始列排序，后一条覆盖前一条
+    want = {CI(c): w for c, w in widths.items()}
+    for c in want:
+        owner.setdefault(c, None)
+    runs = []
+    for c in sorted(owner):
+        key = (id(owner[c]), want.get(c))
+        if runs and runs[-1][1] == c - 1 and runs[-1][2] == key:
+            runs[-1][1] = c
+        else:
+            runs.append([c, c, key, owner[c], want.get(c)])
+    cd.clear()
+    for lo, hi, _, d, w in runs:
+        nd = copy.copy(d) if d is not None else ColumnDimension(ws, index=L(lo))
+        nd.index, nd.min, nd.max = L(lo), lo, hi
+        if w is not None:
+            nd.width = w
+        cd[L(lo)] = nd
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -543,12 +575,13 @@ def ar_ap(wb):
             ws.unmerge_cells(str(m))
     ws.merge_cells('A1:N1')
     ws.merge_cells('A2:N2')
+    # G：《02》对账明细接口 K 列次果筐/托盘段只取使用费（押金收退在《02》【押金汇总】看），表头写明
     hdr = {'C': '水果成品出库\n（应收·按购买方）', 'D': '其他代存', 'E': '包装物料\n（销售/领用/退回）', 'F': '周转筐\n（销售等）',
-           'G': '次果筐/托盘', 'H': '公司购买果品\n（应付·负数）', 'I': '物料/筐子采购\n（应付·负数）', 'J': '业务金额合计',
+           'G': '次果筐/托盘\n（使用费，\n不含押金）', 'H':'公司购买果品\n（应付·负数）', 'I': '物料/筐子采购\n（应付·负数）', 'J': '业务金额合计',
            'K': '已收/已付\n（付出为负）', 'L': '未收/未付', 'M': '欠款方向', 'N': '备注'}
     for c, t in hdr.items():
         put(ws, f'{c}3', t, st_hdr)
-    ws.row_dimensions[3].height = 36
+    ws.row_dimensions[3].height = 48                      # G3 三行（10 号粗体），其余两行
     an = f'{AUTO}!$AN$4:$AN${E1}'
     k1, c1, d1, l1 = R1('K'), R1('C'), R1('D'), R1('L')
     k2, c2, d2, l2 = R2('K'), R2('C'), R2('D'), R2('L')
@@ -591,8 +624,9 @@ def ar_ap(wb):
     ws['A2'] = (f'=IF({cnt}>250,"★★ 注意：往来单位已有 "&{cnt}&" 个，超过本表 250 个的显示上限，请联系维护人员扩表",'
                 f'"★ 全自动，全期累计（要看某段时间请用各对账单）。成品出库应收记在购买方头上（没填购买方的记货主）；'
                 f'公司购买果品、包装物料/周转筐采购入库是我方应付，记负数；已收/已付里我方付出去的也记负数。'
-                f'未收/未付＞0＝对方欠我方。【往来单位 "&{cnt}&"/250】")')
-    ws.row_dimensions[2].height = 30
+                f'未收/未付＞0＝对方欠我方。【往来单位 "&{cnt}&"/250】'
+                f'　★ 已收/已付取自《01》《02》的收付款状态，不是实际收付款；欠多少以《03》往来对账单明细为准")')
+    ws.row_dimensions[2].height = 48                      # 9 号字、A2:N2 合并约 3 行
     a2 = copy.copy(ws['A2'].alignment)
     a2.wrap_text = True
     ws['A2'].alignment = a2
@@ -601,9 +635,9 @@ def ar_ap(wb):
         for rule in cf._cf_rules[rng]:
             if rule.formula:
                 rule.formula = [f'({cnt}>250)' if '_自动清单' in x else x for x in rule.formula]
-    for c, w in (('C', 14), ('D', 10), ('E', 13), ('F', 11), ('G', 11), ('H', 14), ('I', 14), ('J', 13), ('K', 13),
-                 ('L', 13), ('M', 10), ('N', 14)):
-        ws.column_dimensions[c].width = w
+    # 底稿列组是 C:J、M:XFD，直接按单列设宽会和组重叠；set_col_widths 先拆组（样式照旧，O:XFD 保持原宽 9）
+    set_col_widths(ws, {'C': 14, 'D': 10, 'E': 13, 'F': 11, 'G': 11, 'H': 14, 'I': 14, 'J': 13, 'K': 13,
+                        'L': 13, 'M': 10, 'N': 14})
     ws.print_area = 'A1:N18'
 
 
