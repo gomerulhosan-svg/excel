@@ -47,6 +47,67 @@ def keep_hidden(before, after):
             raise SystemExit(f'合并格里藏的值丢了：{sh}!{ref}')
 
 
+def unhide_cols(path):
+    """只给重算副本用：LibreOffice 存盘时会把「隐藏列」尾部的公式格截掉（少算 12 万多格），先把列都显示出来再算"""
+    tmp = path + '.tmp'
+    zi = zipfile.ZipFile(path)
+    zo = zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED)
+    for it in zi.infolist():
+        d = zi.read(it.filename)
+        if it.filename.startswith('xl/worksheets/sheet') and it.filename.endswith('.xml'):
+            d = re.sub(rb'(<col\b[^>]*?)\s+hidden="(?:1|true)"', rb'\1', d)
+        zo.writestr(it, d)
+    zo.close(); zi.close()
+    shutil.move(tmp, path)
+
+
+def count_formulas(path):
+    """成品里每个公式格（含共享公式的子格）都数一遍"""
+    from lxml import etree
+    NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    z = zipfile.ZipFile(path)
+    n = 0
+    for nm in z.namelist():
+        if nm.startswith('xl/worksheets/sheet') and nm.endswith('.xml'):
+            for _, el in etree.iterparse(z.open(nm), tag=NS + 'f'):
+                n += 1
+                el.clear()
+    z.close()
+    return n
+
+
+def lint(path):
+    """版面体检：<col> 不能重叠、不能超过 XFD；同一 sheetView 里 selection 不能重复；冻结不能冻住一大片"""
+    from lxml import etree
+    NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    z = zipfile.ZipFile(path)
+    wbx = etree.fromstring(z.read('xl/workbook.xml'))
+    rels = {r.get('Id'): r.get('Target') for r in etree.fromstring(z.read('xl/_rels/workbook.xml.rels'))}
+    probs = []
+    for sh in wbx.iter(NS + 'sheet'):
+        t = rels[sh.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')].lstrip('/')
+        t = t if t.startswith('xl/') else 'xl/' + t
+        head = z.read(t)
+        head = head[:head.find(b'<sheetData')] + b'</worksheet>' if b'<sheetData' in head else head
+        root = etree.fromstring(head)
+        name = sh.get('name')
+        spans = sorted((int(c.get('min')), int(c.get('max'))) for c in root.iter(NS + 'col'))
+        for (a1, b1), (a2, b2) in zip(spans, spans[1:]):
+            if a2 <= b1:
+                probs.append(f'{name}: <col> 重叠 {a1}-{b1} / {a2}-{b2}')
+        if any(b > 16384 for _, b in spans):
+            probs.append(f'{name}: <col> 超过 XFD')
+        for sv in root.iter(NS + 'sheetView'):
+            panes = [s.get('pane') for s in sv.iter(NS + 'selection')]
+            if len(panes) != len(set(panes)) or len(panes) > 4:
+                probs.append(f'{name}: selection 重复 {panes}')
+            for p in sv.iter(NS + 'pane'):
+                if p.get('state') in ('frozen', 'frozenSplit') and float(p.get('ySplit') or 0) > 15:
+                    probs.append(f'{name}: 冻结了 {p.get("ySplit")} 行')
+    z.close()
+    return probs
+
+
 def refresh_links(k):
     """把成品 k 的外链缓存按已经算好的新《01》《02》重写（按文件名对上，绝对路径也认）"""
     srcmap = {}
@@ -75,10 +136,19 @@ def step(k, mods):
     fonts(out(k))
     if n0:
         refresh_links(k)
+    probs = lint(out(k))
+    for p in probs:
+        print('   ⚠ 版面：', p)
+    if any('冻结了' in p or 'selection 重复' in p for p in probs):
+        raise SystemExit(f'{NAMES[k]} 版面有问题（冻结/选择区），先修模块')
     shutil.copy(out(k), calc(k))
+    unhide_cols(calc(k))
     j = recalc(calc(k))
+    nf = count_formulas(out(k))
+    if nf != j.get('total_formulas'):
+        raise SystemExit(f'{NAMES[k]} 公式数对不上：成品 {nf}，LibreOffice 算了 {j.get("total_formulas")}')
     n, s = inject(out(k), calc(k))
-    print(f'   写回缓存 {n} 格（空 {s} 格）')
+    print(f'   公式 {nf} 个全部算到；写回缓存 {n} 格（空 {s} 格）')
     return j
 
 
