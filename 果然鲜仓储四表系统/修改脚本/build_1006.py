@@ -26,7 +26,7 @@ calc = lambda k: os.path.join(CALC, NAMES[k])
 from build_0928 import fonts, recalc, hidden_in_merges, cell_present
 from inject_cache import inject
 from refresh_link_cache import refresh, link_targets
-import m1006_01, m1006_02, m1006_03a, m1006_03b, m1006_04
+import m1006_01, m1006_02, m1006_03a, m1006_03b, m1006_04, m1006_99
 
 
 def ext_links(path):
@@ -157,10 +157,10 @@ if __name__ == '__main__':
     for k in NAMES:                       # 重算时四本都要在同一个文件夹（先放底稿，改完一本换一本）
         shutil.copy(src(k), calc(k))
     res = {}
-    res['01'] = step('01', [(m1006_01, 'apply')])
+    res['01'] = step('01', [(m1006_01, 'apply'), (m1006_99, 'apply_01')])
     res['02'] = step('02', [(m1006_02, 'apply')])
-    res['03'] = step('03', [(m1006_03a, 'apply'), (m1006_03b, 'apply')])
-    res['04'] = step('04', [(m1006_04, 'apply')])
+    res['03'] = step('03', [(m1006_03a, 'apply'), (m1006_03b, 'apply'), (m1006_99, 'apply_03')])
+    res['04'] = step('04', [(m1006_04, 'apply'), (m1006_99, 'apply_04')])
     json.dump({k: {x: v.get(x) for x in ('status', 'total_formulas', 'total_errors', 'error_summary')}
                for k, v in res.items()}, open(os.path.join(CALC, 'recalc_summary.json'), 'w'), ensure_ascii=False, indent=1)
     if '--keep' not in sys.argv:
