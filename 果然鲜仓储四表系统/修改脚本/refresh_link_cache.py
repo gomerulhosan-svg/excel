@@ -12,10 +12,20 @@ import sys, os, re, zipfile, shutil, datetime as dt
 import openpyxl
 from openpyxl.utils import column_index_from_string as CI
 
-REF = re.compile(r"\[(\d+)\](?:'([^']+)'|([^!'\[\]\s,()+\-*/&=<>]+))!(\$?[A-Z]{1,3}\$?\d+)")
+# 三种写法：[1]表名!A1、[1]'表 名'!A1、'[2]次果筐+托盘明细'!A1（WPS/Excel 对带特殊字符的表名把 [n] 也包进引号）；
+# 区域 A1:B9 展开成每一格（以前只缓存左上角一格）
+REF = re.compile(r"(?:\[(\d+)\](?:'([^']+)'|([^!'\[\]\s,()+\-*/&=<>]+))|'\[(\d+)\]([^']+)')!(\$?[A-Z]{1,3}\$?\d+(?::\$?[A-Z]{1,3}\$?\d+)?)")
 
 def norm(c):
     return c.replace('$', '')
+
+def expand(ref):
+    """A1 → [A1]；A1:B3 → 区域里每一格"""
+    if ':' not in ref:
+        return [ref]
+    from openpyxl.utils.cell import range_boundaries, get_column_letter
+    c1, r1, c2, r2 = range_boundaries(ref)
+    return [f'{get_column_letter(c)}{r}' for r in range(r1, r2 + 1) for c in range(c1, c2 + 1)]
 
 def xml_escape(s):
     return (str(s).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
@@ -29,9 +39,11 @@ def collect_refs(path):
             for c in row:
                 if isinstance(c.value, str) and c.value.startswith('='):
                     for m in REF.finditer(c.value):
-                        idx = int(m.group(1))
-                        sheet = m.group(2) or m.group(3)
-                        out.setdefault(idx, {}).setdefault(sheet, set()).add(norm(m.group(4)))
+                        idx = int(m.group(1) or m.group(4))
+                        sheet = m.group(2) or m.group(3) or m.group(5)
+                        cells = out.setdefault(idx, {}).setdefault(sheet, set())
+                        for a in expand(norm(m.group(6))):
+                            cells.add(a)
     wb.close()
     return out
 
