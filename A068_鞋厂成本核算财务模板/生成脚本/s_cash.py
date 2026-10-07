@@ -2,7 +2,7 @@
 """【资金日记账】（4 个资金账户混合录入、逐行即时余额）和【手工分录】（一借一贷，调账 / 计提 / 冲销用）。
    ★ 隐藏接口列（R～AG / N～U）的含义见 layout.py，这里一字不差地实现；AH～AX / V～X 是本表自己用的帮手列（也隐藏）。
    第二轮：日记账金额认文本数字（12,000.00 / ¥50 / 空格）；J、K 余额改成逐行累计（帮手列 AP～AX，O(n)）；
-   「用在哪」按停产规则（成本月 < 款式档案 REL 才记到款）；现金流量按收付方向分借款 / 还款；手工分录 INDEX(…,0) 挡住（#7）。"""
+   「用在哪」是登记的款式就记到款（停产在 _款式月 停X 里转公共）；现金流量按收付方向分借款 / 还款；手工分录 INDEX(…,0) 挡住（#7）。"""
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.worksheet.datavalidation import DataValidation
 from common import *
@@ -195,10 +195,10 @@ def build_cash(wb, ctx):
         f[J_COMP] = '=' + comp_of(V)
         f[J_CAMT] = f'=IF(AND({AA}<>"",{AF}=1),-{R},0)'
         m = f'TRIM({M}&"")'
-        # 「用在哪」是登记的款式（第 k 行）且 成本月 < 这个款的 REL（停产后的月份）→ 记到款（键里用款式档案的规范写法）；否则公共。INDEX 用 IF 挡住 k=0
+        # 「用在哪」是登记的款式（第 k 行）→ 记到款（键里用款式档案的规范写法）；否则公共。INDEX 用 IF 挡住 k=0。停产在成本引擎里处理（_款式月 停X）
         f[X_STK] = f'=IF({m}="",0,IFERROR(MATCH({esc(m)},{ST_KEYS},0),0))'
-        f[J_CKEY] = (f'=IF(AND({AA}<>"",{AF}=1),IF({STK}=0,"公||"&{AA},IF({S}<N(INDEX({ST_RELS},{STK})),'
-                     f'"款|"&INDEX({ST_KEYS},{STK})&"|"&{AA},"公||"&{AA})),"")')
+        f[J_CKEY] = (f'=IF(AND({AA}<>"",{AF}=1),IF({STK}=0,"公||"&{AA},'
+                     f'"款|"&INDEX({ST_KEYS},{STK})&"|"&{AA}),"")')
         f[J_CF] = (f'=IF(OR({AF}<>1,{T}="{XFER}",{CTI}=0),"",IF({NEED}="费用项目",{cf_of_fee(FC)},'
                    f'{cf_dir(f"TRIM(INDEX({CT_CFS},{CTI})&{chr(34) * 2})", R)}))')
         f[J_TOX] = f'=IF({T}="{XFER}",{L}&"","")'
@@ -252,8 +252,6 @@ def build_cash(wb, ctx):
             (f'COUNTIF({COA_CODES},{V})=0', f'"✗ 对方科目 "&{V}&" 不在【会计科目表】：先去加科目，或改【基础资料】③"'),
             (dup, '"⚠ 对方账户那边好像也记了这笔转账（同一天、同金额）：转账只记一行，清空另一行"'),
             (f'AND({AA}<>"",{m}<>"",{STK}=0)', '"⚠ 用在哪的款式没在【款式档案】：先按公共分摊（登记了款式就自动记到这个款）"'),
-            (f'IF(AND({AA}<>"",{STK}>0),{S}>=N(INDEX({ST_RELS},{STK})),FALSE)',
-             f'"⚠ 这个款已停产（【款式档案】状态「停产」），按公共分：这笔分到各款，不再挂在「"&{m}&"」上"'),
             (f'AND({AA}="",{m}<>"")', '"⚠ 这一类不算成本，「用在哪」不起作用"'),
             (f'AND({T}="付材料款",{Z}<>"材料供应商")', f'"⚠ 付材料款的单位类型不对：【往来单位】里是「"&{Z}&"」，不是材料供应商"'),
             (f'AND({T}="付加工费",{Z}<>"外发加工厂")', f'"⚠ 付加工费的单位类型不对：【往来单位】里是「"&{Z}&"」，不是外发加工厂"'),

@@ -8,7 +8,7 @@
   · 订单「成本双数」CQ：实交>0 且备注不含「返修」；退货（负数）、返修重交只算收入，不算双数、不分成本。
   · 直接成本按交货进度转出：转X＝ROUND((到本月累计直接成本−以前已转出)×双数÷(双数＋月末未交订单双数),2)；
     未交＝下单日期<下月1日（空也算）的订单数量 − 交货日期<下月1日的成本双数。
-  · 停产：款式档案状态＝停产 → REL＝最后一个有双数的月份＋1（一双没交过＝1）；直接成本 成本月≥REL 的按公共分。
+  · 停产：款式档案状态＝停产 → REL＝最后一个有双数的月份＋1（一双没交过＝1）；m≥REL 时这个款还挂着的直接成本当月转进公共（_款式月 停X、成本分摊表 停产转入）。
   · 资金日记账金额：粘贴来的文本数字（「12,000.00」「¥50」）照 common.num() 转。
   · 「折旧提到几月」空着＝最新月份 LASTM＝各录入表能记账的行里最大的月份（日记账、送货单 CM、外发 CM、订单 DM、工资、手工）。
   · 年初在制（会计科目表 400101～400104「年初余额（用的）」H 列）进 1 月「公共上月结转」。
@@ -234,6 +234,8 @@ class Model:
                                  sdm=N(v[ST_SDM]), sdl=N(v[ST_SDL])))
             if key and key.casefold() not in self.sty_idx:
                 self.sty_idx[key.casefold()] = len(self.sty) - 1
+            elif key:                      # 重复登记的编码：表里 _款式月 整行不算，这里也当空行
+                self.sty[-1]['code'] = ''
         sdms = [x['sdm'] for x in self.sty if x['sdm'] > 0]
         sdls = [x['sdl'] for x in self.sty if x['sdl'] > 0]
         am, al_ = (sum(sdms) / len(sdms) if sdms else 1), (sum(sdls) / len(sdls) if sdls else 1)
@@ -265,8 +267,8 @@ class Model:
         return self.sty_idx.get(tkey(code))
 
     def atype(self, si, cm):
-        """"款"：登记的款式、且成本月 < 这个款的 REL；否则 "公" """
-        return '款' if si is not None and cm < self.rel[si] else '公'
+        """"款"：登记的款式；否则 "公"（停产在成本引擎里转公共，见 _engine 的 R）"""
+        return '款' if si is not None else '公'
 
     def month_of(self, d):
         d = as_date(d)
@@ -573,6 +575,22 @@ class Model:
                         T[(si, c, m)] = d2((cum - done) * p / (p + self.undel[si][m]))
                         done += T[(si, c, m)]
         self.T = T
+        # 停产转公共：m ≥ REL 时，到本月累计的直接成本 − 1～m 月已转出 − 1～m−1 月已停转
+        R = defaultdict(float)
+        self.rel_in = defaultdict(float)
+        for si in range(n):
+            if not self.sty[si]['code'] or self.rel[si] > 12:
+                continue
+            for c in COMPS:
+                cum = done = 0.0
+                for m in M:
+                    cum += direct[(si, c, m)]
+                    done += T[(si, c, m)]
+                    if m >= self.rel[si]:
+                        R[(si, c, m)] = d2(cum - done)
+                        done += R[(si, c, m)]
+                        self.rel_in[(c, m)] += R[(si, c, m)]
+        self.R = R
         wm = [x['wm'] for x in self.sty]
         wl = [x['wl'] for x in self.sty]
         self.base_m = {m: sum(self.pairs[i][m] * wm[i] for i in range(n)) for m in M}
@@ -587,7 +605,7 @@ class Model:
         self.carry = {}
         carry = dict(self.wip0)
         for m in M:
-            avail = {c: d2(carry[c] + d2(pub[(c, m)])) for c in COMPS}
+            avail = {c: d2(carry[c] + d2(pub[(c, m)]) + d2(self.rel_in[(c, m)])) for c in COMPS}
             tot = sum(avail.values())
             est = self.wip_est[m]
             for c in COMPS:
@@ -728,6 +746,7 @@ def compare(path):
             chk(f'_款式月 {x["code"]} {m}月 未交', sm[f'{sm_col("未交", m)}{r}'].value, md.undel[i][m])
             for c in COMPS:
                 chk(f'_款式月 {x["code"]} {m}月 转{c}', sm[f'{sm_col("转" + c, m)}{r}'].value, md.T[(i, c, m)])
+                chk(f'_款式月 {x["code"]} {m}月 停{c}', sm[f'{sm_col("停" + c, m)}{r}'].value, md.R[(i, c, m)])
                 chk(f'_款式月 {x["code"]} {m}月 本{c}', sm[f'{sm_col("本" + c, m)}{r}'].value, md.C[(i, c, m)], 0.02)
             chk(f'_款式月 {x["code"]} {m}月 成本', sm[f'{sm_col("成本", m)}{r}'].value, md.cost_sm[i][m], 0.03)
     # ── 款式档案：已交双数、停产 REL、在制（挂着没转的直接成本）
@@ -738,7 +757,8 @@ def compare(path):
         r = x['r']
         chk(f'款式档案 {x["code"]} 已交双数', st[f'{ST_DQ}{r}'].value, sum(md.pairs[i][1:]))
         chk(f'款式档案 {x["code"]} REL（停产后转公共的起始月）', st[f'{ST_REL}{r}'].value, md.rel[i], 0)
-        wip = sum(md.direct[(i, c, m)] for c in COMPS for m in range(1, 13)) - sum(md.T[(i, c, m)] for c in COMPS for m in range(1, 13))
+        wip = (sum(md.direct[(i, c, m)] for c in COMPS for m in range(1, 13)) - sum(md.T[(i, c, m)] for c in COMPS for m in range(1, 13))
+               - sum(md.R[(i, c, m)] for c in COMPS for m in range(1, 13)))
         chk(f'款式档案 {x["code"]} 在制（{ST_WIP} 列 挂着没转）', st[f'{ST_WIP}{r}'].value, d2(wip))
     # ── 成本分摊表
     al = wb[SH_ALLOC]
@@ -748,6 +768,7 @@ def compare(path):
             g = lambda it: al[f'{al_col(m)}{AL_CROWS[c][it]}'].value
             chk(f'成本分摊表 {c} {m}月 本月发生', g('本月发生'), md.pub[(c, m)] + md.direct_m[(c, m)])
             chk(f'成本分摊表 {c} {m}月 公共上月结转', g('公共上月结转'), md.carry_in[(c, m)])
+            chk(f'成本分摊表 {c} {m}月 停产转入', g('停产转入'), md.rel_in[(c, m)])
             chk(f'成本分摊表 {c} {m}月 公共月末留在制', g('公共月末留在制'), md.keep[(c, m)])
             chk(f'成本分摊表 {c} {m}月 公共本月分摊', g('公共本月分摊'), md.alloc[(c, m)])
             chk(f'成本分摊表 {c} {m}月 直接本月转出', g('直接本月转出'), md.direct_out[(c, m)])

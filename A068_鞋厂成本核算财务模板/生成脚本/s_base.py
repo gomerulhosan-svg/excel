@@ -389,8 +389,9 @@ def build_style(wb, ctx):
         # S 挂着没转＝全年直接记到这个款的成本（各来源 CKEY＝"款|编码|*"）− _款式月 转材料～转制造 1～12 月
         key = '"款|"&' + esc(f'{ST_KEY}{r}') + '&"|*"'
         dsum = '+'.join(f'SUMIFS({rng(sh, ca, r0_, r1_)},{rng(sh, ck, r0_, r1_)},{key})' for sh, ck, cm, ca, r0_, r1_, _c in COST_SRC)
-        tr = f"SUM({smq}!{sm_col('转' + COMPS[0], 1)}{r}:{sm_col('转' + COMPS[-1], 12)}{r})"
-        ws[f'{ST_WIP}{r}'] = f'=IF({e},"",ROUND({dsum}-{tr},2))'
+        tr = (f"SUM({smq}!{sm_col('转' + COMPS[0], 1)}{r}:{sm_col('转' + COMPS[-1], 12)}{r})"
+              f"+SUM({smq}!{sm_col('停' + COMPS[0], 1)}{r}:{sm_col('停' + COMPS[-1], 12)}{r})")
+        ws[f'{ST_WIP}{r}'] = f'=IF(OR({e},{smq}!${SM_CODE}{r}=""),"",ROUND({dsum}-({tr}),2))'   # 重复登记的行（_款式月 A 空）不算
         # W REL：停产 → 最后一个有交货双数的月份＋1（一双没交过＝1）；否则 13
         dq12 = f"{smq}!{sm_blk('双数', r)}"
         last = f'SUMPRODUCT(MAX(ISNUMBER({dq12})*({dq12}>0)*{{1,2,3,4,5,6,7,8,9,10,11,12}}))'
