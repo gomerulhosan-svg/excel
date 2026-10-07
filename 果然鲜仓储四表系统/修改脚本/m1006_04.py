@@ -47,7 +47,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.worksheet.dimensions import ColumnDimension
 
 S1, S2, AUTO = '对接源_01水果', '对接源_02物料', '_自动清单'
-N1, N2 = 6000, 3000                 # K1：01 对账明细接口 6,000 行；K2：02 对账明细接口 3,000 行
+N1, N2 = 7000, 4000                 # K1：01 对账明细接口 7,000 行；K2：02 对账明细接口 4,000 行（按一年用量留余）
 E1, E2 = 3 + N1, 3 + N2             # 6003 / 3003
 AE = E1 + N2                        # 9003：_自动清单 第 4～6003 行对 01，6004～9003 行对 02
 OLD_END, OLD_N, OLD_AE = 1203, 1200, 2403
