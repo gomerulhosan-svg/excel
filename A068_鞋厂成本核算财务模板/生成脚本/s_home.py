@@ -446,7 +446,7 @@ def build_home(wb, ctx):
     r += 1
     c = _note(ws, r, '交货双数、交货收入按【订单明细】交货日期算到月（收入含其他业务收入）；营业成本＝【成本分摊表】每月结转的（只算交了货的鞋，'
                      '没交货的挂在生产成本里）；期间费用＝销售＋管理＋财务费用；净利润跟【利润表】一样（再减税金及附加、营业外收支、所得税）。'
-                     '点这里看【利润表】 →', height=32, font=F_LINKS)
+                     '点这里看【利润表】 →', height=44, font=F_LINKS)
     link(c, SH_IS)
     r += 2
 
@@ -528,6 +528,7 @@ def build_home(wb, ctx):
         r += 1
     rg = f'B{rem0}:J{r - 1}'
     ws.conditional_formatting.add(rg, FormulaRule(formula=[f'LEFT($B{rem0},1)="✗"'], font=F_RED))
+    ws.conditional_formatting.add(f'K{rem0}:K{r - 1}', FormulaRule(formula=[f'$B{rem0}=""'], font=Font(name=YH, sz=10, color='FFFFFFFF')))
     ws.conditional_formatting.add(rg, FormulaRule(formula=[f'LEFT($B{rem0},1)="⚠"'], fill=FILL_YEL))
     ws.conditional_formatting.add(rg, FormulaRule(formula=[f'RIGHT($B{rem0},1)="√"'], font=F_GOOD))
     r += 1

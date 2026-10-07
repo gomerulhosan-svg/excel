@@ -39,8 +39,9 @@ def build_ctx():
               ('26L35', 125, '绸缎'), ('26Z1', 132, ''), ('26Z2', 132, '绸缎'), ('26Z6', 132, ''), ('A-201-1', 165, '漆皮'),
               ('HK09', 178, '漆皮'), ('HK11', 148, '镜面'), ('L-117', 108, '透明'), ('L-122', 115, '漆皮'), ('L-218', 128, '漆皮'),
               ('w001', 98, '绒面'), ('ZS222-1', 168, ''), ('26D5', 135, ''), ('HK15', 182, '漆皮')]
-    ctx[SH_STY] = [{ST_CODE: c, ST_NAME: n or None, ST_PRICE: p, ST_KM: 1, ST_KL: 1, ST_STAT: '在产', ST_NOTE: '结算单价是示例'}
-                   for c, p, n in prices]
+    coef = {'HK09': (1.3, 1.2), 'HK15': (1.3, 1.2), 'A-201-1': (1.2, 1.1), '24D16': (1.1, 1), 'w001': (0.8, 0.9), 'L-117': (0.9, 1)}
+    ctx[SH_STY] = [{ST_CODE: c, ST_NAME: n or None, ST_PRICE: p, ST_KM: coef.get(c, (1, 1))[0], ST_KL: coef.get(c, (1, 1))[1],
+                    ST_STAT: '在产', ST_NOTE: '结算单价、系数是示例' if c in coef else '结算单价是示例'} for c, p, n in prices]
     # L-301 故意没登记：订单里有、档案里没有，演示右边「还没登记的款式」和校验
     # ── 品名档案：品名 类别 单位 常用供应商 参考单价 备注
     ctx[SH_MAT] = [dict(zip((MT_NAME, MT_CAT, MT_UNIT, MT_SUP, MT_REFP, MT_NOTE), r)) for r in [

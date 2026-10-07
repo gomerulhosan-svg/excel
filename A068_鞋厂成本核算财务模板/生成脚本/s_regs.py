@@ -52,7 +52,7 @@ def _kpi(ws, lbl, label, val, formula, fmt=MONEY):
 def _heads(ws, hdr, heads, autos):
     for col, t in heads:
         put(ws, f'{col}{hdr}', t, F_HDR, fill(H_AUTO if col in autos else H_IN), align=ACW)
-    ws.row_dimensions[hdr].height = 34
+    ws.row_dimensions[hdr].height = 46
 
 
 def _hidden(ws, hdr, r0, r1, labels, fmts=None):
