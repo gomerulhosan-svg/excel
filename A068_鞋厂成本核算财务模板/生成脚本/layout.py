@@ -34,7 +34,7 @@ SH_SPL = '款式成本利润'
 SH_OSUM = '订单汇总'
 SH_OQ = '订单查询'
 SH_MSUM = '材料汇总'
-SH_LATE = '跨月补单'
+SH_LATE = '晚到单据'
 SH_APS = '应付账款汇总'
 SH_SST = '供应商对账单'
 SH_CST = '客户对账单'
@@ -78,8 +78,7 @@ PARAMS = [  # (键, 项目, 默认值, 数字格式, 说明)
     ('CO', '公司名称', '鑫明伟鞋厂', '@', '从中茂发货单上「客户名称：HB-鑫明伟」猜的，不对就改'),
     ('YEAR', '会计年度', 2026, '0', '一年一本；新的一年另存一本，改这里'),
     ('OPEN', '建账日期', _dt.date(2026, 8, 1), 'yyyy/mm/dd', '期初余额是这一天的数；这天以前的业务不记（放期初）'),
-    ('LOCK', '已结账到几月', 0, '0', '0＝不锁：送货单按送货日期算到当月，晚到的单会改动以前月份的成本（老板看款式成本用这个）。'
-                                     '填 8＝1～8 月已结账：8 月以前的单子 9 月以后才收到的，算到收单那个月，以前月份的数不再变'),
+    ('LOCK', '已结账到几月', '=lockauto', '0"月"', '自动：下面「每月结账日期」填到哪个月就是几月（空着＝不锁，晚到的送货单按送货日期改以前月份）'),
     ('BASIS', '公共成本分摊依据', '系数', '@', '系数＝按「交货双数×款式系数」分（系数默认 1，就是按双数平均）；'
                                            '标准成本＝按【款式档案】填的每双标准成本分（没填标准的款式按系数×平均标准）'),
     ('PERIOD', '期间费用摊到款式', '按收入', '@', '按收入＝【款式成本利润】把管理、销售、财务费用按收入比例摊到各款，算出「净利」；不摊＝只算到毛利'),
@@ -88,8 +87,17 @@ PARAMS = [  # (键, 项目, 默认值, 数字格式, 说明)
     ('DEPTO', '折旧提到几月', None, '0', '空着＝自动：提到有业务（流水、送货、交货、工资）的最后一个月，后面还没到的月份先不提；要提到某个月就填几'),
     ('DEPTOX', '折旧实际提到', '=auto', '0"月"', '自动算的（上一格空着时＝有业务的最后一个月）'),
 ]
+PARAMS.append(('LASTM', '最新月份', '=lastm', '0"月"', '自动：有业务（已进账的流水、送货、交货、工资）的最后一个月；各报表的月份格空着就看这个月'))
 PA_ROW = {k: B_R0 + i for i, (k, *_r) in enumerate(PARAMS)}
 P = {k: f"{q(SH_BASE)}!${PA_VAL}${r}" for k, r in PA_ROW.items()}   # P['YEAR'] → '基础资料'!$B$6
+# ① 下面：每月结账日期（A 月份 B 结账日期 C 说明），第 CL_R0 行＝1 月 … 第 CL_R0+11 行＝12 月
+#   x 月填了结账日期：x 月送货（或单据日期）、收单日期（空＝送货日期）晚于这个结账日期的送货单 / 外发单，算到收单那个月（x 月的数不再变）；
+#   结账日期填了就不要再改。只管供应商单据（送货单、外发），别的表补录到已结账的月份照样会改动那个月。
+CL_HDR = B_R0 + len(PARAMS) + 1
+CL_R0 = CL_HDR + 1
+CL_R1 = CL_R0 + 11
+CL_DATE = 'B'
+CLOSE_DATES = rng(SH_BASE, CL_DATE, CL_R0, CL_R1)
 # ② 资金账户：E 序号 F 账户名称 G 类型 H 科目编码(自动) I 期初余额 J 账号/说明 K 当前余额(自动) L 实际余额(手填) M 差额(自动)
 AC_R0, AC_R1 = 5, 12            # 8 个
 AC_SEQ, AC_NAME, AC_TYPE, AC_CODE, AC_OPEN, AC_NO, AC_NOW, AC_REAL, AC_DIFF = 'E F G H I J K L M'.split()
@@ -233,12 +241,17 @@ ST_HDR, ST_R0, ST_R1 = 4, 5, 404          # 400 个款式
 # 自动（看得见）：L 本年订单双数 M 已交双数 N 未交双数 O 本年交货收入 P 本年成本 Q 单双成本 R 毛利率
 (ST_OQ, ST_DQ, ST_UQ, ST_REV, ST_COST, ST_UNIT, ST_GM) = [CL(i) for i in range(12, 19)]
 # ★ 隐藏：T 材料分摊权重 w_mat  U 工费分摊权重 w_lab（按【基础资料】「公共成本分摊依据」算好）  V 款式编码规范写法（去空格）
-ST_WM, ST_WL, ST_KEY = 'T', 'U', 'V'
+#   W REL 「停产」后直接成本改按公共分摊的起始月：状态＝停产 → 这个款最后一个有交货双数的月份＋1（一双没交过＝1）；否则 13（不改）
+#   各来源的 ATYPE：「用在哪」是登记的款式、且 成本月 < 这个款的 REL → "款"；否则 "公"（停产款以后的专用成本按公共分，不再挂着）
+ST_WM, ST_WL, ST_KEY, ST_REL = 'T', 'U', 'V', 'W'
+# 自动（看得见）：S 在制＝这个款直接记的成本还挂着没转出的（全年直接成本 − 已转出）——不会再做的款把状态改「停产」就转走了
+ST_WIP = 'S'
 # 右边帮手块：「订单里有、档案里还没有的款式」X 序号 Y 款式编码 Z 首次出现的订单号 AA 订单双数（自动列出，最多 ST_NEW_N 个）
 ST_NEW_N = 100
 ST_NSEQ, ST_NCODE, ST_NORD, ST_NQTY = 'X', 'Y', 'Z', 'AA'
 ST_CODES = rng(SH_STY, ST_CODE, ST_R0, ST_R1)
 ST_KEYS = rng(SH_STY, ST_KEY, ST_R0, ST_R1)
+ST_RELS = rng(SH_STY, ST_REL, ST_R0, ST_R1)
 ST_N = ST_R1 - ST_R0 + 1
 
 
@@ -365,8 +378,9 @@ DN_HDR, DN_R0, DN_R1 = 4, 5, 5004          # 5000 行
 #   AG OK 能记账＝1（金额≠0、送货日期是日期、CM≥1）
 #   AH LATEK 晚到排序键：OK=1 且 滞后天数≥【基础资料】收单滞后提醒天数 → LAG×100000＋i，否则 ""（取最晚的用 LARGE）
 # 成本月 CM 规则：送货日期早于建账日期（含上年）→ 收单也在建账前 = 0（✗ 放期初应付）；否则 MAX(收单月, 建账月)（⚠ 建账前送的货、单子后来才到）；
-#   锁账（LOCK>0）且 送货月≤LOCK 且 收单月>LOCK → 收单月（以前月份已结账，晚到的单算到收单那个月）；否则 → 送货月。
-#   下一年度的单 → 0（✗）
+#   送货月填了结账日期（INDEX(CLOSE_DATES, SM) 是日期）且 收单日期（空＝送货日期）> 那个结账日期 → 收单月（⚠ x 月已结账，补来的单算到收单月）；
+#   收单月是次年 → 0（✗）；否则 → 送货月。下一年度的单 → 0（✗）。
+#   ATYPE：L 是登记的款式且 CM < 该款 ST_REL → "款"，否则 "公"。外发同理。
 (DN_AMT, DN_CM, DN_PDATE, DN_ATYPE, DN_CKEY, DN_UNITK, DN_SM, DN_RM, DN_LAG, DN_NAMEK, DN_NFIRST, DN_NNEW, DN_NOTEK, DN_OK,
  DN_LATEK) = 'T U V W X Y Z AA AB AC AD AE AF AG AH'.split()
 DN_N = DN_R1 - DN_R0 + 1
@@ -414,6 +428,13 @@ OD_HDR, OD_R0, OD_R1 = 4, 5, 6004          # 6000 行（一行＝采购单上的
 #   AG OSKEY 订单号|款式（规范写法）
 (OD_CUSTK, OD_DQ, OD_PRICEU, OD_DM, OD_SROW, OD_AMT, OD_OQ, OD_OFIRST, OD_OSFIRST, OD_SNEW, OD_QSEL, OD_OK, OD_CSK, OD_OSKEY) = \
     'T U V W X Y Z AA AB AC AD AE AF AG'.split()
+#   AH SPK 订单号|款式|颜色及规格（s_regs 本表用）
+#   AI NOK 订单号规范写法＝TRIM(B&"")（文本；数字、文字、前后空格都算同一张单）——所有「按订单」的分组、比对一律用这一列
+#   AJ OFR 这张单在本表第一次出现的行序号＝IFERROR(MATCH(esc(NOK), NOK 整列,0),0)；OFIRST＝IF(OFR=i,i,"")
+#   AK SMK 款式×月数字键＝IF(OK=1, SROW*16+DM, 0)（_款式月 双数/收入用 SUMIFS(…, SMK, 行号*16+月)）
+#   AL CQ 成本双数：DQ>0 且 备注（H）不含「返修」→ DQ；否则 0。返修重交的只算收入、不算交货双数、不分成本；退货（负数）只冲收入不冲成本
+#   OSKEY＝NOK&"|"&TRIM(E)，QSEL 按 NOK 比；O 单双成本只给 CQ>0 的行；「已交双数」一律用 CQ
+OD_SPK, OD_NOK, OD_OFR, OD_SMK, OD_CQ = 'AH', 'AI', 'AJ', 'AK', 'AL'
 OD_N = OD_R1 - OD_R0 + 1
 
 
@@ -477,9 +498,11 @@ def cost_sum(key, m_crit, comp):
 # 第 r 行 ↔【款式档案】第 r 行（同一个款式）。第 3 行：每块 12 列上面写月份数字 1～12；第 4 行表头。
 SM_HDR, SM_R0, SM_R1 = 4, ST_R0, ST_R1
 SM_CODE, SM_WM, SM_WL = 'A', 'B', 'C'      # 款式编码、材料权重、工费权重（取自款式档案）
-SM_BLOCKS = ['双数', '收入'] + [f'转{c}' for c in COMPS] + [f'本{c}' for c in COMPS] + ['成本', '单双']
-# 双数＝本月交货双数（只算实交>0 的行）；收入＝本月交货金额（含退货负数）
-# 转X＝这个款式「直接记的」组件 X 成本，本月转出的部分：本月有交货 → 到本月累计的直接成本 − 以前月份已转出；没交货 → 0（挂着等交货）
+SM_BLOCKS = ['双数', '收入'] + [f'转{c}' for c in COMPS] + [f'本{c}' for c in COMPS] + ['成本', '单双', '未交']
+# 双数＝本月成本双数（订单明细 CQ 之和，不含退货、返修重交）；收入＝本月交货金额（含退货负数、返修重交）
+# 未交＝本月末还没交的订单双数：MAX(0, 下单日期<下月1日（或空）的订单数量 − 交货日期<下月1日的 CQ)（只在本月双数>0 时算）
+# 转X＝这个款式「直接记的」组件 X 成本，本月转出的部分：本月有交货 → ROUND((到本月累计的直接成本 − 以前已转出) × 双数 ÷ (双数＋未交), 2)；
+#      没交货 → 0（挂着等交货）。也就是按交货进度转：还有没交的订单，就留一部分给后面那几批
 # 本X＝本月这个款式分到的组件 X 成本合计＝转X ＋ 公共成本分到的（成本分摊表「本月分摊」× 本款加权双数 ÷ 全部加权双数）
 # 成本＝四块合计；单双＝成本÷双数
 SM_B0 = 'E'
@@ -576,6 +599,32 @@ JE_BLK = {n: (s, k) for n, s, k in JE_BLOCKS}
 #         S CSK 客户对账单排序键：往来单位＝所选客户、借或贷是 1122、来源不是「收入」块、日期在所选区间 → 日期×100000＋槽位序号，否则 ""
 #           （客户对账单：交货明细取【订单明细】AF，收款等取这一列）
 JE_VALID, JE_GLK, JE_SSK, JE_SLOT, JE_CSK = 'O', 'P', 'Q', 'R', 'S'
+#         T DRI 借方科目在【会计科目表】第几行（1 起，找不到 0）  U CRI 贷方同理
+#         V DK 借方数字键＝IF(VALID=1, DRI*16+月, 0)          W CK 贷方数字键
+JE_DRI, JE_CRI, JE_DK, JE_CK = 'T', 'U', 'V', 'W'
+
+# ─── 科目 × 月 小矩阵（【科目余额表】隐藏列，行＝会计科目表 80 行，每行只算记在这个编码自己身上的，不含下级）───
+#   借方 1～12 月、贷方 1～12 月、借方累计到 1～12 月、贷方累计到 1～12 月，各 12 列；第 3 行写月份数字。
+#   报表取数用 mat()：按编码前缀把行加起来（上级自动含下级）；比 je_sum 扫 1 万多行快得多。
+TBM_D0, TBM_C0, TBM_DC0, TBM_CC0 = 'AA', 'AM', 'AY', 'BK'
+TBM_MROW = 3
+
+
+def tbm_col(block, m):
+    base = {'D': TBM_D0, 'C': TBM_C0, 'DC': TBM_DC0, 'CC': TBM_CC0}[block]
+    return CL(CI(base) + m - 1)
+
+
+def mat(prefix, side, m, cum=False):
+    """科目（编码前缀，文本条件，如 '"5602*"' 或 'A5&"*"'）side='D'/'C' 第 m 月（m 可以是数字或格子）的发生额；cum=True 取 1～m 月累计。
+       m 是格子时用 INDEX 按月取列。"""
+    blk = ('DC' if side == 'D' else 'CC') if cum else side
+    codes = rng(SH_TB, COA_CODE, COA_R0, COA_R1)
+    if isinstance(m, int):
+        c = tbm_col(blk, m)
+        return f'SUMIFS({rng(SH_TB, c, COA_R0, COA_R1)},{codes},{prefix})'
+    area = f"{q(SH_TB)}!${tbm_col(blk, 1)}${COA_R0}:${tbm_col(blk, 12)}${COA_R1}"
+    return f'SUMIFS(INDEX({area},0,{m}),{codes},{prefix})'
 JE_N = JE_R1 - JE_R0 + 1
 # 金额可以是负数（红字：退货、冲回）；借贷不对调。
 
@@ -600,7 +649,8 @@ OQ_SEL = cell(SH_OQ, 'C3')                                   # 订单查询：�
 GL_CODE, GL_UNIT, GL_M1, GL_M2 = (cell(SH_GL, x) for x in ('C3', 'F3', 'I3', 'K3'))   # 明细账：科目编码、往来单位(可空)、起止月
 SS_UNIT, SS_D1, SS_D2 = (cell(SH_SST, x) for x in ('C3', 'F3', 'H3'))               # 供应商对账单：单位、起止日期
 CS_UNIT, CS_D1, CS_D2 = (cell(SH_CST, x) for x in ('C3', 'F3', 'H3'))               # 客户对账单：客户、起止日期
-BS_M = cell(SH_BS, 'C3')                                      # 资产负债表：报表月份（1～12）
+BS_M = cell(SH_BS, 'C3')                                      # 资产负债表：报表月份（1～12；空着＝最新月份）
+BS_MX = cell(SH_BS, 'Y3')                                     # ★ 资产负债表实际用的月份＝IF(C3 是 1～12, C3, 最新月份)——别的表一律引用这一格
 TB_M = cell(SH_TB, 'C3')                                      # 科目余额表：月份
 HOME_M = cell(SH_HOME, 'C4')                                  # 首页：看哪个月
 BS_CHECK = cell(SH_BS, 'H3')                                  # 资产负债表：平不平（0＝平）

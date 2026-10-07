@@ -51,20 +51,40 @@ def build_base(wb, ctx):
     ws.row_dimensions[B_HDR].height = 32
 
     # ① 参数
-    last_m = 'MAX(' + ','.join(f'MAX({x})' for x in (jr(J_CM), dnr(DN_CM), otr(OT_CM), odr(OD_DM), wgr(WG_CM), mjr(MJ_CM))) + ')'
+    M12 = '{1,2,3,4,5,6,7,8,9,10,11,12}'     # 空行的月份列可能是 ""：用 COUNTIFS 按月数，不拿月份列直接相乘
+    last_m = ('MAX(' + ','.join(f'SUMPRODUCT(MAX((COUNTIFS({a},{M12},{o},1)>0)*{M12}))' for a, o in (
+        (jr(J_CM), jr(J_OK)), (dnr(DN_CM), dnr(DN_OK)), (otr(OT_CM), otr(OT_OK)), (odr(OD_DM), odr(OD_OK)),
+        (wgr(WG_CM), wgr(WG_OK)), (mjr(MJ_CM), mjr(MJ_OK)))) + ')')
+    auto = {
+        '=auto': f'=IF(N({P["DEPTO"]})>=1,MIN(12,INT(N({P["DEPTO"]}))),N({P["LASTM"]}))',
+        '=lockauto': f'=SUMPRODUCT(MAX(ISNUMBER({CLOSE_DATES})*(ROW({CLOSE_DATES})-{CL_R0 - 1})))',
+        '=lastm': f'=MIN(12,{last_m})',
+    }
     for k, lbl, val, fmt, note in PARAMS:
         r = PA_ROW[k]
         put(ws, f'{PA_LBL}{r}', lbl, F_TXTB, align=AL)
-        if val == '=auto':
-            put(ws, f'{PA_VAL}{r}', f'=IF(N({P["DEPTO"]})>=1,MIN(12,INT(N({P["DEPTO"]}))),MIN(12,{last_m}))', F_AUTO, FILL_AUTO, fmt=fmt, align=AC)
+        if val in auto:
+            put(ws, f'{PA_VAL}{r}', auto[val], F_AUTO, FILL_AUTO, fmt=fmt, align=AC)
         else:
             put(ws, f'{PA_VAL}{r}', val, F_IN, FILL_IN, fmt=fmt, align=AC)
         put(ws, f'{PA_NOTE}{r}', note, F_NOTE, align=ALW)
-        ws.row_dimensions[r].height = max(ws.row_dimensions[r].height or 15, 16 * (-(-len(note) // 24)) + 4)
+        ws.row_dimensions[r].height = max(ws.row_dimensions[r].height or 15, 15 * (-(-len(note) // 22)) + 6)
+    # ⑩ 每月结账日期
+    section(ws, CL_HDR, 'A', 'C', '⑩ 每月结账日期（只管送货单 / 外发单晚到）', 'FF595959')
+    for m in range(1, 13):
+        r = CL_R0 + m - 1
+        put(ws, f'A{r}', f'{m}月', F_TXTB, align=AC)
+        put(ws, f'{CL_DATE}{r}', None, F_IN, FILL_IN, fmt=DATE, align=AC)
+        put(ws, f'C{r}', None, F_NOTE, align=ALW)
+    ws[f'C{CL_R0}'] = ('x 月的报表已经报给老板、不想再变了，就在 x 月这一行填结账那天（比如 8 月填 2026/9/5）。'
+                       '以后才收到的 x 月送货单 / 外发单，算到收单那个月，x 月的数不再变。填了就不要改、不要清。')
+    ws.merge_cells(f'C{CL_R0}:C{CL_R0 + 5}')
+    ws[f'C{CL_R0 + 6}'] = '只管供应商单据晚到；工资、交货、收付款、手工分录补录到已结账的月份，照样会改动那个月。'
+    ws.merge_cells(f'C{CL_R0 + 6}:C{CL_R1}')
+    dv_date(ws, f'{CL_DATE}{CL_R0}:{CL_DATE}{CL_R1}')
     dv_list(ws, P['BASIS'].split('!')[1].replace('$', ''), '"系数,标准成本"', '系数 或 标准成本')
     dv_list(ws, P['PERIOD'].split('!')[1].replace('$', ''), '"按收入,不摊"', '按收入 或 不摊')
     dv_list(ws, P['CUST'].split('!')[1].replace('$', ''), f'={UN_NAMES}', '【往来单位】里的客户', stop=False)
-    _dv_whole(ws, P['LOCK'].split('!')[1].replace('$', ''), 0, 12, '填 0～12')
     _dv_whole(ws, P['YEAR'].split('!')[1].replace('$', ''), 2000, 2100, '填年份，比如 2026')
     _dv_whole(ws, P['LAGD'].split('!')[1].replace('$', ''), 1, 999, '填天数')
     _dv_whole(ws, P['DEPTO'].split('!')[1].replace('$', ''), 1, 12, '填 1～12，或者空着')
