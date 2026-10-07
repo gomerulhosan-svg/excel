@@ -85,6 +85,8 @@ PARAMS = [  # (键, 项目, 默认值, 数字格式, 说明)
     ('PERIOD', '期间费用摊到款式', '按收入', '@', '按收入＝【款式成本利润】把管理、销售、财务费用按收入比例摊到各款，算出「净利」；不摊＝只算到毛利'),
     ('CUST', '默认客户', '电商部', '@', '【订单明细】客户空着的，算这个客户'),
     ('LAGD', '收单滞后提醒天数', 30, '0', '收单日期比送货日期晚这么多天以上的，【跨月补单】列出来'),
+    ('DEPTO', '折旧提到几月', None, '0', '空着＝自动：提到有业务（流水、送货、交货、工资）的最后一个月，后面还没到的月份先不提；要提到某个月就填几'),
+    ('DEPTOX', '折旧实际提到', '=auto', '0"月"', '自动算的（上一格空着时＝有业务的最后一个月）'),
 ]
 PA_ROW = {k: B_R0 + i for i, (k, *_r) in enumerate(PARAMS)}
 P = {k: f"{q(SH_BASE)}!${PA_VAL}${r}" for k, r in PA_ROW.items()}   # P['YEAR'] → '基础资料'!$B$6
@@ -163,7 +165,8 @@ MC_NONE = '未分类'
 FA_R0, FA_R1 = 5, 34            # 30 个
 FA_SEQ, FA_NAME, FA_DATE, FA_COST, FA_MON, FA_RES, FA_USE, FA_DEP0, FA_DEPM, FA_NOTE = 'AK AL AM AN AO AP AQ AR AS AT'.split()
 FA_USES = {'车间': '4101', '管理': '5602', '销售': '5601'}
-# ★ 隐藏：AV～BG ＝ 这台设备本年 1～12 月各月的折旧额（已考虑：购入次月起提、提满原值×(1−残值率)为止、建账日期以前的月份不提）
+# ★ 隐藏：AV～BG ＝ 这台设备本年 1～12 月各月的折旧额（已考虑：购入次月起提、提满原值×(1−残值率)为止、建账日期以前的月份不提、
+#   「折旧实际提到」以后的月份不提）
 FA_M1 = 'AV'                    # 1 月在 AV，12 月在 BG
 def fa_mcol(m):                 # 第 m 月折旧额所在列
     return CL(CI(FA_M1) + m - 1)
@@ -361,9 +364,9 @@ DN_HDR, DN_R0, DN_R1 = 4, 5, 5004          # 5000 行
 #   AE NNEW ★序号键：第一次出现、OK=1 且不在【品名档案】→ i，否则 ""     AF NOTEK 供应商|单号
 #   AG OK 能记账＝1（金额≠0、送货日期是日期、CM≥1）
 #   AH LATEK 晚到排序键：OK=1 且 滞后天数≥【基础资料】收单滞后提醒天数 → LAG×100000＋i，否则 ""（取最晚的用 LARGE）
-# 成本月 CM 规则：送货日期在上年 → 1（⚠ 上年的单，算到 1 月）；
+# 成本月 CM 规则：送货日期早于建账日期（含上年）→ 收单也在建账前 = 0（✗ 放期初应付）；否则 MAX(收单月, 建账月)（⚠ 建账前送的货、单子后来才到）；
 #   锁账（LOCK>0）且 送货月≤LOCK 且 收单月>LOCK → 收单月（以前月份已结账，晚到的单算到收单那个月）；否则 → 送货月。
-#   送货日期早于建账日期 → 0（✗ 建账前的单子放期初应付）
+#   下一年度的单 → 0（✗）
 (DN_AMT, DN_CM, DN_PDATE, DN_ATYPE, DN_CKEY, DN_UNITK, DN_SM, DN_RM, DN_LAG, DN_NAMEK, DN_NFIRST, DN_NNEW, DN_NOTEK, DN_OK,
  DN_LATEK) = 'T U V W X Y Z AA AB AC AD AE AF AG AH'.split()
 DN_N = DN_R1 - DN_R0 + 1
@@ -455,7 +458,7 @@ COST_SRC = [
     (SH_DN, DN_CKEY, DN_CM, DN_AMT, DN_R0, DN_R1, ('材料',)),
     (SH_OUT, OT_CKEY, OT_CM, OT_AMT, OT_R0, OT_R1, ('外发',)),
     (SH_WAGE, WG_CKEY, WG_CM, WG_AMT, WG_R0, WG_R1, ('人工', '制造')),
-    (SH_CASH, J_CKEY, J_CM, J_CAMT, J_R0, J_R1, ('材料', '外发', '制造')),
+    (SH_CASH, J_CKEY, J_CM, J_CAMT, J_R0, J_R1, ('材料', '外发', '人工', '制造')),
     (SH_MJ, MJ_CKEY, MJ_CM, MJ_CAMT, MJ_R0, MJ_R1, ('材料', '外发', '人工', '制造')),
 ]
 

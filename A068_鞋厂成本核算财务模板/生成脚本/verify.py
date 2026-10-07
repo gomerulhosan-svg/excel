@@ -51,6 +51,7 @@ class Model:
         self.cust0 = str(b[P['CUST'].split('!')[1].replace('$', '')].value or '').strip()
         self.lagd = num(b[P['LAGD'].split('!')[1].replace('$', '')].value)
         self.open_m = self.open.month if self.open.year == self.year else 1
+        self.depto_in = num(b[P['DEPTO'].split('!')[1].replace('$', '')].value) or 0
         # 账户
         self.acc = {}
         nb = npay = 0
@@ -84,7 +85,8 @@ class Model:
             nm = b[f'{DP_NAME}{r}'].value
             if nm:
                 self.depts[nm] = b[f'{DP_TYPE}{r}'].value
-        # 固定资产月折旧
+        # 固定资产月折旧（提到「折旧提到几月」；空着＝有业务的最后一个月，见 _last_month）
+        self.depto = min(12, int(self.depto_in)) if self.depto_in >= 1 else self._last_month()
         self.dep = defaultdict(float)          # (m, use) → 折旧
         self.fa_before = [0.0, 0.0]
         for r in range(FA_R0, FA_R1 + 1):
@@ -105,7 +107,7 @@ class Model:
             dm = d2(cost * (1 - res) / mon)
             start = d0.year * 12 + d0.month + 1
             t_open = self.open.year * 12 + self.open.month
-            for m in range(1, 13):
+            for m in range(1, self.depto + 1):
                 t = self.year * 12 + m
                 if t < t_open or t < start:
                     continue
@@ -153,6 +155,23 @@ class Model:
         self._wages()
         self._mj()
         self._engine()
+
+    def _last_month(self):
+        """有业务的最后一个月：资金日记账、送货单、外发、订单交货、工资、手工分录里出现的最大月份（本年度的日期）"""
+        wb, best = self.wb, 0
+        for sh, col, r0, r1 in ((SH_CASH, J_DATE, J_R0, J_R1), (SH_DN, DN_DATE, DN_R0, DN_R1), (SH_OUT, OT_DATE, OT_R0, OT_R1),
+                                (SH_ORD, OD_DDATE, OD_R0, OD_R1), (SH_MJ, MJ_DATE, MJ_R0, MJ_R1)):
+            ws = wb[sh]
+            for r in range(r0, r1 + 1):
+                v = ws[f'{col}{r}'].value
+                if isdate(v) and todate(v).year == self.year:
+                    best = max(best, todate(v).month)
+        ws = wb[SH_WAGE]
+        for r in range(WG_R0, WG_R1 + 1):
+            v = ws[f'{WG_MON}{r}'].value
+            if isinstance(v, (int, float)) and 1 <= v <= 12:
+                best = max(best, int(v))
+        return min(12, best)
 
     def month_of(self, d):
         if not isdate(d):

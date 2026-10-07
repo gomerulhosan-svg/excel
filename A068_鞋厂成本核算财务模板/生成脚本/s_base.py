@@ -51,10 +51,14 @@ def build_base(wb, ctx):
     ws.row_dimensions[B_HDR].height = 32
 
     # ① 参数
+    last_m = 'MAX(' + ','.join(f'MAX({x})' for x in (jr(J_CM), dnr(DN_CM), otr(OT_CM), odr(OD_DM), wgr(WG_CM), mjr(MJ_CM))) + ')'
     for k, lbl, val, fmt, note in PARAMS:
         r = PA_ROW[k]
         put(ws, f'{PA_LBL}{r}', lbl, F_TXTB, align=AL)
-        put(ws, f'{PA_VAL}{r}', val, F_IN, FILL_IN, fmt=fmt, align=AC)
+        if val == '=auto':
+            put(ws, f'{PA_VAL}{r}', f'=IF(N({P["DEPTO"]})>=1,MIN(12,INT(N({P["DEPTO"]}))),MIN(12,{last_m}))', F_AUTO, FILL_AUTO, fmt=fmt, align=AC)
+        else:
+            put(ws, f'{PA_VAL}{r}', val, F_IN, FILL_IN, fmt=fmt, align=AC)
         put(ws, f'{PA_NOTE}{r}', note, F_NOTE, align=ALW)
         ws.row_dimensions[r].height = max(ws.row_dimensions[r].height or 15, 16 * (-(-len(note) // 24)) + 4)
     dv_list(ws, P['BASIS'].split('!')[1].replace('$', ''), '"系数,标准成本"', '系数 或 标准成本')
@@ -63,6 +67,7 @@ def build_base(wb, ctx):
     _dv_whole(ws, P['LOCK'].split('!')[1].replace('$', ''), 0, 12, '填 0～12')
     _dv_whole(ws, P['YEAR'].split('!')[1].replace('$', ''), 2000, 2100, '填年份，比如 2026')
     _dv_whole(ws, P['LAGD'].split('!')[1].replace('$', ''), 1, 999, '填天数')
+    _dv_whole(ws, P['DEPTO'].split('!')[1].replace('$', ''), 1, 12, '填 1～12，或者空着')
     dv_date(ws, P['OPEN'].split('!')[1].replace('$', ''))
 
     # ② 资金账户
@@ -162,7 +167,7 @@ def build_base(wb, ctx):
         start = f'(YEAR(${FA_DATE}{r})*12+MONTH(${FA_DATE}{r})+1)'
         for m in range(1, 13):
             t = f'({yr}*12+{m})'
-            ws[f'{fa_mcol(m)}{r}'] = (f'=IF(OR(${FA_NAME}{r}="",NOT(ISNUMBER(${FA_DATE}{r})),N({dm})=0),0,'
+            ws[f'{fa_mcol(m)}{r}'] = (f'=IF(OR(${FA_NAME}{r}="",NOT(ISNUMBER(${FA_DATE}{r})),N({dm})=0,{m}>N({P["DEPTOX"]})),0,'
                                       f'IF(OR({t}<{t_open},{t}<{start}),0,ROUND(MAX(0,MIN(N({dm}),'
                                       f'N({cost})*(1-N({res}))-N({dep0})-N({dm})*({t}-MAX({start},{t_open})))),2)))')
             ws[f'{fa_mcol(m)}{r}'].font = F_HELP
@@ -316,7 +321,7 @@ def build_style(wb, ctx):
         ws[f'{ST_WL}{r}'] = f'=IF({ST_KEY}{r}="",0,IF({basis}="标准成本",IF(N({ST_SDL}{r})>0,{ST_SDL}{r},{kl}*{avg_l}),{kl}))'
         e = f'{ST_KEY}{r}=""'
         ws[f'{ST_OQ}{r}'] = f'=IF({e},"",SUMIFS({odr(OD_OQ)},{odr(OD_SROW)},{k}))'
-        ws[f'{ST_DQ}{r}'] = f'=IF({e},"",SUMIFS({odr(OD_DQ)},{odr(OD_SROW)},{k},{odr(OD_DM)},">0",{odr(OD_DQ)},">0"))'
+        ws[f'{ST_DQ}{r}'] = f'=IF({e},"",SUMIFS({odr(OD_DQ)},{odr(OD_SROW)},{k},{odr(OD_DM)},">0",{odr(OD_DQ)},">0",{odr(OD_OK)},1))'
         ws[f'{ST_UQ}{r}'] = f'=IF({e},"",MAX(0,N({ST_OQ}{r})-N({ST_DQ}{r})))'
         ws[f'{ST_REV}{r}'] = f"=IF({e},\"\",SUM({q(SH_SM)}!{sm_blk('收入', r)}))"
         ws[f'{ST_COST}{r}'] = f"=IF({e},\"\",SUM({q(SH_SM)}!{sm_blk('成本', r)}))"
@@ -399,11 +404,12 @@ def build_mat(wb, ctx):
         ws[f'{MT_KEY}{r}'] = f'=IF(TRIM({nm}&"")="","",{norm(nm)})'
         ws[f'{MT_KEY}{r}'].font = F_HELP
         k = f'{MT_KEY}{r}'
-        ws[f'{MT_QTY}{r}'] = f'=IF({k}="","",SUMIFS({dnr(DN_QTY)},{dnr(DN_NAMEK)},{k},{dnr(DN_OK)},1))'
-        ws[f'{MT_AMT}{r}'] = f'=IF({k}="","",SUMIFS({dnr(DN_AMT)},{dnr(DN_NAMEK)},{k},{dnr(DN_OK)},1))'
+        ws[f'{MT_QTY}{r}'] = f'=IF({k}="","",SUMIFS({dnr(DN_QTY)},{dnr(DN_NAMEK)},{esc(k)},{dnr(DN_OK)},1))'
+        ws[f'{MT_AMT}{r}'] = f'=IF({k}="","",SUMIFS({dnr(DN_AMT)},{dnr(DN_NAMEK)},{esc(k)},{dnr(DN_OK)},1))'
         ws[f'{MT_AVG}{r}'] = f'=IF({k}="","",IF(N({MT_QTY}{r})=0,"",ROUND({MT_AMT}{r}/{MT_QTY}{r},2)))'
-        last = (f'AGGREGATE(14,6,(ROW({dnr(DN_NAMEK)})-{DN_R0 - 1})/(({dnr(DN_NAMEK)})={k})/({dnr(DN_PRICE)}>0)/({dnr(DN_OK)}=1),1)')
-        ws[f'{MT_LAST}{r}'] = f'=IF({k}="","",IFERROR(INDEX({dnr(DN_PRICE)},{last}),""))'
+        last = (f'SUMPRODUCT(MAX(({dnr(DN_NAMEK)}={k})*ISNUMBER({dnr(DN_PRICE)})*({dnr(DN_PRICE)}>0)*({dnr(DN_OK)}=1)'
+                f'*(ROW({dnr(DN_NAMEK)})-{DN_R0 - 1})))')
+        ws[f'{MT_LAST}{r}'] = f'=IF({k}="","",IF({last}=0,"",INDEX({dnr(DN_PRICE)},{last})))'
     cols = [MT_SEQ, MT_NAME, MT_CAT, MT_UNIT, MT_SUP, MT_REFP, MT_NOTE, MT_QTY, MT_AMT, MT_AVG, MT_LAST]
     style_rows(ws, MT_R0, MT_R1, cols, auto=[MT_SEQ, MT_QTY, MT_AMT, MT_AVG, MT_LAST],
                fmts={MT_REFP: MONEY, MT_QTY: '#,##0.##;[Red]-#,##0.##;"-"', MT_AMT: MONEY, MT_AVG: MONEY, MT_LAST: MONEY},
@@ -425,7 +431,8 @@ def build_mat(wb, ctx):
         ws[f'{MT_NSEQ}{r}'] = f'=IF({idx}=0,"",{k})'
         ws[f'{MT_NNAME}{r}'] = f'=IF({MT_NSEQ}{r}="","",INDEX({dnr(DN_NAME)},{idx})&"")'
         ws[f'{MT_NUNIT}{r}'] = f'=IF({MT_NSEQ}{r}="","",INDEX({dnr(DN_UNIT)},{idx})&"")'
-        ws[f'{MT_NAMT}{r}'] = f'=IF({MT_NSEQ}{r}="","",SUMIFS({dnr(DN_AMT)},{dnr(DN_NAMEK)},INDEX({dnr(DN_NAMEK)},{idx}),{dnr(DN_OK)},1))'
+        nk = esc(f'INDEX({dnr(DN_NAMEK)},{idx})')
+        ws[f'{MT_NAMT}{r}'] = f'=IF({MT_NSEQ}{r}="","",SUMIFS({dnr(DN_AMT)},{dnr(DN_NAMEK)},{nk},{dnr(DN_OK)},1))'
     style_rows(ws, MT_R0, MT_R0 + MT_NEW_N - 1, [MT_NSEQ, MT_NNAME, MT_NUNIT, MT_NAMT], auto=[MT_NSEQ, MT_NNAME, MT_NUNIT, MT_NAMT],
                fmts={MT_NAMT: MONEY}, aligns={MT_NNAME: AL})
     ws.auto_filter.ref = f'A{MT_HDR}:{MT_LAST}{MT_R1}'
