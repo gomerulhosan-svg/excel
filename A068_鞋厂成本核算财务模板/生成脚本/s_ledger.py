@@ -9,6 +9,23 @@ from common import *
 from layout import *          # 注意：layout 的 C_RPT 等颜色覆盖 common 的同名常量
 
 YR, OPEN, CO = P['YEAR'], P['OPEN'], P['CO']
+# 「最新月份」：【基础资料】LASTM（有业务的最后一个月）；还没有任何业务（LASTM＝0）时＝建账月——保证落在 1～12，后面 INDEX(…,月) 不会取到 0
+LATEST = (f'MAX(IF(ISNUMBER({OPEN}),IF(YEAR({OPEN})={YR},MONTH({OPEN}),1),1),'
+          f'MIN(12,INT(N({P["LASTM"]}))))')
+
+
+def _mx(sel, empty='latest'):
+    """选择格 sel 填的是 1～12 就用它（取整），否则（空着 / 填错）用最新月份（empty='latest'）或 1（empty=1）"""
+    dft = LATEST if empty == 'latest' else str(empty)
+    return f'IF(AND(ISNUMBER({sel}),{sel}>=1,{sel}<13),INT({sel}),{dft})'
+
+
+def _mx_note(sel, mx):
+    """选择格旁边的说明：填了 1～12 不显示；空着＝最新月份 x 月；填错了提醒"""
+    return (f'IF(AND(ISNUMBER({sel}),{sel}>=1,{sel}<13),"",IF(TRIM({sel}&"")="","空着＝最新月份 "&{mx}&" 月",'
+            f'"⚠ 要选 1～12：现在按最新月份 "&{mx}&" 月"))')
+
+
 KPI_FILL = fill('FFD9E1F2')
 F_VAL = Font(name=YH, sz=10, bold=True, color='FF1F3864')
 F_GOOD = Font(name=YH, sz=11, bold=True, color='FF00B050')
@@ -28,6 +45,20 @@ def _good_bad(ws, coord):
     """√ 开头绿字、✗ 开头红底"""
     ws.conditional_formatting.add(coord, FormulaRule(formula=[f'LEFT({coord.split(":")[0]},1)="✗"'], fill=FILL_WARN, font=F_BAD))
     ws.conditional_formatting.add(coord, FormulaRule(formula=[f'LEFT({coord.split(":")[0]},1)="√"'], font=F_GOOD))
+
+
+# ─── 本模块几张表之间互相用的格子（都在 s_ledger 自己的表上，别的模块不用） ───
+# 科目余额表：A 列＝会计科目表同一行的编码（TRIM 成文本）；隐藏 L～Q 每行「只算记在本科目自己身上的」（不含下级）：
+#   L 本科目自己的年初（借正贷负；预置的「下级合计」科目 1002/1012/4001/5401 写 0）  M/N 所选月本科目借/贷
+#   O/P 1～所选月本科目借/贷累计  Q 本科目自己的月末余额（借正贷负）；L3＝实际用的月份（C3 空着＝最新月份）
+TB_CODES = rng(SH_TB, COA_CODE, COA_R0, COA_R1)
+TB_OWN0, TB_OD, TB_OC, TB_ODC, TB_OCC, TB_OWNE = 'L', 'M', 'N', 'O', 'P', 'Q'
+TB_MXC = 'L3'
+TB_MX = cell(SH_TB, TB_MXC)
+# 明细账：隐藏 N3＝实际起始月（I3 空＝1）、O3＝实际截止月（K3 空＝最新月份）——记账分录 GLK 按这两格筛
+GL_M1X, GL_M2X = cell(SH_GL, 'N3'), cell(SH_GL, 'O3')
+SUM_PARENTS = {c for c, _n, _cl, _d, _u, _l, src in COA if src == 'sum'}
+PRESET_ROW = {COA_R0 + i: c[0] for i, c in enumerate(COA)}      # 会计科目表预置科目所在行
 
 
 # ═══════════════════════════ 记账分录 ═══════════════════════════
@@ -163,14 +194,15 @@ def build_je(wb, ctx):
              (JE_FEE, '费用项目'), (JE_STY, '款式')]
     header(ws, JE_HDR, heads, HDR)
     hidden = [(JE_VALID, 'VALID 有效'), (JE_GLK, 'GLK 明细账键'), (JE_SSK, 'SSK 供应商对账键'), (JE_SLOT, 'SLOT 槽位'),
-              (JE_CSK, 'CSK 客户对账键')]
+              (JE_CSK, 'CSK 客户对账键'), (JE_DRI, 'DRI 借方科目行'), (JE_CRI, 'CRI 贷方科目行'), (JE_DK, 'DK 借方键'),
+              (JE_CK, 'CK 贷方键')]
     for c, t in hidden:
         ws[f'{c}{JE_HDR}'] = t
         ws[f'{c}{JE_HDR}'].font = F_HELP
 
     # 选择格（别的表上的）
     gsel, gun = f'TRIM({GL_CODE}&"")', f'TRIM({GL_UNIT}&"")'
-    gm1, gm2 = f'N({GL_M1})', f'IF(N({GL_M2})=0,12,N({GL_M2}))'
+    gm1, gm2 = GL_M1X, GL_M2X                   # 明细账实际起止月（空着＝1 / 最新月份）
     ssu, csu = f'TRIM({SS_UNIT}&"")', f'TRIM({CS_UNIT}&"")'
 
     for name, s, n in JE_BLOCKS:
@@ -181,9 +213,15 @@ def build_je(wb, ctx):
             else:
                 f = _sys_row(name, j, r)
             C, D, F_, H_, J, K, O, R_ = (f'{c}{r}' for c in (JE_DATE, JE_M, JE_DR, JE_CR, JE_AMT, JE_UNIT, JE_VALID, JE_SLOT))
+            T_, U_ = f'{JE_DRI}{r}', f'{JE_CRI}{r}'
             f[JE_SRC] = f'=IF({O}=1,"{name}","")'
-            f[JE_DRN] = f'=IF({F_}="","",IFERROR(INDEX({COA_NAMES_R},MATCH({F_},{COA_CODES},0))&"","？"&{F_}))'
-            f[JE_CRN] = f'=IF({H_}="","",IFERROR(INDEX({COA_NAMES_R},MATCH({H_},{COA_CODES},0))&"","？"&{H_}))'
+            # 科目在会计科目表第几行：跟【科目余额表】A 列（已 TRIM 成文本）比，编码带空格、被录成数字也认得出
+            f[JE_DRI] = f'=IF({F_}="",0,IFERROR(MATCH({F_},{TB_CODES},0),0))'
+            f[JE_CRI] = f'=IF({H_}="",0,IFERROR(MATCH({H_},{TB_CODES},0),0))'
+            f[JE_DK] = f'=IF({O}=1,{T_}*16+{D},0)'
+            f[JE_CK] = f'=IF({O}=1,{U_}*16+{D},0)'
+            f[JE_DRN] = f'=IF({F_}="","",IF({T_}=0,"？"&{F_},INDEX({COA_NAMES_R},{T_})&""))'
+            f[JE_CRN] = f'=IF({H_}="","",IF({U_}=0,"？"&{H_},INDEX({COA_NAMES_R},{U_})&""))'
             f[JE_VALID] = f'=IF(ISNUMBER({D}),IF(AND({D}>=1,{D}<=12,{J}<>0),1,0),0)'
             f[JE_SLOT] = f'=ROW()-{JE_HDR}'
             key = f'{C}*100000+{R_}'
@@ -221,82 +259,127 @@ def build_tb(wb, ctx):
     ws = wb[SH_TB]
     widths(ws, {'A': 10, 'B': 26, 'C': 6, 'D': 14, 'E': 14, 'F': 14, 'G': 14, 'H': 14, 'I': 14, 'J': 14, 'K': 2})
     title(ws, '科 目 余 额 表（选月份 · 各科目年初、月初、本月发生、月末、本年累计）', 'J', C_RPT,
-          '💡 C3 选月份（黄格）。每个科目一行，跟【会计科目表】一一对应；上级科目（加粗的一级科目、1002 银行存款、4001 生产成本、5401 主营业务成本）自动包含下级。'
-          '余额按科目方向算：借方科目＝年初＋借−贷，贷方科目＝年初＋贷−借；负数＝跟正常方向相反（比如应付账款是负数＝多付了，变成预付）。'
-          '损益类（收入、成本、费用）不结转（表结法），本年累计就是今年到所选月的发生额，利润看【利润表】。最下面一行核对借贷平不平。')
-    selector(ws, 'B3', '选月份', TB_M.split('!')[1].replace('$', ''), 9, f'={AX_M}', '0"月"', '看哪个月（1～12）')
-    m = TB_M
+          '💡 C3 选月份（空着＝最新月份）。每个科目一行，跟【会计科目表】一一对应；上级科目（加粗的一级科目、1002、4001、5401）自动包含下级（编码以它开头的）。'
+          '余额按科目方向算：借方科目＝年初＋借−贷，贷方科目＝年初＋贷−借；负数＝跟正常方向相反（比如应付是负数＝多付了）。'
+          '损益类不结转（表结法），本年累计＝今年到所选月的发生额，利润看【利润表】。最下面核对借贷平不平（每个科目只算记在它自己编码上的，下级不重复算）。')
+    tb_m = TB_M.split('!')[1].replace('$', '')
+    assert tb_m == 'C3'
+    selector(ws, 'B3', '选月份', tb_m, None, f'={AX_M}', '0"月"', '看哪个月（1～12）；空着＝最新月份')
+    mx = f'${TB_MXC[0]}${TB_MXC[1:]}'                         # 实际用的月份（隐藏 L3）
+    ws[TB_MXC] = f'={_mx("$C$3")}'
+    ws[TB_MXC].font = F_HELP
     _kpi(ws, 'D3', '期初平不平', 'E3', f"={q(SH_COA)}!$C$3")
     _kpi(ws, 'F3', '本月借贷', 'G3', f'=$C${COA_R1 + 4}')        # 最下面「核对」行的结论
     _good_bad(ws, 'E3')
     _good_bad(ws, 'G3')
     ws.merge_cells('G3:H3')
+    put(ws, 'I3', f'={_mx_note("$C$3", mx)}', F_NOTE, align=ALW, border=False)
+    ws.merge_cells('I3:J3')
     ws.row_dimensions[3].height = 26
     heads = [('A', '科目编码'), ('B', '科目名称'), ('C', '方向'), ('D', '年初余额'), ('E', '月初余额'), ('F', '本月借方'),
              ('G', '本月贷方'), ('H', '月末余额'), ('I', '本年借方累计\n（到本月）'), ('J', '本年贷方累计\n（到本月）')]
     header(ws, 4, heads, HDR)
-    ws['L4'], ws['M4'] = '上级编码', '末级'
-    ws['L4'].font = ws['M4'].font = F_HELP
-    assert COA_R0 == 5
+    hid = {TB_OWN0: '本科目年初\n(借正)', TB_OD: '本科目\n本月借', TB_OC: '本科目\n本月贷', TB_ODC: '本科目\n累计借',
+           TB_OCC: '本科目\n累计贷', TB_OWNE: '本科目月末\n(借正)'}
+    for c, t in hid.items():
+        ws[f'{c}4'] = t
+        ws[f'{c}4'].font = F_HELP
+    # 科目×月矩阵（layout TBM_*）：第 3 行写月份，第 4 行块名
+    for blk, lbl in (('D', '借'), ('C', '贷'), ('DC', '借累'), ('CC', '贷累')):
+        for mm in range(1, 13):
+            c = tbm_col(blk, mm)
+            ws[f'{c}{TBM_MROW}'] = mm
+            ws[f'{c}4'] = f'{lbl}{mm}'
+            ws[f'{c}{TBM_MROW}'].font = ws[f'{c}4'].font = F_HELP
+    assert COA_R0 == 5 and TBM_MROW == 3
+    own0 = f'${TB_OWN0}${COA_R0}:${TB_OWN0}${COA_R1}'
+    codes = f'$A${COA_R0}:$A${COA_R1}'
     for r in range(COA_R0, COA_R1 + 1):
         src = lambda c: f'{q(SH_COA)}!{c}{r}'
-        A = f'A{r}'
+        A = f'$A{r}'
         f = {}
         f['A'] = f'=IF(TRIM({src(COA_CODE)}&"")="","",TRIM({src(COA_CODE)}&""))'
         f['B'] = f'=IF({A}="","",{src(COA_NAME)}&"")'
         f['C'] = f'=IF({A}="","",IF(TRIM({src(COA_DIR)}&"")="贷","贷","借"))'
-        f['D'] = f'=IF({A}="","",N({src(COA_OPEN)}))'
-        pre, ytd = A + '&"*"', '"<="&' + m
-        f['I'] = f'=IF({A}="","",{je_sum(pre, "D", ytd)})'
-        f['J'] = f'=IF({A}="","",{je_sum(pre, "C", ytd)})'
-        f['F'] = f'=IF({A}="","",{je_sum(pre, "D", m)})'
-        f['G'] = f'=IF({A}="","",{je_sum(pre, "C", m)})'
+        # 年初：本科目自己的年初（借正贷负）按编码前缀加起来（上级含下级，跟发生额同一个口径），再按方向翻正
+        if PRESET_ROW.get(r) in SUM_PARENTS:
+            f[TB_OWN0] = '=0'
+        else:
+            f[TB_OWN0] = f'=IF({A}="",0,IF($C{r}="贷",-1,1)*N({src(COA_OPEN)}))'
+        f['D'] = f'=IF({A}="","",ROUND(IF($C{r}="贷",-1,1)*SUMIFS({own0},{codes},{A}&"*"),2))'
+        pre = A + '&"*"'
+        f['F'] = f'=IF({A}="","",{mat(pre, "D", mx)})'
+        f['G'] = f'=IF({A}="","",{mat(pre, "C", mx)})'
+        f['I'] = f'=IF({A}="","",{mat(pre, "D", mx, True)})'
+        f['J'] = f'=IF({A}="","",{mat(pre, "C", mx, True)})'
         f['E'] = f'=IF({A}="","",ROUND(IF(C{r}="贷",D{r}+(J{r}-G{r})-(I{r}-F{r}),D{r}+(I{r}-F{r})-(J{r}-G{r})),2))'
         f['H'] = f'=IF({A}="","",ROUND(IF(C{r}="贷",E{r}+G{r}-F{r},E{r}+F{r}-G{r}),2))'
-        f['L'] = f'=TRIM({src(COA_UP)}&"")'
-        f['M'] = f'=IF({A}="",0,N({src(COA_LEAF)}))'
+        # 本科目自己的（不含下级）：从矩阵本行取所选月
+        for col, blk in ((TB_OD, 'D'), (TB_OC, 'C'), (TB_ODC, 'DC'), (TB_OCC, 'CC')):
+            f[col] = f'=IF({A}="",0,INDEX(${tbm_col(blk, 1)}{r}:${tbm_col(blk, 12)}{r},{mx}))'
+        f[TB_OWNE] = f'=ROUND({TB_OWN0}{r}+{TB_ODC}{r}-{TB_OCC}{r},2)'
+        # 矩阵：借 / 贷 1～12 月（只算记在这个编码自己身上的）；累计＝上个月累计＋本月
+        for side, key, cblk in (('D', JE_DK, 'DC'), ('C', JE_CK, 'CC')):
+            for mm in range(1, 13):
+                c = tbm_col(side, mm)
+                f[c] = f'=IF({A}="",0,SUMIFS({jer(JE_AMT)},{jer(key)},(ROW()-{COA_R0 - 1})*16+{c}${TBM_MROW}))'
+                cc = tbm_col(cblk, mm)
+                f[cc] = f'={c}{r}' if mm == 1 else f'=ROUND({tbm_col(cblk, mm - 1)}{r}+{c}{r},2)'
         for col, v in f.items():
             ws[f'{col}{r}'] = v
-        ws[f'L{r}'].font = ws[f'M{r}'].font = F_HELP
+            if col not in set('ABCDEFGHIJ'):
+                ws[f'{col}{r}'].font = F_HELP
     cols = list('ABCDEFGHIJ')
     style_rows(ws, COA_R0, COA_R1, cols, auto=cols, fmts={c: MONEY for c in 'DEFGHIJ'} | {'A': '@'},
                aligns={'A': AL, 'B': AL, **{c: AR for c in 'DEFGHIJ'}})
-    hide(ws, 'L', 'M')
+    hide(ws, *[CL(i) for i in range(CI('L'), CI(tbm_col('CC', 12)) + 1)])
     ws.conditional_formatting.add(f'A{COA_R0}:J{COA_R1}', FormulaRule(
-        formula=[f'AND($A{COA_R0}<>"",$L{COA_R0}="")'], font=Font(name=YH, sz=10, bold=True, color='FF1F3864')))
+        formula=[f'AND($A{COA_R0}<>"",LEN($A{COA_R0})=4)'], font=Font(name=YH, sz=10, bold=True, color='FF1F3864')))
     ws.conditional_formatting.add(f'D{COA_R0}:J{COA_R1}', FormulaRule(
         formula=[f'AND(ISNUMBER(D{COA_R0}),D{COA_R0}<0)'], font=F_RED))
-    # 合计 / 核对
+    # 合计 / 核对：每个科目只取记在它自己编码上的（矩阵本行），全部行加总——不靠「末级」标记，加了下级也不会重复算
     R1, R2, R3 = COA_R1 + 2, COA_R1 + 3, COA_R1 + 4          # 86, 87, 88
-    lf = f'$M${COA_R0}:$M${COA_R1}'
-    put(ws, f'A{R1}', '末级科目合计（借方 / 贷方发生）', F_TXTB, FILL_SUB, align=AL)
+    rg = lambda c: f'${c}${COA_R0}:${c}${COA_R1}'
+    put(ws, f'A{R1}', '全部科目合计（每个科目只算记在它自己编码上的，下级不重复算）', F_TXTB, FILL_SUB, align=AL)
     ws.merge_cells(f'A{R1}:E{R1}')
-    for c in 'FGIJ':
-        put(ws, f'{c}{R1}', f'=SUMIFS({c}${COA_R0}:{c}${COA_R1},{lf},1)', F_AUTOB, FILL_SUB, MONEY, AR)
+    for c, hc in (('F', TB_OD), ('G', TB_OC), ('I', TB_ODC), ('J', TB_OCC)):
+        put(ws, f'{c}{R1}', f'=ROUND(SUM({rg(hc)}),2)', F_AUTOB, FILL_SUB, MONEY, AR)
     put(ws, f'H{R1}', '', F_AUTOB, FILL_SUB)
-    put(ws, f'A{R2}', '末级科目月末余额：借方向合计 / 贷方向合计', F_TXTB, FILL_SUB, align=AL)
+    put(ws, f'A{R2}', '各科目自己的月末余额：借方合计 / 贷方合计', F_TXTB, FILL_SUB, align=AL)
     ws.merge_cells(f'A{R2}:E{R2}')
-    put(ws, f'F{R2}', f'=SUMIFS($H${COA_R0}:$H${COA_R1},{lf},1,$C${COA_R0}:$C${COA_R1},"借")', F_AUTOB, FILL_SUB, MONEY, AR)
-    put(ws, f'G{R2}', f'=SUMIFS($H${COA_R0}:$H${COA_R1},{lf},1,$C${COA_R0}:$C${COA_R1},"贷")', F_AUTOB, FILL_SUB, MONEY, AR)
-    tot_m = f'SUMIFS({jer(JE_AMT)},{jer(JE_M)},{m},{jer(JE_VALID)},1)'
+    put(ws, f'F{R2}', f'=ROUND(SUMIF({rg(TB_OWNE)},">0"),2)', F_AUTOB, FILL_SUB, MONEY, AR)
+    put(ws, f'G{R2}', f'=ROUND(-SUMIF({rg(TB_OWNE)},"<0"),2)', F_AUTOB, FILL_SUB, MONEY, AR)
+    for c in 'HIJ':
+        put(ws, f'{c}{R2}', '', F_AUTOB, FILL_SUB)
+    # 隐藏帮手格（L 列）：记账分录本月合计（直接扫记账分录，抓科目表里没有的编码）、全年用了科目表没有的编码的处数
+    tot_m, n_unk = f'${TB_OWN0}${R1}', f'${TB_OWN0}${R2}'
+    ws[f'{TB_OWN0}{R1}'] = f'=ROUND(SUMIFS({jer(JE_AMT)},{jer(JE_M)},{mx},{jer(JE_VALID)},1),2)'
+    ws[f'{TB_OWN0}{R2}'] = f'=COUNTIFS({jer(JE_VALID)},1,{jer(JE_DRI)},0)+COUNTIFS({jer(JE_VALID)},1,{jer(JE_CRI)},0)'
+    ws[f'{TB_OWN0}{R1}'].font = ws[f'{TB_OWN0}{R2}'].font = F_HELP
     put(ws, f'A{R3}', '核对', F_TXTB, FILL_TOT, align=AL)
-    put(ws, f'B{R3}', '本月：末级借方＝末级贷方＝记账分录本月合计；月末：借方向余额＝贷方向余额', F_NOTE, FILL_TOT, align=ALW)
-    chk = (f'=IF(ROUND(F{R1}-G{R1},2)<>0,"✗ 本月借贷不平：差 "&TEXT(F{R1}-G{R1},"#,##0.00"),'
-           f'IF(ROUND(F{R1}-{tot_m},2)<>0,"✗ 有分录用了【会计科目表】里没有的末级科目：差 "&TEXT({tot_m}-F{R1},"#,##0.00"),'
-           f'IF(ROUND(F{R2}-G{R2},2)<>0,"✗ 月末余额不平：借方向多 "&TEXT(F{R2}-G{R2},"#,##0.00")&"（先看【会计科目表】期初平不平）","√ 平")))')
-    put(ws, f'C{R3}', chk, F_AUTOB, FILL_TOT, align=AL)
+    put(ws, f'B{R3}', '本月：借方合计＝贷方合计＝记账分录本月合计；月末：借方余额＝贷方余额', F_NOTE, FILL_TOT, align=ALW)
+    d1 = f'ROUND({tot_m}-F{R1},2)'
+    c1 = f'ROUND({tot_m}-G{R1},2)'
+    chk = (f'=IF(OR({d1}<>0,{c1}<>0),"✗ 有分录用了【会计科目表】里没有的科目：本月借方少算 "&TEXT({d1},"#,##0.00")&"、贷方少算 "'
+           f'&TEXT({c1},"#,##0.00")&"（【记账分录】名称是「？」的行；去【会计科目表】加上这个科目，或改分录）",'
+           f'IF(ROUND(F{R1}-G{R1},2)<>0,"✗ 本月借贷不平：差 "&TEXT(F{R1}-G{R1},"#,##0.00"),'
+           f'IF(ROUND(F{R2}-G{R2},2)<>0,IF(F{R2}>G{R2},"✗ 月末余额不平：借方多 ","✗ 月末余额不平：贷方多 ")'
+           f'&TEXT(ABS(F{R2}-G{R2}),"#,##0.00")&"（先看【会计科目表】期初平不平）",'
+           f'IF({n_unk}>0,"⚠ 别的月份有 "&{n_unk}&" 处用了【会计科目表】里没有的科目：看【记账分录】名称是「？」的行","√ 平"))))')
+    put(ws, f'C{R3}', chk, F_AUTOB, FILL_TOT, align=ALW)
     ws.merge_cells(f'C{R3}:J{R3}')
     _good_bad(ws, f'C{R3}')
-    ws.row_dimensions[R3].height = 22
+    for a in (f'C{R3}', 'G3'):
+        ws.conditional_formatting.add(a, FormulaRule(formula=[f'LEFT({a},1)="⚠"'], fill=fill('FFFFEB9C')))
+    ws.row_dimensions[R3].height = 30
     ws.freeze_panes = 'C5'
     print_setup(ws, '4:4', landscape=True)
 
 
 # ═══════════════════════════ 明细账 ═══════════════════════════
 GL_N = 500                       # 最多列 500 笔
-GL_R_OPEN, GL_R0 = 5, 6          # 期初行、逐笔第一行
-GL_R1 = GL_R0 + GL_N - 1         # 505
-GL_R_SUM, GL_R_END = GL_R1 + 1, GL_R1 + 2
+GL_R_OPEN, GL_R_SUM, GL_R0 = 5, 6, 7    # 期初行、本期合计→期末余额（放在清单上面，不用往下翻）、逐笔第一行
+GL_R1 = GL_R0 + GL_N - 1         # 506
 GL_SLOTC, GL_BALC = 'N', 'O'     # 隐藏：槽位序号、带符号余额（借正贷负）
 
 
@@ -304,23 +387,29 @@ def build_gl(wb, ctx):
     ws = wb[SH_GL]
     widths(ws, {'A': 6, 'B': 11, 'C': 8, 'D': 36, 'E': 26, 'F': 16, 'G': 13, 'H': 13, 'I': 6, 'J': 13, 'K': 10, 'L': 10,
                 'M': 2})
-    title(ws, '明 细 账（选科目看逐笔：期初 → 每一笔 → 期末）', 'L', C_RPT,
+    title(ws, '明 细 账（选科目看逐笔：期初 → 本期合计、期末 → 每一笔）', 'L', C_RPT,
           '💡 第 3 行黄格：选科目编码（上级科目含下级，比如 1002 含所有银行），往来单位可以空着（空＝全部单位；应付 2202、应收 1122、其他应收 1221、'
-          '其他应付 2241 选了单位，期初就用这一家的期初），再选起止月。下面先是期初余额，然后按日期一笔一笔列出来（最多 500 笔，多了缩小月份范围），'
-          '最后是本期合计和期末余额。「方向」是余额在借方还是贷方：资产、成本、费用一般在借方；负债、权益、收入一般在贷方。')
+          '其他应付 2241 选了单位，期初就用这一家的期初），再选起止月（起始月空着＝1 月，截止月空着＝最新月份）。'
+          '最上面是期初余额，下一行是本期合计和期末余额，再下面按日期一笔一笔列出来（最多 500 笔，多了缩小月份范围；合计、期末是全部的）。'
+          '「方向」是余额在借方还是贷方：资产、成本、费用一般在借方；负债、权益、收入一般在贷方。')
     selector(ws, 'B3', '科目编码', 'C3', '2202', f'={COA_CODES}', '@', '【会计科目表】的科目编码；上级科目含下级')
     put(ws, 'E3', '往来单位', F_KPI_L, fill('FFD9E1F2'), align=AC)
     put(ws, 'F3', None, F_SEL, FILL_SEL, align=AC)
     dv_list(ws, 'F3', f'={UN_NAMES}', '空着＝全部单位', stop=False)
-    selector(ws, 'H3', '起始月', 'I3', 1, f'={AX_M}', '0', '1～12')
-    selector(ws, 'J3', '截止月', 'K3', 12, f'={AX_M}', '0', '1～12')
+    selector(ws, 'H3', '起始月', 'I3', None, f'={AX_M}', '0', '1～12；空着＝1 月')
+    selector(ws, 'J3', '截止月', 'K3', None, f'={AX_M}', '0', '1～12；空着＝最新月份')
     assert (GL_CODE, GL_UNIT, GL_M1, GL_M2) == tuple(cell(SH_GL, x) for x in ('C3', 'F3', 'I3', 'K3'))
+    assert (GL_M1X, GL_M2X) == (cell(SH_GL, f'{GL_SLOTC}3'), cell(SH_GL, f'{GL_BALC}3'))
     sel, un = 'TRIM($C$3&"")', 'TRIM($F$3&"")'
-    m1, m2 = 'N($I$3)', 'IF(N($K$3)=0,12,N($K$3))'
+    m1, m2 = f'${GL_SLOTC}$3', f'${GL_BALC}$3'        # 实际起止月（隐藏 N3、O3）
+    ws[m1.replace('$', '')] = f'={_mx("$I$3", 1)}'
+    ws[m2.replace('$', '')] = f'={_mx("$K$3")}'
+    put(ws, 'J3', f'=IF(AND(ISNUMBER($K$3),$K$3>=1,$K$3<13),"截止月","截止月（空＝"&{m2}&"月）")', F_KPI_L, fill('FFD9E1F2'), align=ACW)
     cnt = f'${GL_SLOTC}$4'
     ws[cnt.replace('$', '')] = f'=COUNT({jer(JE_GLK)})'
-    ws[cnt.replace('$', '')].font = F_HELP
-    crow = f'MATCH({sel},{COA_CODES},0)'
+    for c in (cnt, m1, m2):
+        ws[c.replace('$', '')].font = F_HELP
+    crow = f'MATCH({sel},{TB_CODES},0)'
     put(ws, 'D3', f'=IF({sel}="","← 先选科目编码",IFERROR(INDEX({COA_NAMES_R},{crow})&"（"&IF(TRIM(INDEX({COA_DIRS},{crow})&"")="贷","贷","借")&"方科目）",'
                   f'"？【会计科目表】里没有这个编码"))', F_AUTOB, KPI_FILL, align=AC)
     put(ws, 'G3', '空＝全部单位', F_NOTE, align=AL, border=False)
@@ -330,13 +419,13 @@ def build_gl(wb, ctx):
              ('H', '贷方'), ('I', '方向'), ('J', '余额'), ('K', '费用项目'), ('L', '款式')]
     header(ws, 4, heads, HDR)
 
-    # 期初：年初（选了单位且是往来科目 → 这家的期初）＋ 起始月以前的发生
+    # 期初：年初（选了单位且是往来科目 → 这家的期初；否则本科目和下级自己的年初，跟【科目余额表】同一个口径）＋ 起始月以前的发生
+    # 发生额照样按记账分录前缀取（跟下面逐笔清单同一个口径：科目表里没有的编码也列出来、也算进去，余额才接得上）
     def jsum(side, mcrit):
         col = JE_DR if side == 'D' else JE_CR
         base = f'SUMIFS({jer(JE_AMT)},{jer(col)},{sel}&"*",{jer(JE_M)},{mcrit}'
         return f'IF({un}="",{base}),{base},{jer(JE_UNIT)},{esc(un)}))'
-    dirc = f'IFERROR(TRIM(INDEX({COA_DIRS},{crow})&""),"借")'
-    open_coa = f'IF({dirc}="贷",-1,1)*SUMIF({COA_CODES},{sel},{COA_OPENS})'
+    open_coa = f'SUMIFS({rng(SH_TB, TB_OWN0, COA_R0, COA_R1)},{TB_CODES},{sel}&"*")'      # 借正贷负
     open_un = (f'IF({sel}="2202",-SUMIF({UN_NAMES},{esc(un)},{unr(UN_AP0)}),IF({sel}="1122",SUMIF({UN_NAMES},{esc(un)},{unr(UN_AR0)}),'
                f'IF({sel}="1221",SUMIF({UN_NAMES},{esc(un)},{unr(UN_OR0)}),IF({sel}="2241",-SUMIF({UN_NAMES},{esc(un)},{unr(UN_OP0)}),0))))')
     bo = f'{GL_BALC}{GL_R_OPEN}'
@@ -350,14 +439,36 @@ def build_gl(wb, ctx):
     for c in 'ABCEFGHKL':
         put(ws, f'{c}{r}', None, F_TXT, FILL_SUB)
 
+    # 本期合计 → 期末余额（第 6 行，清单上面）
+    r = GL_R_SUM
+    mc1, mc2 = f'">="&{m1}', f'"<="&{m2}'
+
+    def jsum2(side):
+        col = JE_DR if side == 'D' else JE_CR
+        base = f'SUMIFS({jer(JE_AMT)},{jer(col)},{sel}&"*",{jer(JE_M)},{mc1},{jer(JE_M)},{mc2}'
+        return f'IF({sel}="",0,IF({un}="",{base}),{base},{jer(JE_UNIT)},{esc(un)})))'
+    put(ws, f'D{r}', f'=IF({sel}="","",IF({m1}>{m2},"⚠ 起始月比截止月大：改一下",'
+                     f'"本期合计（"&{m1}&"～"&{m2}&" 月）→ 期末余额"))', F_TXTB, FILL_TOT, align=AL)
+    put(ws, f'G{r}', f'={jsum2("D")}', F_AUTOB, FILL_TOT, MONEY, AR)
+    put(ws, f'H{r}', f'={jsum2("C")}', F_AUTOB, FILL_TOT, MONEY, AR)
+    be = f'{GL_BALC}{r}'
+    ws[be] = f'=ROUND({bo}+G{r}-H{r},2)'
+    ws[be].font = F_HELP
+    put(ws, f'I{r}', f'=IF({sel}="","",IF({be}>0,"借",IF({be}<0,"贷","平")))', F_TXTB, FILL_TOT, align=AC)
+    put(ws, f'J{r}', f'=IF({sel}="","",ABS({be}))', F_AUTOB, FILL_TOT, MONEY, AR)
+    for c in 'ABCEFKL':
+        put(ws, f'{c}{r}', None, F_TXT, FILL_TOT)
+    ws.row_dimensions[GL_R_SUM].height = 20
+
     # 逐笔
     for r in range(GL_R0, GL_R1 + 1):
         S = f'{GL_SLOTC}{r}'
         ix = lambda col: f'INDEX({jer(col)},{S})'
         e = f'{S}=0'
+        k = f'ROW()-{GL_R0 - 1}'
         f = {}
-        f[GL_SLOTC] = f'=IF(ROW()-{GL_R_OPEN}>{cnt},0,MOD(SMALL({jer(JE_GLK)},ROW()-{GL_R_OPEN}),100000))'
-        f['A'] = f'=IF({e},"",ROW()-{GL_R_OPEN})'
+        f[GL_SLOTC] = f'=IF({k}>{cnt},0,MOD(SMALL({jer(JE_GLK)},{k}),100000))'
+        f['A'] = f'=IF({e},"",{k})'
         f['B'] = f'=IF({e},"",{ix(JE_DATE)})'
         f['C'] = f'=IF({e},"",{ix(JE_SRC)}&"")'
         f['D'] = f'=IF({e},"",{ix(JE_MEMO)}&"")'
@@ -367,7 +478,8 @@ def build_gl(wb, ctx):
         f['F'] = f'=IF({e},"",{ix(JE_UNIT)}&"")'
         f['G'] = f'=IF({e},"",IF({drm},{ix(JE_AMT)},0))'
         f['H'] = f'=IF({e},"",IF({crm},{ix(JE_AMT)},0))'
-        f[GL_BALC] = f'=IF({e},"",ROUND(N({GL_BALC}{r - 1})+G{r}-H{r},2))'
+        prev = bo if r == GL_R0 else f'{GL_BALC}{r - 1}'          # 第一笔接期初（第 6 行是期末，不接它）
+        f[GL_BALC] = f'=IF({e},"",ROUND(N({prev})+G{r}-H{r},2))'
         f['I'] = f'=IF({e},"",IF({GL_BALC}{r}>0,"借",IF({GL_BALC}{r}<0,"贷","平")))'
         f['J'] = f'=IF({e},"",ABS({GL_BALC}{r}))'
         f['K'] = f'=IF({e},"",{ix(JE_FEE)}&"")'
@@ -378,36 +490,19 @@ def build_gl(wb, ctx):
     cols = list('ABCDEFGHIJKL')
     style_rows(ws, GL_R0, GL_R1, cols, auto=cols, fmts={'B': DATE, 'G': MONEY, 'H': MONEY, 'J': MONEY, 'A': INT},
                aligns={'D': AL, 'E': AL, 'F': AL, 'G': AR, 'H': AR, 'J': AR})
-    # 合计、期末
-    r = GL_R_SUM
-    put(ws, f'D{r}', f'="本期合计（"&{m1}&"～"&{m2}&" 月）"', F_TXTB, FILL_TOT, align=AL)
-    mc1, mc2 = f'">="&{m1}', f'"<="&{m2}'
-
-    def jsum2(side):
-        col = JE_DR if side == 'D' else JE_CR
-        base = f'SUMIFS({jer(JE_AMT)},{jer(col)},{sel}&"*",{jer(JE_M)},{mc1},{jer(JE_M)},{mc2}'
-        return f'IF({sel}="",0,IF({un}="",{base}),{base},{jer(JE_UNIT)},{esc(un)})))'
-    put(ws, f'G{r}', f'={jsum2("D")}', F_AUTOB, FILL_TOT, MONEY, AR)
-    put(ws, f'H{r}', f'={jsum2("C")}', F_AUTOB, FILL_TOT, MONEY, AR)
-    for c in 'ABCEFIJKL':
-        put(ws, f'{c}{r}', None, F_TXT, FILL_TOT)
-    re_ = GL_R_END
-    be = f'{GL_BALC}{re_}'
-    ws[be] = f'=ROUND({bo}+G{r}-H{r},2)'
-    ws[be].font = F_HELP
-    put(ws, f'D{re_}', '期末余额', F_TXTB, FILL_TOT, align=AL)
-    put(ws, f'I{re_}', f'=IF({sel}="","",IF({be}>0,"借",IF({be}<0,"贷","平")))', F_TXTB, FILL_TOT, align=AC)
-    put(ws, f'J{re_}', f'=IF({sel}="","",ABS({be}))', F_AUTOB, FILL_TOT, MONEY, AR)
-    for c in 'ABCEFGHKL':
-        put(ws, f'{c}{re_}', None, F_TXT, FILL_TOT)
-    put(ws, f'A{re_ + 1}', '期末余额＝期初＋本期借方−本期贷方（借正贷负）；「方向」借＝余额在借方，贷＝在贷方。超过 500 笔时下面只列前 500 笔，但合计、期末是全部的。',
-        F_NOTE, border=False, align=ALW)
-    ws.merge_cells(f'A{re_ + 1}:L{re_ + 1}')
+    # 空着的槽位不画框、不填灰（打印出来不是一页页空框）；有分录的行用条件格式画框、填灰
+    for r in range(GL_R0, GL_R1 + 1):
+        for c in cols:
+            ws[f'{c}{r}'].border = NOBD
+            ws[f'{c}{r}'].fill = FILL_NONE
+    ws.conditional_formatting.add(f'A{GL_R0}:L{GL_R1}', FormulaRule(formula=[f'${GL_SLOTC}{GL_R0}<>0'], border=BD, fill=FILL_AUTO))
     hide(ws, GL_SLOTC, GL_BALC)
     ws.conditional_formatting.add(f'G{GL_R0}:H{GL_R1}', FormulaRule(formula=[f'AND(ISNUMBER(G{GL_R0}),G{GL_R0}=0)'],
                                                                      font=Font(name=YH, sz=10, color='FFD9D9D9')))
-    ws.freeze_panes = 'A5'
+    ws.conditional_formatting.add(f'D{GL_R_SUM}', FormulaRule(formula=[f'LEFT($D${GL_R_SUM},1)="⚠"'], fill=FILL_WARN, font=F_BAD))
+    ws.freeze_panes = f'A{GL_R0}'
     print_setup(ws, '4:4', landscape=True)
+    ws.print_area = f'A1:L{GL_R1}'
 
 
 # ═══════════════════════════ 利润表 ═══════════════════════════
@@ -416,8 +511,8 @@ C_YTD, C_PCT = 'N', 'O'
 
 
 def _pl(code, m, credit):
-    """某科目（前缀，含下级）第 m 月净发生：credit=True 贷−借，否则 借−贷"""
-    d, c = je_sum(f'"{code}*"', 'D', str(m)), je_sum(f'"{code}*"', 'C', str(m))
+    """某科目（前缀，含下级）第 m 月净发生：credit=True 贷−借，否则 借−贷（从【科目余额表】科目×月矩阵取）"""
+    d, c = mat(f'"{code}*"', 'D', m), mat(f'"{code}*"', 'C', m)
     return f'({c}-{d})' if credit else f'({d}-{c})'
 
 
@@ -426,7 +521,9 @@ def build_is(wb, ctx):
     widths(ws, {'A': 30, **{c: 12 for c in MC}, C_YTD: 14, C_PCT: 9})
     title(ws, '利 润 表（1～12 月 ＋ 全年 · 表结法）', C_PCT, C_RPT,
           '💡 全自动。收入按交货月份（【订单明细】交货日期）；营业成本＝每月按【成本分摊表】结转的「本月转出合计」（只算交了货的鞋的成本，没交货的挂在生产成本里）；'
-          '费用按付款 / 计提的月份。晚到的送货单录进去以后，以前月份的成本、利润会跟着变（除非在【基础资料】设了已结账月份）。'
+          '费用按付款 / 计提的月份。晚到的送货单录进去以后，以前月份的成本、利润会跟着变——【基础资料】⑩ 填了那个月的结账日期，'
+          '结账以后才收到的送货单、外发单就算到收单那个月，已结账月份的数不再变。'
+          '注意：结账只管送货单、外发单；已结账的月份补录工资、交货、收付款、手工分录，那个月的数照样会改。'
           '下面几行：毛利率、净利率、交货双数、平均每双成本 / 售价。内账含税口径，不拆增值税。')
     put(ws, 'A3', f'={CO}&"　"&{YR}&" 年度（单位：元）"', F_KPI_L, align=AL, border=False)
     header(ws, 4, [('A', '项  目')] + [(c, f'{i + 1}月') for i, c in enumerate(MC)] + [(C_YTD, '全年'), (C_PCT, '占收入\n（全年）')],
@@ -495,7 +592,7 @@ def build_is(wb, ctx):
         r += 1
     last = r - 1
     put(ws, f'A{last + 2}', '说明：营业收入＝5001 主营业务收入＋5051 其他业务收入（贷−借）；营业成本＝5401 主营业务成本（含 540101～540104）＋5402 其他业务成本；'
-                            '各费用＝对应科目的借−贷（含自己加的下级科目）。交货双数来自【_款式月】（只算实交>0 的行）。'
+                            '各费用＝对应科目的借−贷。交货双数＝成本双数（【订单明细】实交为正、不是返修重交的；退货只冲收入）。'
                             '【会计科目表】里自己加的其他损益科目（编码不在上面这些下面的）不在这张表里，但会算进【资产负债表】的本年利润。',
         F_NOTE, border=False, align=ALW)
     ws.merge_cells(f'A{last + 2}:{C_PCT}{last + 3}')
@@ -511,21 +608,25 @@ BH = dict(code='K', cls='L', dir='M', line='N', key='O', open='P', end='Q')
 BS_LINES_A = ['货币资金', '应收账款', '预付账款', '其他应收款', '存货', '固定资产原价', '减：累计折旧', '长期待摊费用']
 BS_LINES_L = ['短期借款', '应付账款', '预收账款', '应付职工薪酬', '应交税费', '其他应付款', '实收资本', '未分配利润']
 SPLIT = {'1122': (UN_BAR, UN_AR0, 1), '2202': (UN_BAP, UN_AP0, -1), '1221': (UN_BOR, UN_OR0, 1), '2241': (UN_BOP, UN_OP0, -1)}
-SUM_PARENTS = {c for c, _n, _cl, _d, _u, _l, src in COA if src == 'sum'}
 
 
 def build_bs(wb, ctx):
     ws = wb[SH_BS]
     widths(ws, {'A': 22, 'B': 5, 'C': 15, 'D': 15, 'E': 24, 'F': 5, 'G': 15, 'H': 15, 'I': 16, 'J': 2})
     title(ws, '资 产 负 债 表（选月份 · 期末数 ＋ 年初数）', 'H', C_RPT,
-          '💡 C3 选月份（黄格），看那个月月底的家底；年初数＝建账那天的数（【会计科目表】年初余额）。H3 是「资产总计−负债和权益总计」，0 才对。'
+          '💡 C3 选月份（黄格；空着＝最新月份），看那个月月底的家底；年初数＝建账那天的数（【会计科目表】年初余额）。H3 是「资产总计−负债和权益总计」，0 才对。'
           '应收 / 应付按每一家拆方向：供应商多付了的算「预付账款」，客户多付了的算「预收账款」。存货＝车间里还没交货的鞋的成本（生产成本余额，'
           '直接记到款式、款式还没交货的挂在这里）。未分配利润＝年初未分配利润＋今年到所选月的利润（表结法，不做结转）。')
     put(ws, 'A3', f'="编制单位："&{CO}', F_KPI_L, align=AL, border=False)
-    assert BS_M == cell(SH_BS, 'C3') and BS_CHECK == cell(SH_BS, 'H3')
-    selector(ws, 'B3', '月份', 'C3', 9, f'={AX_M}', '0"月"', '看哪个月月底（1～12）')
-    put(ws, 'D3', f'={YR}&"年"&$C$3&"月"&DAY({month_end(YR, "$C$3")})&"日"', F_KPI_L, align=AC, border=False)
-    put(ws, 'E3', '单位：元', F_NOTE, align=AC, border=False)
+    assert BS_M == cell(SH_BS, 'C3') and BS_CHECK == cell(SH_BS, 'H3') and BS_MX == cell(SH_BS, 'Y3')
+    selector(ws, 'B3', '月份', 'C3', None, f'={AX_M}', '0"月"', '看哪个月月底（1～12）；空着＝最新月份')
+    mx = '$Y$3'                                   # ★ BS_MX：实际用的月份（C3 空着＝最新月份）——往来单位隐藏余额列也引用这一格
+    ws['Y3'] = f'={_mx("$C$3")}'
+    ws['Y3'].font = F_HELP
+    ws['Y4'] = '实际月份'
+    ws['Y4'].font = F_HELP
+    put(ws, 'D3', f'={YR}&"年"&{mx}&"月"&DAY({month_end(YR, mx)})&"日"', F_KPI_L, align=AC, border=False)
+    put(ws, 'E3', f'={_mx_note("$C$3", mx)}&"　单位：元"', F_NOTE, align=ACW, border=False)
     put(ws, 'G3', '平不平', F_KPI_L, KPI_FILL, align=AC)
     ws.row_dimensions[3].height = 26
     header(ws, 4, [('A', '资    产'), ('B', '行次'), ('C', '期末数'), ('D', '年初数\n（建账日）'),
@@ -540,7 +641,6 @@ def build_bs(wb, ctx):
     for i, nm in enumerate(BS_LINES_A + BS_LINES_L):
         ws[f'U{5 + i}'] = nm
         ws[f'U{5 + i}'].font = F_HELP
-    preset = {COA_R0 + i: c[0] for i, c in enumerate(COA)}
     for r in range(COA_R0, COA_R1 + 1):
         src = lambda c: f'{q(SH_COA)}!{c}{r}'
         k = f'{K}{r}'
@@ -553,12 +653,14 @@ def build_bs(wb, ctx):
         f[O] = (f'=IF({k}="","",IF({L}{r}="损益","#损益",IF({sp},"#往来",IF(AND({N}{r}<>"",COUNTIF({lines_rng},{N}{r})>0),{N}{r},'
                 f'IF(OR({L}{r}="负债",{L}{r}="权益"),"#其他负债","#其他资产")))))')
         # 年初：上级（下级合计）科目自己不算，免得重复
-        if preset.get(r) in SUM_PARENTS:
+        if PRESET_ROW.get(r) in SUM_PARENTS:
             f[Pc] = f'=0'
         else:
             f[Pc] = f'=IF({k}="",0,IF({M}{r}="贷",-1,1)*N({src(COA_OPEN)}))'
-        mc = f'"<="&$C$3'
-        f[Q] = (f'=IF({k}="",0,ROUND({Pc}{r}+{je_sum(k, "D", mc)}-{je_sum(k, "C", mc)},2))')
+        # 所选月末＝年初＋本科目自己的 1～所选月 借−贷（从【科目余额表】科目×月矩阵同一行取：第 r 行＝会计科目表第 r 行）
+        dcum = f"INDEX({q(SH_TB)}!${tbm_col('DC', 1)}${r}:${tbm_col('DC', 12)}${r},{mx})"
+        ccum = f"INDEX({q(SH_TB)}!${tbm_col('CC', 1)}${r}:${tbm_col('CC', 12)}${r},{mx})"
+        f[Q] = f'=IF({k}="",0,ROUND({Pc}{r}+{dcum}-{ccum},2))'
         for col, v in f.items():
             ws[f'{col}{r}'] = v
             ws[f'{col}{r}'].font = F_HELP
@@ -569,7 +671,7 @@ def build_bs(wb, ctx):
     ws[f'{O}{COA_R1 + 1}'] = '科目表没有的'
     for c in (Q, Pc, O):
         ws[f'{c}{COA_R1 + 1}'].font = F_HELP
-    hide(ws, K, L, M, N, O, Pc, Q, 'R', 'S', 'T', 'U')
+    hide(ws, K, L, M, N, O, Pc, Q, 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y')
 
     def g(line, col):
         return f'SUMIF($O${COA_R0}:$O${COA_R1},"{line}",${col}${COA_R0}:${col}${COA_R1})'
@@ -674,13 +776,14 @@ def build_bs(wb, ctx):
         put(ws, f'{c}{rt}', f'=ROUND({c}{rr["负债合计"]}+{c}{rr["所有者权益合计"]},2)', F_AUTOB, FILL_TOT, MONEY, AR)
     # H3 平不平
     put(ws, 'H3', f'=ROUND(C{rt}-G{rt},2)', F_VAL, KPI_FILL, '#,##0.00;[Red]-#,##0.00;0', AC)
-    put(ws, 'I3', f'=IF(H3<>0,"✗ 期末差 "&TEXT(H3,"#,##0.00"),IF(ROUND(D{rt}-H{rt},2)<>0,"✗ 年初差 "&TEXT(D{rt}-H{rt},"#,##0.00")&"（看【会计科目表】期初）","√ 平"))',
-        F_VAL, KPI_FILL, align=AC)
+    put(ws, 'I3', f'=IF(H3<>0,"✗ 期末差 "&TEXT(H3,"#,##0.00")&IF(ROUND(D{rt}-H{rt},2)<>0,"（年初就差 "&TEXT(D{rt}-H{rt},"#,##0.00")'
+                  f'&"：先把【会计科目表】期初改平）",""),IF(ROUND(D{rt}-H{rt},2)<>0,"✗ 年初差 "&TEXT(D{rt}-H{rt},"#,##0.00")'
+                  f'&"（看【会计科目表】期初）","√ 平"))', F_VAL, KPI_FILL, align=AL)
     _good_bad(ws, 'I3')
     ws.conditional_formatting.add('H3', FormulaRule(formula=['H3<>0'], fill=FILL_WARN, font=F_BAD))
     notes = [
         '说明：',
-        '· 货币资金＝库存现金＋银行存款＋其他货币资金（支付宝 / 微信），所选月份是 10 月以后时应该等于【资金日记账】的总余额（✗ 的行不进账，余额里有、这里没有）。',
+        '· 货币资金＝库存现金＋银行存款＋其他货币资金（支付宝 / 微信），看最新月份时应该等于【资金日记账】的总余额（✗ 的行不进账，余额里有、这里没有）。',
         '· 应收账款 / 预收账款、应付账款 / 预付账款、其他应收款 / 其他应付款：按【往来单位】每一家的余额拆方向，没写单位的按科目余额方向。',
         '· 存货＝生产成本（4001，含直接材料、外发、人工、制造费用）＋制造费用（4101，月末转完应为 0）：都是还没交货的在制品。',
         '· 未分配利润＝利润分配（3104）年初余额＋本年利润（所有损益类科目，年初到所选月）。',
@@ -763,8 +866,8 @@ def build_cf(wb, ctx):
     fund_open = '+'.join(f'SUMIF({COA_CODES},"{c}",{COA_OPENS})' for c in ('1001', '1002', '1012'))
 
     def fund_bal(m):
-        mc = f'"<="&{m}'
-        return '+'.join(f'{je_sum(chr(34) + p + "*" + chr(34), "D", mc)}-{je_sum(chr(34) + p + "*" + chr(34), "C", mc)}'
+        """资金科目 1～m 月累计 借−贷（从【科目余额表】科目×月矩阵的累计列取）"""
+        return '+'.join(f'{mat(chr(34) + p + "*" + chr(34), "D", m, True)}-{mat(chr(34) + p + "*" + chr(34), "C", m, True)}'
                         for p in ('1001', '1002', '1012'))
     r_fund = row('资金科目月末余额（1001 / 1002 / 1012）', lambda m, c: f'ROUND({fund_open}+{fund_bal(12 if c == C_YTD else m)},2)')
     r_diff = row('差额（期末现金−资金科目，应为 0）', lambda m, c: f'ROUND({c}{r_end}-{c}{r_fund},2)', F_AUTOB)

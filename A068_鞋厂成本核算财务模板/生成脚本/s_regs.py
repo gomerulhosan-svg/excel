@@ -7,7 +7,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from common import *
 from layout import *
 
-YR, OPEN, LOCK, LAGD, CUST = (P[k] for k in ('YEAR', 'OPEN', 'LOCK', 'LAGD', 'CUST'))
+YR, OPEN, LAGD, CUST = (P[k] for k in ('YEAR', 'OPEN', 'LAGD', 'CUST'))
 ST = f'MAX({OPEN},DATE({YR},1,1))'                                       # 本账从哪天起（建账日期；在上年就从 1/1 起）
 OM = f'IF(ISNUMBER({OPEN}),IF(YEAR({OPEN})={YR},MONTH({OPEN}),1),1)'     # 建账月：建账日期在本年度＝它的月份，否则 1
 H_IN, H_AUTO = C_IN, 'FF548235'                                          # 表头：录入列蓝、自动列绿
@@ -26,6 +26,16 @@ def _blank(x):
 def _bad(x):
     """填了、但不是数字"""
     return f'AND(TRIM({x}&"")<>"",NOT(ISNUMBER({x})))'
+
+
+def _txtnum(x):
+    """填的是「文本格式的数字」（网银 / 别的表粘贴来的 "12,000.00"、" 50 "、"¥50"：看着是数字，进不了账）"""
+    t = f'SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(TRIM({x}&""),",",""),"¥",""),"￥","")'
+    return f'AND(TRIM({x}&"")<>"",NOT(ISNUMBER({x})),ISNUMBER(--{t}))'
+
+
+def _txtmsg(what):
+    return f'"✗ {what}是文本格式的数字（粘贴来的，看着是数字、算不进账）：选中这几列 → 数据 → 分列 → 完成；或点格子左上角绿色小三角 → 转换为数字"'
 
 
 def _s(text):
@@ -91,13 +101,28 @@ def _dv_whole(ws, sqref, lo, hi, msg):
 
 
 # ─────────────────────────── 送货单 / 外发 共用：金额、成本月、记账日期、成本键…… ───────────────────────────
+def _close(sm):
+    """送货月 sm（1～12）那个月的结账日期（【基础资料】⑩；空＝没结账）。只在 sm 一定是 1～12 的分支里用（INDEX 的 k 不能是 0）"""
+    return f'INDEX({CLOSE_DATES},{sm})'
+
+
+def _srow(sty):
+    """「用在哪」在【款式档案】第几个（1 起；空着或没登记 0）——本表帮手列用"""
+    t = f'TRIM({sty}&"")'
+    return f'=IF({_blank(sty)},0,IFERROR(MATCH({esc(t)},{ST_KEYS},0),0))'
+
+
+def _atype(k, cm):
+    """款 / 公：登记的款式（第 k 个）且 成本月 < 这个款的 REL（停产款最后交货月＋1，没停产 13）→ 款；否则 公。k=0 不碰 INDEX"""
+    return f'IF({k}=0,"公",IF({cm}<INDEX({ST_RELS},{k}),"款","公"))'
+
+
 def _bill_row(ws, r, c, hdr, comp):
-    """c：角色 → 列字母。写 SEQ AMT SM RM LAG CM PDATE ATYPE CKEY UNITK UROW OK LATEK CMV LAGV 这些公式"""
+    """c：角色 → 列字母。写 SEQ AMT SM RM LAG CM PDATE SROW ATYPE CKEY UNITK UROW OK LATEK CMV LAGV 这些公式"""
     g = {k: f'{v}{r}' for k, v in c.items()}
     A, B, C, D = g['SEQ'], g['DATE'], g['RDATE'], g['SUP']
     SM, RM, CM, OK = g['SM'], g['RM'], g['CM'], g['OK']
     i = f'ROW()-{hdr}'
-    lock = f'N({LOCK})'
     ws[A] = f'=IF(COUNTA({c["DATE"]}{r}:{c["NOTE"]}{r})=0,"",{i})'
     ws[g['AMT']] = (f'=IF(ISNUMBER({g["AMTIN"]}),ROUND({g["AMTIN"]},2),'
                     f'IF({_blank(g["AMTIN"])},ROUND(N({g["QTY"]})*N({g["PRICE"]}),2),0))')
@@ -105,14 +130,18 @@ def _bill_row(ws, r, c, hdr, comp):
     ws[RM] = (f'=IF({A}="",0,IF({_blank(C)},{SM},'
               f'IF(ISNUMBER({C}),IF(YEAR({C})<{YR},0,IF(YEAR({C})>{YR},13,MONTH({C}))),-1)))')
     ws[g['LAG']] = f'=IF(AND(ISNUMBER({B}),ISNUMBER({C})),INT({C})-INT({B}),0)'
-    # 成本月：下一年度/不是日期 0；建账前送的（含上年）→ 收单也在建账前 0，否则 MAX(收单月,建账月)；锁账挪到收单月；否则送货月
+    # 成本月：下一年度/不是日期 0；建账前送的（含上年）→ 收单也在建账前 0，否则 MAX(收单月,建账月)；
+    #   否则（这时 SM 一定是 1～12）：送货月填了结账日期、且 收单日期（空＝送货日期）晚于结账日期 → 收单月（次年 → 0 ✗）；否则送货月
+    cd = _close(SM)
+    eff = f'INT(IF(ISNUMBER({C}),{C},{B}))'
     ws[CM] = (f'=IF({A}="",0,IF(OR({SM}<0,{SM}=13),0,IF({B}<{ST},'
               f'IF(ISNUMBER({C}),IF({C}<{ST},0,IF({RM}=13,0,MAX({RM},{OM}))),0),'
-              f'IF(AND({lock}>0,{SM}<={lock},{RM}>{lock}),IF({RM}=13,0,{RM}),{SM}))))')
+              f'IF(ISNUMBER({cd}),IF({eff}>{cd},IF({RM}=13,0,{RM}),{SM}),{SM}))))')
     ws[g['PDATE']] = (f'=IF({CM}<1,"",IF(AND({CM}={SM},{B}>={ST}),INT({B}),'
                       f'IF(IF(ISNUMBER({C}),AND({RM}={CM},{C}>={ST}),FALSE),INT({C}),MAX(DATE({YR},{CM},1),{ST}))))')
     sty = g['STY']
-    ws[g['ATYPE']] = f'=IF({A}="","",IF({_blank(sty)},"公",IF(COUNTIF({ST_KEYS},TRIM({sty}&""))>0,"款","公")))'
+    ws[g['SROW']] = _srow(sty)
+    ws[g['ATYPE']] = f'=IF({A}="","",{_atype(g["SROW"], CM)})'
     ws[g['CKEY']] = f'=IF({OK}=1,IF({g["ATYPE"]}="款","款|"&TRIM({sty}&"")&"|{comp}","公||{comp}"),"")'
     ws[g['UNITK']] = f'=IF({A}="","",TRIM({D}&""))'
     ws[g['UROW']] = f'=IF({g["UNITK"]}="",0,IFERROR(MATCH({esc(g["UNITK"])},{UN_NAMES},0),0))'
@@ -131,6 +160,10 @@ def _bill_checks(r, c, t):
     c_pre = f'IF(ISNUMBER({C}),{C}<{ST},{_blank(C)})'
     q_, p_, a_ = g['QTY'], g['PRICE'], g['AMTIN']
     diff = f'IF(AND(ISNUMBER({q_}),ISNUMBER({p_}),ISNUMBER({a_})),ABS(ROUND({a_}-{q_}*{p_},2)),0)'
+    cd = _close(SM)                         # 下面用到它的几条都在「建账前」那条之后：SM 一定是 1～12
+    cdt = f'TEXT({cd},"m/d")'
+    closed_blank = f'IF({SM}>=1,IF({SM}<=12,IF(ISNUMBER({cd}),{_blank(C)},FALSE),FALSE),FALSE)'
+    k = g['SROW']
     return [
         (f'NOT(ISNUMBER({B}))', _s(f'✗ {t["dname"]}要填成日期（如 2026/9/5）')),
         (f'{SM}=13', _s('✗ 下一年度的单，这本账不记（记到下一年的账里）')),
@@ -140,19 +173,25 @@ def _bill_checks(r, c, t):
         (_bad(C), _s('✗ 收单日期要填成日期（不知道就空着）')),
         (f'IF(ISNUMBER({C}),INT({C})<INT({B}),FALSE)', _s(f'✗ 收单日期比{t["dname"]}还早：看看是不是填反了')),
         (f'{CM}<1', _s('✗ 收单日期在下一年度：这本账不记（记到下一年的账里）')),
-        (f'OR({_bad(q_)},{_bad(p_)},{_bad(a_)})', _s('✗ 数量、单价、金额要填数字')),
+        (f'OR({_txtnum(q_)},{_txtnum(p_)},{_txtnum(a_)})', _txtmsg('数量 / 单价 / 金额')),
+        (f'OR({_bad(q_)},{_bad(p_)},{_bad(a_)})', _s('✗ 数量、单价、金额要填数字（不要带单位、文字）')),
         (f'{AMT}=0', _s('✗ 没有金额（数量×单价是 0，金额也没填）')),
         (pre, f'"⚠ 建账前{t["pre"]}，单子后来才到：算到 "&{CM}&" 月"'),
-        (f'{CM}<>{SM}', f'"⚠ "&{SM}&" 月已结账，补来的单算到收单月 "&{CM}&" 月"'),
+        # 到这里 B 不早于建账日期：CM≠SM 只可能是「送货月已结账、结账日期以后才收到」挪到了收单月（这时 C 一定是日期）
+        (f'{CM}<>{SM}', f'"⚠ "&{SM}&" 月已结账（结账日期 "&{cdt}&"），这张单 "&TEXT({C},"m/d")&" 才收到：算到收单月 "&{CM}&" 月"'),
+        (closed_blank, f'"⚠ "&{SM}&" 月已结账（"&{cdt}&"）：要填收单日期（空着就算回 "&{SM}&" 月；结账以后才录的单会改动已结账的数）"'),
         (_blank(C), _s(f'⚠ 没填收单日期（按{t["dname"]}算；填上才看得出晚到多久）')),
-        (f'INDEX({UN_TYPES_R},{g["UROW"]})&""<>"{t["want"]}"', _s(f'⚠ {t["who"]}类型不是「{t["want"]}」（去【往来单位】看看类型）')),
+        (f'IF({g["UROW"]}=0,FALSE,INDEX({UN_TYPES_R},{g["UROW"]})&""<>"{t["want"]}")',
+         _s(f'⚠ {t["who"]}类型不是「{t["want"]}」（去【往来单位】看看类型）')),
         (f'{diff}>1', f'"⚠ 金额跟 数量×单价 差 "&TEXT({diff},"0.00")&" 元（照单子填的就不用改）"'),
-        (f'AND(NOT({_blank(g["STY"])}),{g["ATYPE"]}="公")', _s('⚠ 用在哪的款式没在【款式档案】：先按公共分（登记了自动改记到这个款）')),
+        (f'AND(NOT({_blank(g["STY"])}),{g["ATYPE"]}="公")',
+         f'IF({k}=0,"⚠ 用在哪的款式没在【款式档案】：先按公共分（登记了自动改记到这个款）",'
+         f'"⚠ 这个款已停产（【款式档案】状态＝停产）：它最后一次交货以后的专用成本按公共分")'),
     ]
 
 
 # ═══════════════════════════ 送货单登记 ═══════════════════════════
-DN_UROW, DN_MROW = 'AI', 'AJ'          # 本表帮手列：供应商在【往来单位】第几行；品名在【品名档案】第几行（0＝没登记）
+DN_UROW, DN_MROW, DN_SROW = 'AI', 'AJ', 'AK'   # 本表帮手列：供应商在【往来单位】第几行；品名在【品名档案】第几行；用在哪在【款式档案】第几个（0＝没登记）
 
 
 def build_dn(wb, ctx):
@@ -164,14 +203,16 @@ def build_dn(wb, ctx):
           '💡 照供应商的送货单抄：一个品名一行，单号、日期每行都写。「送货日期」写单子上的日期（材料成本算到那个月）；'
           '「收单日期」写拿到单子那天（供应商常常隔几个月才拿单来，填上就看得出晚到多久）。'
           '金额可以不填（＝数量×单价）；单子上写的金额跟 数量×单价 对不上（四舍五入）就照单子填金额；退货数量填负数。'
-          '「用在哪」只有确定是某一个款专用的才填款式编码（比如防水台大底只给 24D16 用），不确定就空着（按交货双数分到各款）。'
+          '「用在哪」只有确定是某一个款专用的才填款式编码（比如防水台大底只给 24D16 用），不确定就空着（按交货双数分到各款）；'
+          '款式在【款式档案】改了「停产」的，它最后一次交货以后的单按公共分。'
           '供应商要先在【往来单位】登记；品名最好在【品名档案】登记类别（没登记的算「未分类」）。'
-          '【基础资料】「已结账到几月」填了以后，结账月份以前的单子后来才收到的，算到收单那个月。'
+          '某个月在【基础资料】⑩ 填了结账日期：那个月送的货、结账日期以后才收到的单，算到收单那个月（结了账的月份不再变）；'
+          '所以结账以后补来的单一定要填收单日期，空着就按送货日期算回已结账的月份。'
           '记错了就改或清空那几格，不要插行删行（右边有隐藏公式）。付材料款在【资金日记账】记。')
     c = dict(SEQ=DN_SEQ, DATE=DN_DATE, RDATE=DN_RDATE, SUP=DN_SUP, NO=DN_NO, QTY=DN_QTY, PRICE=DN_PRICE, AMTIN=DN_AMTIN,
              STY=DN_STY, NOTE=DN_NOTE, CMV=DN_CMV, LAGV=DN_LAGV, CHK=DN_CHK, AMT=DN_AMT, CM=DN_CM, PDATE=DN_PDATE,
              ATYPE=DN_ATYPE, CKEY=DN_CKEY, UNITK=DN_UNITK, SM=DN_SM, RM=DN_RM, LAG=DN_LAG, OK=DN_OK, LATEK=DN_LATEK,
-             UROW=DN_UROW)
+             UROW=DN_UROW, SROW=DN_SROW)
     t = dict(dname='送货日期', who='供应商', want='材料供应商', what='送货', pre='送的货')
     _put_rows(ws, ctx.get(SH_DN, []), r0)
     namek_r, notek_r, amt_r = dnr(DN_NAMEK), dnr(DN_NOTEK), dnr(DN_AMT)
@@ -211,7 +252,7 @@ def build_dn(wb, ctx):
                                (DN_UNITK, '供应商'), (DN_SM, '送货月'), (DN_RM, '收单月'), (DN_LAG, '滞后天数'),
                                (DN_NAMEK, '品名规范写法'), (DN_NFIRST, '品名首次★'), (DN_NNEW, '没登记品名★'),
                                (DN_NOTEK, '供应商|单号'), (DN_OK, '能记账'), (DN_LATEK, '晚到键★'),
-                               (DN_UROW, '往来单位第几行'), (DN_MROW, '品名档案第几行')],
+                               (DN_UROW, '往来单位第几行'), (DN_MROW, '品名档案第几行'), (DN_SROW, '款式档案第几个')],
             fmts={DN_AMT: MONEY, DN_PDATE: DATE})
     # 第 3 行汇总
     ok, chk = dnr(DN_OK), dnr(DN_CHK)
@@ -234,7 +275,7 @@ def build_dn(wb, ctx):
 
 
 # ═══════════════════════════ 外发加工登记 ═══════════════════════════
-OT_UROW = 'AC'                          # 本表帮手列：加工厂在【往来单位】第几行
+OT_UROW, OT_SROW = 'AC', 'AD'           # 本表帮手列：加工厂在【往来单位】第几行；用在哪在【款式档案】第几个（0＝没登记）
 
 
 def build_ot(wb, ctx):
@@ -247,11 +288,13 @@ def build_ot(wb, ctx):
           '材料本身已经在【送货单登记】算了，这里只记加工费，不要重复。一般按款式外发，「用在哪」填款式编码，加工费直接记到这个款；'
           '没法分的（比如一批印花几个款一起）空着，按交货双数分到各款。「单据日期」写单子上的日期（成本算到那个月），'
           '「收单日期」写拿到单子那天。金额可以不填（＝数量×单价）。订单号可以不填，只是记一下。'
+          '跟送货单一样：单据月份在【基础资料】⑩ 填了结账日期的，结账日期以后才收到的单算到收单月（结账以后补来的一定要填收单日期）；'
+          '款式「停产」了，它最后一次交货以后的加工费按公共分。'
           '加工厂要先在【往来单位】登记（类型选「外发加工厂」）。付加工费在【资金日记账】记「付加工费」。不要插行删行（右边有隐藏公式）。')
     c = dict(SEQ=OT_SEQ, DATE=OT_DATE, RDATE=OT_RDATE, SUP=OT_SUP, NO=OT_NO, QTY=OT_QTY, PRICE=OT_PRICE, AMTIN=OT_AMTIN,
              STY=OT_STY, NOTE=OT_NOTE, CMV=OT_CMV, LAGV=OT_LAGV, CHK=OT_CHK, AMT=OT_AMT, CM=OT_CM, PDATE=OT_PDATE,
              ATYPE=OT_ATYPE, CKEY=OT_CKEY, UNITK=OT_UNITK, SM=OT_SM, RM=OT_RM, LAG=OT_LAG, OK=OT_OK, LATEK=OT_LATEK,
-             UROW=OT_UROW)
+             UROW=OT_UROW, SROW=OT_SROW)
     t = dict(dname='单据日期', who='加工厂', want='外发加工厂', what='加工', pre='加工的')
     _put_rows(ws, ctx.get(SH_OUT, []), r0)
     for r in range(r0, r1 + 1):
@@ -272,7 +315,7 @@ def build_ot(wb, ctx):
     _heads(ws, hdr, heads, autos)
     _hidden(ws, hdr, r0, r1, [(OT_AMT, '金额'), (OT_CM, '成本月'), (OT_PDATE, '记账日期'), (OT_ATYPE, '款/公'), (OT_CKEY, '成本键'),
                                (OT_UNITK, '加工厂'), (OT_SM, '单据月'), (OT_RM, '收单月'), (OT_LAG, '滞后天数'), (OT_OK, '能记账'),
-                               (OT_LATEK, '晚到键★'), (OT_UROW, '往来单位第几行')],
+                               (OT_LATEK, '晚到键★'), (OT_UROW, '往来单位第几行'), (OT_SROW, '款式档案第几个')],
             fmts={OT_AMT: MONEY, OT_PDATE: DATE})
     ok, chk, amt_r = otr(OT_OK), otr(OT_CHK), otr(OT_AMT)
     _kpi(ws, 'A3:B3', '行数', 'C3', f'=COUNT({otr(OT_SEQ)})', INT)
@@ -294,7 +337,7 @@ def build_ot(wb, ctx):
 
 
 # ═══════════════════════════ 订单明细 ═══════════════════════════
-OD_SPK = 'AH'                           # 本表帮手列：订单号|款式|颜色及规格（查「实交比订单多」用）
+# 隐藏列 AH SPK、AI NOK、AJ OFR、AK SMK、AL CQ 都在 layout 里登记了（OD_SPK … OD_CQ）
 
 
 def build_od(wb, ctx):
@@ -303,40 +346,53 @@ def build_od(wb, ctx):
     widths(ws, {'A': 5, 'B': 10, 'C': 11, 'D': 9, 'E': 10, 'F': 14, 'G': 7, 'H': 16, 'I': 11, 'J': 8, 'K': 9,
                 'L': 9, 'M': 6, 'N': 11, 'O': 10, 'P': 11, 'Q': 11, 'R': 40, 'S': 10})
     title(ws, '订 单 明 细（电商部采购单 ＝ 客户订单 · 交货 · 每行的收入和成本）', OD_CHK, C_IN,
-          '💡 电商部的采购单就是我们的订单：整张粘进来（款式编码、颜色及规格、建议采购数→订单数量、备注），每行补上订单号（采购单号）。'
+          '💡 电商部的采购单就是我们的订单。在电商部的表里只选数据行的「款式编码～备注」4 列（不要带标题行和最后一行合计），'
+          '到这里 E 列空行右键 →「选择性粘贴 → 数值」（WPS：粘贴为数值），不要直接 Ctrl+V：采购单的备注是合并格、有黄底，直接粘会把合并格带进来，'
+          '以后排序、复制行都会出错，款式编码的下拉也会被冲掉（粘过来的备注只有第一行有字）。每行补上订单号（采购单号）。'
           '交货了填「交货日期」（实交数量不填＝全交了）；收入按交货日期算到那个月。'
-          '分批交货：复制这一行，第二行把订单数量清空，填第二次的交货日期和实交数量。电商部退回来的，实交填负数。'
+          '分批交货：复制这一行（看一眼只选了一行），第二行把订单数量清空，填第二次的交货日期和实交数量。'
+          '电商部退回来的，另起一行实交填负数（只冲收入；这双的成本交货时已经算了，当返工 / 报废损失）；'
+          '修好再交回去的再另起一行，填重交日期和双数，备注写「返修」（算收入，不再算交货双数和成本）。'
+          '订单取消、不做了的，把订单数量改成实交数（不然这个款挂着的专用成本会一直按没交的双数留着，等后面交货）。'
           '某张单价钱特殊就填「结算单价」（不填按【款式档案】的结算单价）。客户空着＝【基础资料】的默认客户。'
           '款式编码要在【款式档案】登记过才有单价、才分得到成本（没登记的【款式档案】右边会列出来）。'
           '成本＝实交双数 × 这个款这个月的单双成本（自动算，晚到的送货单录进去以后会变）。不要插行删行（右边有隐藏公式）。')
     _put_rows(ws, ctx.get(SH_ORD, []), r0)
     sty_price = str_(ST_PRICE)
-    spk_r, dq_r, oq_r = odr(OD_SPK), odr(OD_DQ), odr(OD_OQ)
+    spk_r, dq_r, oq_r, nok_r = odr(OD_SPK), odr(OD_DQ), odr(OD_OQ), odr(OD_NOK)
     digits = '{0,1,2,3,4,5,6,7,8,9}'
     for r in range(r0, r1 + 1):
         g = lambda col: f'{col}{r}'
-        A, B, D, E, F, G, I, J, K = (g(x) for x in (OD_SEQ, OD_NO, OD_CUST, OD_STY, OD_SPEC, OD_QTY, OD_DDATE, OD_DQTY, OD_PRICE))
+        A, B, D, E, F, G, H, I, J, K = (g(x) for x in (OD_SEQ, OD_NO, OD_CUST, OD_STY, OD_SPEC, OD_QTY, OD_NOTE, OD_DDATE,
+                                                       OD_DQTY, OD_PRICE))
         DQ, PU, DM, SROW, AMT, OK = (g(x) for x in (OD_DQ, OD_PRICEU, OD_DM, OD_SROW, OD_AMT, OD_OK))
+        NOK, OFR, SMK, CQ = (g(x) for x in (OD_NOK, OD_OFR, OD_SMK, OD_CQ))
         i = f'ROW()-{hdr}'
         ws[A] = f'=IF(COUNTA({OD_NO}{r}:{OD_PRICE}{r})=0,"",{i})'
         ws[g(OD_CUSTK)] = f'=IF({A}="","",IF({_blank(D)},TRIM({CUST}&""),TRIM({D}&"")))'
         ws[DQ] = f'=IF({A}="",0,IF(ISNUMBER({I}),IF({_blank(J)},N({G}),N({J})),0))'
-        ws[SROW] = f'=IF({_blank(E)},0,IFERROR(MATCH(TRIM({E}&""),{ST_KEYS},0),0))'
+        ws[SROW] = _srow(E)
         ws[PU] = (f'=IF({A}="",0,IF(ISNUMBER({K}),{K},IF(NOT({_blank(K)}),0,'
                   f'IF({SROW}>0,N(INDEX({sty_price},{SROW})),0))))')
         ws[DM] = (f'=IF({A}="",0,IF(ISNUMBER({I}),IF({DQ}=0,0,IF(AND(YEAR({I})={YR},INT({I})>=N({OPEN})),MONTH({I}),0)),0))')
         ws[AMT] = f'=IF({DM}>0,ROUND({DQ}*{PU},2),0)'
         ws[g(OD_OQ)] = f'=IF({A}="",0,N({G}))'
-        ws[g(OD_OFIRST)] = f'=IF({_blank(B)},"",IF(IFERROR(MATCH({B},{odr(OD_NO)},0),0)={i},{i},""))'
+        # 订单号规范写法（数字、文字、前后空格都算同一张单）；这张单第一次出现在第几行；订单首行★
+        ws[NOK] = f'=TRIM({B}&"")'
+        ws[OFR] = f'=IF({NOK}="",0,IFERROR(MATCH({esc(NOK)},{nok_r},0),0))'
+        ws[g(OD_OFIRST)] = f'=IF({OFR}={i},{i},"")'
         osk = g(OD_OSKEY)
-        ws[osk] = f'=IF(OR({_blank(B)},{_blank(E)}),"",TRIM({B}&"")&"|"&TRIM({E}&""))'
+        ws[osk] = f'=IF(OR({NOK}="",{_blank(E)}),"",{NOK}&"|"&TRIM({E}&""))'
         ws[g(OD_OSFIRST)] = f'=IF({osk}="",0,IF(IFERROR(MATCH({esc(osk)},{odr(OD_OSKEY)},0),0)={i},1,0))'
         ws[g(OD_SNEW)] = (f'=IF(AND(NOT({_blank(E)}),{SROW}=0),'
                           f'IF(COUNTIF(${OD_STY}${hdr}:{OD_STY}{r - 1},TRIM({E}&""))=0,{i},""),"")')
-        ws[g(OD_QSEL)] = f'=IF({_blank(B)},"",IF(TRIM({B}&"")=TRIM({OQ_SEL}&""),{i},""))'
+        ws[g(OD_QSEL)] = f'=IF({NOK}="","",IF({NOK}=TRIM({OQ_SEL}&""),{i},""))'
         ws[OK] = f'=IF(AND({DM}>=1,{AMT}<>0,{g(OD_CHK)}<>"",LEFT({g(OD_CHK)},1)<>"✗"),1,0)'
         ws[g(OD_CSK)] = (f'=IF({OK}=1,IF(AND({g(OD_CUSTK)}=TRIM({CS_UNIT}&""),INT({I})>=N({CS_D1}),OR(N({CS_D2})=0,INT({I})<={CS_D2})),'
                          f'INT({I})*100000+{i},""),"")')
+        # 款式×月数字键（_款式月 双数 / 收入按它 SUMIFS）；成本双数（退货、返修重交不算）
+        ws[SMK] = f'=IF({OK}=1,{SROW}*16+{DM},0)'
+        ws[CQ] = f'=IF({DQ}>0,IF(ISNUMBER(FIND("返修",{H}&"")),0,{DQ}),0)'
         spk = g(OD_SPK)
         ws[spk] = f'=IF({osk}="","",{osk}&"|"&SUBSTITUTE(TRIM({F}&""),"；",";"))'
         # 看得见的自动列
@@ -344,9 +400,12 @@ def build_od(wb, ctx):
         ws[g(OD_COLOR)] = (f'=IF({_blank(F)},"",TRIM(LEFT({s},SUMPRODUCT(MIN(FIND({digits},{s}&"0123456789")))-1)))')
         ws[g(OD_SIZE)] = f'=IF(ISERROR(FIND(";",{s})),"",TRIM(MID({s},FIND(";",{s})+1,50)))'
         ws[g(OD_AMTV)] = f'=IF({A}="","",IF(ISNUMBER({I}),{AMT},""))'
-        ws[g(OD_UCV)] = f'=IF(AND({OK}=1,{SROW}>0,{DQ}>0),N(INDEX({SM_UNIT2D},{SROW},{DM})),"")'
-        ws[g(OD_COSTV)] = f'=IF({g(OD_AMTV)}="","",IF({g(OD_UCV)}="",0,ROUND({DQ}*{g(OD_UCV)},2)))'
+        # 单双成本只给「成本双数」>0 的行（退货、返修重交没有）；SROW、DM 是 0 的不碰 INDEX
+        ws[g(OD_UCV)] = (f'=IF({OK}<>1,"",IF({SROW}<1,"",IF({DM}<1,"",IF({CQ}<=0,"",'
+                         f'N(INDEX({SM_UNIT2D},{SROW},{DM}))))))')
+        ws[g(OD_COSTV)] = f'=IF({g(OD_AMTV)}="","",IF({g(OD_UCV)}="",0,ROUND({CQ}*{g(OD_UCV)},2)))'
         ws[g(OD_GPV)] = f'=IF({g(OD_AMTV)}="","",ROUND({g(OD_AMTV)}-{g(OD_COSTV)},2))'
+        # 超交：只有补交行（订单数量空着）才按「订单号|款式|规格」整组 SUMIFS；普通行直接比本行 实交>订单数量
         sdq = f'SUMIFS({dq_r},{spk_r},{esc(spk)})'
         soq = f'SUMIFS({oq_r},{spk_r},{esc(spk)})'
         cust = g(OD_CUSTK)
@@ -355,16 +414,20 @@ def build_od(wb, ctx):
             (_blank(E), _s('✗ 没填款式编码')),
             (f'AND({_blank(G)},{_blank(J)})', _s('✗ 订单数量、实交数量都没填')),
             (_bad(I), _s('✗ 交货日期要填成日期（如 2026/9/12；没交就空着）')),
+            (f'OR({_txtnum(G)},{_txtnum(J)},{_txtnum(K)})', _txtmsg('订单数量 / 实交数量 / 结算单价')),
             (f'OR({_bad(G)},{_bad(J)},{_bad(K)})', _s('✗ 订单数量、实交数量、结算单价要填数字')),
             (f'{SROW}=0', _s('⚠ 款式没在【款式档案】登记：没有结算单价、也分不到成本（【款式档案】右边列出来了，抄过去）')),
             (f'IF(ISNUMBER({I}),YEAR({I})<>{YR},FALSE)', _s('⚠ 交货日期不在本年度（不算本年收入）')),
             (f'IF(ISNUMBER({I}),INT({I})<N({OPEN}),FALSE)', _s('⚠ 建账以前交的货不算本账收入（欠的货款放【往来单位】期初应收）')),
             (f'AND(ISNUMBER({I}),{DQ}=0)', _s('⚠ 实交数量是 0（这行不算交货）')),
             (f'AND(ISNUMBER({I}),{AMT}=0)', _s('⚠ 没有结算单价（交货金额是 0）：在【款式档案】填结算单价，或在这行填')),
-            (f'IF({DQ}>0,{sdq}>{soq},FALSE)',
-             f'"⚠ 实交比订单数量多：这个订单这个款这个颜色码数一共交了 "&{sdq}&" 双，订了 "&{soq}&" 双"'),
+            (f'IF({DQ}>0,IF({_blank(G)},{sdq}>{soq},N({J})>N({G})),FALSE)',
+             f'IF({_blank(G)},"⚠ 实交比订单数量多：这个订单这个款这个颜色码数一共交了 "&{sdq}&" 双，订了 "&{soq}&" 双",'
+             f'"⚠ 实交比订单数量多：这行实交 "&N({J})&" 双，订了 "&N({G})&" 双")'),
             (f'IF({cust}="",TRUE,COUNTIF({UN_NAMES},{esc(cust)})=0)', _s('⚠ 客户不在【往来单位】（空着＝【基础资料】的默认客户）')),
             (f'NOT(ISNUMBER({I}))', _s('⏳ 还没交货')),
+            (f'{DQ}<0', _s('√ 退货：只冲收入；成本交货时已算（当返工 / 报废损失）。修好再交回去的另起一行，备注写「返修」')),
+            (f'AND({DQ}>0,{CQ}=0)', _s('√ 返修重交：算收入，不再算交货双数和成本')),
         ]
         ws[g(OD_CHK)] = f'=IF({A}="","",{_chain(conds, _s("√ 已交"))})'
     cols = [OD_SEQ, OD_NO, OD_DATE, OD_CUST, OD_STY, OD_SPEC, OD_QTY, OD_NOTE, OD_DDATE, OD_DQTY, OD_PRICE,
@@ -384,12 +447,13 @@ def build_od(wb, ctx):
     _hidden(ws, hdr, r0, r1, [(OD_CUSTK, '客户'), (OD_DQ, '实交双数'), (OD_PRICEU, '用的单价'), (OD_DM, '交货月'),
                                (OD_SROW, '款式第几个'), (OD_AMT, '交货金额'), (OD_OQ, '订单数量'), (OD_OFIRST, '订单首行★'),
                                (OD_OSFIRST, '单内款式首行'), (OD_SNEW, '没登记款式★'), (OD_QSEL, '查询选中★'), (OD_OK, '能记账'),
-                               (OD_CSK, '客户对账键'), (OD_OSKEY, '订单号|款式'), (OD_SPK, '订单|款式|规格')],
-            fmts={OD_AMT: MONEY, OD_PRICEU: MONEY})
+                               (OD_CSK, '客户对账键'), (OD_OSKEY, '订单号|款式'), (OD_SPK, '订单|款式|规格'),
+                               (OD_NOK, '订单号规范★'), (OD_OFR, '本单首行序号'), (OD_SMK, '款式×月键'), (OD_CQ, '成本双数★')],
+            fmts={OD_AMT: MONEY, OD_PRICEU: MONEY, OD_NOK: '@'})
     ok, chk = odr(OD_OK), odr(OD_CHK)
     _kpi(ws, 'A3:B3', '订单数', 'C3', f'=COUNT({odr(OD_OFIRST)})', INT)
     _kpi(ws, 'D3', '订单双数', 'E3', f'=SUM({oq_r})', INT)
-    _kpi(ws, 'F3', '已交双数', 'G3', f'=SUMIFS({dq_r},{dq_r},">0")', INT)
+    _kpi(ws, 'F3', '已交双数', 'G3', f'=SUM({odr(OD_CQ)})', INT)          # 成本双数：不含退货、返修重交
     _kpi(ws, 'H3', '未交双数', 'I3', f'=MAX(0,E3-G3)', INT)
     _kpi(ws, 'J3:K3', '本年交货金额', 'L3:N3', f'=SUMIFS({odr(OD_AMT)},{ok},1)')
     _kpi(ws, 'O3', '✗ 待改', 'P3', f'=COUNTIF({chk},"✗*")', INT)
@@ -407,7 +471,7 @@ def build_od(wb, ctx):
 
 
 # ═══════════════════════════ 工资登记 ═══════════════════════════
-WG_DROW = 'Y'                           # 本表帮手列：部门在【基础资料】⑤ 第几行（0＝没有）
+WG_DROW, WG_SROW = 'Y', 'Z'             # 本表帮手列：部门在【基础资料】⑤ 第几行（0＝没有）；用在哪在【款式档案】第几个（0＝没登记）
 
 
 def _by_type(x, k):
@@ -424,7 +488,8 @@ def build_wg(wb, ctx):
     widths(ws, {'A': 5, 'B': 7, 'C': 10, 'D': 10, 'E': 11, 'F': 9, 'G': 9, 'H': 11, 'I': 11, 'J': 10, 'K': 10, 'L': 12,
                 'M': 20, 'N': 10, 'O': 40, 'P': 10})
     title(ws, '工 资 登 记（每人每月一行 · 计件的可按款式分几行）', WG_CHK, C_IN,
-          '💡 每人每月一行；计件的可以按款式分几行（同一个人同一个月几行没关系），「用在哪」填款式编码，这部分工资直接记到这个款。'
+          '💡 每人每月一行；计件的可以按款式分几行（同一个人同一个月几行没关系），「用在哪」填款式编码，这部分工资直接记到这个款'
+          '（款式在【款式档案】改了「停产」的，它最后一次交货以后的月份按公共分）。'
           '「月份」填 1～12：工资算到那个月（不管哪天发的）。应发＝计件工资＋底薪/计时＋加班补贴－扣款。'
           '部门决定工资进哪里（【基础资料】⑤ 设）：直接生产（裁断、针车、成型、包装）＝直接人工，车间辅助（车间管理、仓管杂工）＝制造费用，'
           '这两种都分到款式成本里；办公室＝管理费用、业务跟单＝销售费用，不算成本。'
@@ -434,7 +499,8 @@ def build_wg(wb, ctx):
         g = lambda col: f'{col}{r}'
         A, B, C, D, E = (g(x) for x in (WG_SEQ, WG_MON, WG_NAME, WG_DEPT, WG_STY))
         F_, G_, H_, I_, J_, K_ = (g(x) for x in (WG_PQ, WG_PP, WG_PIECE, WG_BASE, WG_OT, WG_DED))
-        AMT, CM, DT, COMP, AT, OK, DROW = (g(x) for x in (WG_AMT, WG_CM, WG_DTYPE, WG_COMP, WG_ATYPE, WG_OK, WG_DROW))
+        AMT, CM, DT, COMP, AT, OK, DROW, SROW = (g(x) for x in (WG_AMT, WG_CM, WG_DTYPE, WG_COMP, WG_ATYPE, WG_OK, WG_DROW,
+                                                                WG_SROW))
         ws[A] = (f'=IF(COUNTA({WG_MON}{r}:{WG_PP}{r})+COUNTA({WG_BASE}{r}:{WG_DED}{r})+COUNTA({WG_NOTE}{r})=0,"",'
                  f'ROW()-{hdr})')
         ws[H_] = f'=IF({A}="","",IF(AND({_blank(F_)},{_blank(G_)}),"",ROUND(N({F_})*N({G_}),2)))'
@@ -446,8 +512,8 @@ def build_wg(wb, ctx):
         ws[COMP] = f'={_by_type(DT, 0)}'
         ws[g(WG_DRC)] = f'={_by_type(DT, 1)}'
         ws[g(WG_DEST)] = f'=IF({A}="","",{_by_type(DT, 2)})'
-        ws[AT] = (f'=IF({A}="","",IF(AND({COMP}<>"",NOT({_blank(E)})),'
-                  f'IF(COUNTIF({ST_KEYS},TRIM({E}&""))>0,"款","公"),"公"))')
+        ws[SROW] = _srow(E)
+        ws[AT] = f'=IF({A}="","",IF({COMP}="","公",{_atype(SROW, CM)}))'
         ws[g(WG_CKEY)] = f'=IF(AND({OK}=1,{COMP}<>""),IF({AT}="款","款|"&TRIM({E}&"")&"|"&{COMP},"公||"&{COMP}),"")'
         ws[OK] = f'=IF(AND({g(WG_CHK)}<>"",LEFT({g(WG_CHK)},1)<>"✗"),1,0)'
         conds = [
@@ -456,12 +522,15 @@ def build_wg(wb, ctx):
             (_blank(D), _s('✗ 没选部门')),
             (f'{DROW}=0', _s('✗ 部门不在【基础资料】⑤：先去加')),
             (f'{g(WG_DRC)}=""', _s('✗ 这个部门在【基础资料】⑤ 没选类型（直接生产/车间辅助/管理/销售）')),
+            (f'OR({_txtnum(F_)},{_txtnum(G_)},{_txtnum(I_)},{_txtnum(J_)},{_txtnum(K_)})', _txtmsg('计件数量 / 单价 / 底薪 / 加班 / 扣款')),
             (f'OR({_bad(F_)},{_bad(G_)},{_bad(I_)},{_bad(J_)},{_bad(K_)})', _s('✗ 数字列填了文字：计件数量、单价、底薪、加班、扣款都要填数字')),
             (f'{AMT}=0', _s('✗ 应发是 0')),
             (_blank(C), _s('⚠ 没填姓名')),
             (f'{AMT}<0', _s('⚠ 应发是负数（扣的比发的多？）')),
             (f'AND(NOT({_blank(E)}),{COMP}="")', _s('⚠ 管理/销售部门填了用在哪（不起作用：不算款式成本）')),
-            (f'AND(NOT({_blank(E)}),{AT}="公")', _s('⚠ 用在哪的款式没在【款式档案】登记：先按公共分')),
+            (f'AND(NOT({_blank(E)}),{AT}="公")',
+             f'IF({SROW}=0,"⚠ 用在哪的款式没在【款式档案】登记：先按公共分",'
+             f'"⚠ 这个款已停产（【款式档案】状态＝停产）：它最后一次交货以后的计件工资按公共分")'),
         ]
         ws[g(WG_CHK)] = f'=IF({A}="","",{_chain(conds, _s("√"))})'
     cols = [WG_SEQ, WG_MON, WG_NAME, WG_DEPT, WG_STY, WG_PQ, WG_PP, WG_PIECE, WG_BASE, WG_OT, WG_DED, WG_PAY, WG_NOTE,
@@ -477,7 +546,8 @@ def build_wg(wb, ctx):
              (WG_DED, '扣款'), (WG_PAY, '应发工资'), (WG_NOTE, '备注'), (WG_DEST, '去向'), (WG_CHK, '校验')]
     _heads(ws, hdr, heads, autos)
     _hidden(ws, hdr, r0, r1, [(WG_AMT, '应发'), (WG_CM, '月份'), (WG_DTYPE, '部门类型'), (WG_COMP, '成本组件'), (WG_ATYPE, '款/公'),
-                               (WG_CKEY, '成本键'), (WG_DRC, '借方科目'), (WG_OK, '能记账'), (WG_DROW, '部门第几行')],
+                               (WG_CKEY, '成本键'), (WG_DRC, '借方科目'), (WG_OK, '能记账'), (WG_DROW, '部门第几行'),
+                               (WG_SROW, '款式档案第几个')],
             fmts={WG_AMT: MONEY, WG_DRC: '@'})
     ok, chk, amt_r, drc = wgr(WG_OK), wgr(WG_CHK), wgr(WG_AMT), wgr(WG_DRC)
     _kpi(ws, 'A3:B3', '本年应发', 'C3:D3', f'=SUMIFS({amt_r},{ok},1)')

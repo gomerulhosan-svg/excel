@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""查看表 8 张（第二阶段）：【材料汇总】【跨月补单】【应付账款汇总】【供应商对账单】【客户对账单】【费用汇总】【工资汇总】【账户余额表】。
+"""查看表 8 张（第二阶段）：【材料汇总】【晚到单据】【应付账款汇总】【供应商对账单】【客户对账单】【费用汇总】【工资汇总】【账户余额表】。
 
    · 全是公式、只读（make 会整张保护），顶上的选择格亮黄（不锁）。
    · 被别的表引用的格子只有两张对账单的选择格（SS_UNIT/SS_D1/SS_D2、CS_UNIT/CS_D1/CS_D2，位置按 layout.py）。
    · 各表右边隐藏的列是本表自己用的帮手列（第 k 个是源表第几行、排序键、行的种类……）。
    · 清单一律「★序号键 / 排序键 + SMALL(k) / LARGE(k)」取第 k 个，k 超过个数就不算（IF 短路），取不到显示空。
+     INDEX(区域, k) 的 k 可能是 0 的，一律放在 IF(k=0, …) 的另一支里（普通格子里 INDEX(区域,0) 会按行号取交叉，超出区域就 #VALUE!）。
    · 两张对账单的「合计、签字栏」是浮动的：紧跟在最后一笔下面（不会在 300 行以后才出现），边框用条件格式只画有内容的行。
+   · 月份选择格出厂空着＝最新月份（【基础资料】LASTM；还没业务＝建账月），公式里用隐藏的「实际用的月份」帮手格。
+   · 不按往来单位、不按费用项目的科目发生额用 mat()（科目余额表隐藏的科目×月矩阵），不再扫记账分录。
 """
 import datetime as _dt
 from openpyxl.formatting.rule import FormulaRule
@@ -28,10 +31,23 @@ QTYF = 'General'
 CNTF = '0;-0;"-"'
 BD_CF = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-YR, OPEN, LOCK, LAGD, CO = (P[k] for k in ('YEAR', 'OPEN', 'LOCK', 'LAGD', 'CO'))
+YR, OPEN, LOCK, LAGD, CO = (P[k] for k in ('YEAR', 'OPEN', 'LOCK', 'LAGD', 'CO'))   # LOCK 只是显示（已结账到几月）
 XFER = '内部转账'
 YEAR0 = next(v for k, _l, v, *_r in PARAMS if k == 'YEAR')          # 选择格的常量默认日期用（2026）
 COA_OPEN_OF = lambda code: f'SUMIF({COA_CODES},"{code}",{COA_OPENS})'
+# 建账月（建账日期在本年度＝它的月份，否则 1）；「最新月份」＝【基础资料】LASTM，还没业务（0）时＝建账月——保证落在 1～12
+OPEN_M = f'IF(ISNUMBER({OPEN}),IF(YEAR({OPEN})={YR},MONTH({OPEN}),1),1)'
+LATEST = f'MAX({OPEN_M},MIN(12,INT(N({P["LASTM"]}))))'
+
+
+def _mx(sel, empty='latest'):
+    """选择格 sel 填的是 1～12 就用它（取整），否则（空着 / 填错）用最新月份（empty='latest'）或 1（empty=1）"""
+    dft = LATEST if empty == 'latest' else str(empty)
+    return f'IF(AND(ISNUMBER({sel}),{sel}>=1,{sel}<13),INT({sel}),{dft})'
+
+
+def _mx_ok(sel):
+    return f'AND(ISNUMBER({sel}),{sel}>=1,{sel}<13)'
 
 
 # ─────────────────────────── 小工具 ───────────────────────────
@@ -138,16 +154,22 @@ def build_msum(wb, ctx):
     ws = wb[SH_MSUM]
     widths(ws, {'A': 6, 'B': 22, **{CL(3 + i): 10.5 for i in range(12)}, 'O': 13, 'P': 13, 'Q': 2})
     title(ws, '材 料 汇 总（按材料类别 × 月 · 按品名看数量、金额、单价）', 'P', C_VIEW,
-          '💡 全自动。材料按「成本月份」算（就是送货单上的送货日期那个月；【基础资料】设了已结账月份的，结账以后才收到的单子算到收单月）。'
+          '💡 全自动。材料按「成本月份」算（就是送货单上的送货日期那个月；【基础资料】⑩「每月结账日期」填了的月份，'
+          f'结账以后才收到的那个月的送货单，算到收单那个月，已结账月份的数不再变——在【{SH_LATE}】能看到挪了哪些）。'
           '① 每个材料类别每个月花了多少钱：送货单按【品名档案】登记的类别分，没登记类别的品名算「未分类」（去【品名档案】登记一下就分进去了）；'
           '另外加上资金日记账里「现付材料」（没有送货单、当场付钱的）和手工分录记到材料成本的。最下面核对：材料合计应该等于【成本分摊表】的「材料 本月发生」。'
           '② 每个品名（同一个品名不同颜色合在一起）：所选月份和全年的数量、金额、平均单价，最高 / 最低 / 最后一次的单价——看哪个材料涨价了。'
-          'C3、E3 选起止月份（黄格）。', h2=64)
+          'C3、E3 选起止月份（黄格）：起始月空着＝1 月，截止月空着＝最新月份（有业务的最后一个月）。', h2=64)
     _home(ws, 'P')
-    selector(ws, 'B3', '起始月', 'C3', 1, f'={AX_M}', MHDR, '从几月（1～12）')
-    selector(ws, 'D3', '截止月', 'E3', 12, f'={AX_M}', MHDR, '到几月（1～12）')
-    m1, m2 = 'MAX(1,N($C$3))', 'IF(N($E$3)=0,12,N($E$3))'
-    _lbl(ws, 'F3', '所选月份\n材料合计', 'F3:G3')
+    selector(ws, 'B3', '起始月', 'C3', None, f'={AX_M}', MHDR, '从几月（1～12）；空着＝1 月')
+    selector(ws, 'D3', '截止月', 'E3', None, f'={AX_M}', MHDR, '到几月（1～12）；空着＝最新月份')
+    # 实际用的起止月（隐藏格）：C3 空＝1，E3 空＝最新月份
+    m1, m2 = f'${MN_IDX}$3', f'${MN_KEY}$3'
+    ws[f'{MN_IDX}3'] = f'={_mx("$C$3", 1)}'
+    ws[f'{MN_KEY}3'] = f'={_mx("$E$3")}'
+    ws[f'{MN_IDX}3'].font = ws[f'{MN_KEY}3'].font = F_HELP
+    _lbl(ws, 'F3', (f'={m1}&"～"&{m2}&" 月材料合计"&IF({_mx_ok("$E$3")},"",CHAR(10)&'
+                    f'IF(TRIM($E$3&"")="","（空着＝最新月份）","⚠ 截止月要选 1～12"))'), 'F3:G3')
     _val(ws, 'H3', f'=O{MS_RTOT}', MONEY, 'H3:I3')
     _lbl(ws, 'J3', '全年\n材料合计', 'J3:K3')
     _val(ws, 'L3', f'=P{MS_RTOT}', MONEY, 'L3:M3')
@@ -275,9 +297,10 @@ def build_msum(wb, ctx):
     _neg_red(ws, f'E{MN_R0}:I{MN_R1}', f'E{MN_R0}')
     ws.freeze_panes = 'C4'
     print_setup(ws, None, landscape=True)
+    ws.print_area = f'A1:P{MN_R1}'                # 打印到品名清单最后一行（不带右边隐藏的帮手列）
 
 
-# ═══════════════════════════ 跨月补单 ═══════════════════════════
+# ═══════════════════════════ 晚到单据（供应商送货单 / 外发加工单晚到） ═══════════════════════════
 LT_HDR = 5
 LT_R0 = 6                                     # 第 6 行＝上年送的（SM=0），第 7～18 行＝1～12 月送的
 LT_RTOT = LT_R0 + 13
@@ -302,18 +325,19 @@ LC_IDX = 'W'                                  # 隐藏：第 k 笔在源表第�
 def build_late(wb, ctx):
     ws = wb[SH_LATE]
     widths(ws, {'A': 18, **{CL(2 + i): 10.5 for i in range(13)}, 'O': 12, 'P': 16, 'Q': 11, 'R': 16, 'S': 11, 'T': 12, 'U': 2})
-    title(ws, '跨 月 补 单（供应商的送货单晚到了多久 · 哪家最拖）', 'T', C_VIEW,
+    title(ws, '晚 到 单 据（供应商送货单、外发加工单晚到了多久 · 哪家最拖）', 'T', C_VIEW,
           '💡 全自动，看「送货单 / 外发加工单」拿到手比送货晚了多久。① 每一行是送货那个月，每一列是收到单子那个月：对角线上是当月就收到的，'
           '越往右越晚到；右边算出当月就收到、晚 1 个月、晚 2 个月以上的金额和晚到占比。'
-          '「成本月份」规则：送货单按送货日期算到那个月（晚到的单录进去以后，那个月的成本会变）；【基础资料】「已结账到几月」填了以后，'
-          '结账月份以前送的、结账以后才收到的单，算到收单那个月（以前月份不再变），最右边一列就是这种被挪了月份的金额（还有建账前送货、建账后才收到单的）。'
+          '「成本月份」规则：送货单按送货日期算到那个月（晚到的单录进去以后，那个月的成本会变）；'
+          '【基础资料】⑩「每月结账日期」：x 月填了结账那天，x 月送的货、收单日期（空着按送货日期）晚于结账日期的，算到收单那个月，x 月的数不再变。'
+          '最右边一列就是这种被挪了月份的金额（还有建账前送货、建账后才收到单的）。'
           '② 按供应商 / 加工厂：一共多少行、多少钱、平均晚几天、最长晚几天、晚到（≥提醒天数）的有多少。'
-          '③ 晚到清单：滞后天数 ≥【基础资料】「收单滞后提醒天数」的单子，最晚的排最上面。建议每月月底催供应商把单子送来。', h2=80)
+          '③ 晚到清单：滞后天数 ≥【基础资料】「收单滞后提醒天数」的单子，最晚的排最上面。建议每月月底催供应商把单子送来，再填结账日期。', h2=80)
     _home(ws, 'T')
     _lbl(ws, 'A3', '晚到提醒天数')
     _val(ws, 'B3', f'=N({LAGD})', '0" 天"')
-    _lbl(ws, 'C3', '已结账到', 'C3:D3')
-    _val(ws, 'E3', f'=N({LOCK})', '0" 月";-0;"不锁"')
+    _lbl(ws, 'C3', '已结账到\n（基础资料⑩）', 'C3:D3')
+    _val(ws, 'E3', f'=N({LOCK})', '0" 月";-0;"没结账"')       # 只是显示：最后一个填了结账日期的月份
     _lbl(ws, 'F3', '晚到的\n送货单', 'F3:G3')
     _val(ws, 'H3', f'=COUNT({dnr(DN_LATEK)})', '0" 行"')
     _lbl(ws, 'I3', '晚到的\n外发单', 'I3:J3')
@@ -475,13 +499,15 @@ def build_late(wb, ctx):
 
 
 # ═══════════════════════════ 应付账款汇总 ═══════════════════════════
-AP_HDR, AP_TOT, AP_R0 = 4, 5, 6
+AP_TOT, AP_HDR, AP_R0 = 4, 5, 6                # 合计行在表头上面（自动筛选只从表头第 5 行起，筛选时合计不会被藏掉）
 AP_N = UN_R1 - UN_R0 + 1
 AP_R1 = AP_R0 + AP_N - 1
 AP_IDX, AP_LD, AP_LR, AP_LP = 'P', 'Q', 'R', 'S'          # 隐藏：往来单位第几行、最后送货 / 收单 / 付款日期（数字）
+AP_MX = '$Q$3'                                            # 隐藏：实际用的月份（C3 空着＝最新月份）
 AP_HD, AP_HR, AP_HOD, AP_HOR, AP_HP = 'U', 'V', 'W', 'X', 'Y'
 # 隐藏帮手列（跟源表一行对一行，都是干净的数字，给 SUMPRODUCT(MAX()) 用）：
 #   U/V ＝【送货单登记】能记账行的送货日期 / 收单日期；W/X ＝【外发加工登记】的；Y ＝【资金日记账】能记账、借方是 2202（付款）的日期
+#   （这几列的第 5 行起就是源表的数据行，所以它们的小标题写在第 4 行）
 
 
 def build_aps(wb, ctx):
@@ -489,26 +515,32 @@ def build_aps(wb, ctx):
     widths(ws, {'A': 5, 'B': 18, 'C': 10, 'D': 12, 'E': 13, 'F': 13, 'G': 13, 'H': 12, 'I': 12, 'J': 11, 'K': 11, 'L': 11,
                 'M': 9, 'N': 40, 'O': 2})
     title(ws, '应 付 账 款 汇 总（每家供应商 / 加工厂：送了多少、付了多少、还欠多少）', 'N', C_VIEW,
-          '💡 全自动，C3 选月份（黄格）＝看到那个月月底为止。每家一行（【往来单位】里类型是材料供应商、外发加工厂的）：'
+          '💡 全自动，C3 选月份（黄格；空着＝最新月份）＝看到那个月月底为止。每家一行（【往来单位】里类型是材料供应商、外发加工厂的）：'
           '期初欠款（建账日）＋ 送货 / 加工（送货单、外发加工单记的应付，退货是负数）− 付款（资金日记账付的）＝ 月末还欠多少。'
           '欠款是负数＝付的比登记的送货单还多：多半是还有送货单没拿到（供应商隔几个月才拿单来），记得催单。'
-          '金额都来自【记账分录】的应付账款（2202），所以手工分录调的账也算在里面。要跟某一家逐笔对账，去【供应商对账单】。', h2=48)
+          '金额都来自【记账分录】的应付账款（2202），所以手工分录调的账也算在里面。要跟某一家逐笔对账，去【供应商对账单】。'
+          '第 5 行表头可以筛选（比如只看外发加工厂），第 4 行合计跟着筛选结果变；第 3 行的数一直是全部单位的。', h2=64)
     _home(ws, 'N')
-    selector(ws, 'B3', '看到几月', 'C3', 9, f'={AX_M}', MHDR, '看到哪个月月底（1～12）')
-    m = '$C$3'
+    selector(ws, 'B3', '看到几月', 'C3', None, f'={AX_M}', MHDR, '看到哪个月月底（1～12）；空着＝最新月份')
+    m = AP_MX
+    ws[m.replace('$', '')] = f'={_mx("$C$3")}'
+    ws[m.replace('$', '')].font = F_HELP
     mc = f'"<="&{m}'
-    bal = f'ROUND({COA_OPEN_OF("2202")}+{je_sum(chr(34) + "2202" + chr(34), "C", mc)}-{je_sum(chr(34) + "2202" + chr(34), "D", mc)},2)'
+    bal = (f'ROUND({COA_OPEN_OF("2202")}+{mat(chr(34) + "2202" + chr(34), "C", m, True)}'
+           f'-{mat(chr(34) + "2202" + chr(34), "D", m, True)},2)')
     _lbl(ws, 'D3', '应付账款科目\n月末余额')
     _val(ws, 'E3', f'={bal}')
-    _lbl(ws, 'F3', '下面清单\n合计')
-    _val(ws, 'G3', f'=G{AP_TOT}')
+    _lbl(ws, 'F3', '下面清单\n合计（全部）')
+    _val(ws, 'G3', f'=ROUND(SUM(G{AP_R0}:G{AP_R1}),2)')      # 全部单位（不跟筛选变），跟科目余额对账用
     _lbl(ws, 'H3', '不在清单里的\n（别的单位）')
     _val(ws, 'I3', f'=ROUND(E3-G3,2)')
     _lbl(ws, 'J3', '付多了的', 'J3:K3')
     _val(ws, 'L3', f'=COUNTIF(G{AP_R0}:G{AP_R1},"<0")', '0" 家"')
-    put(ws, 'M3', '「不在清单里的」＝应付账款记在别的类型单位（或没写单位）的，【明细账】选 2202 能看到', F_NOTE, KPI_FILL, align=ALW)
+    put(ws, 'M3', (f'=IF({_mx_ok("$C$3")},"",IF(TRIM($C$3&"")="","C3 空着＝最新月份 "&{m}&" 月。",'
+                   f'"⚠ C3 要选 1～12：现在按最新月份 "&{m}&" 月。"))'
+                   f'&"「不在清单里的」＝应付账款记在别的类型单位（或没写单位）的，【明细账】选 2202 能看到"'), F_NOTE, KPI_FILL, align=ALW)
     ws.merge_cells('M3:N3')
-    ws.row_dimensions[3].height = 34
+    ws.row_dimensions[3].height = 44
     heads = [('A', '序号'), ('B', '供应商 / 加工厂'), ('C', '类型'), ('D', '期初欠款\n（建账日）'),
              ('E', f'="1～"&{m}&"月"&CHAR(10)&"送货 / 加工"'), ('F', f'="1～"&{m}&"月"&CHAR(10)&"付款"'),
              ('G', f'={m}&"月末"&CHAR(10)&"还欠"'), ('H', f'={m}&"月"&CHAR(10)&"送货 / 加工"'), ('I', f'={m}&"月"&CHAR(10)&"付款"'),
@@ -566,28 +598,33 @@ def build_aps(wb, ctx):
         for c in cols:
             ws[f'{c}{r}'].fill = FILL_NONE
         ws[f'G{r}'].fill = FILL_SUB
+    # 合计行（第 4 行，在表头上面）：用 SUBTOTAL，筛选以后只合计看得见的那几家
     r = AP_TOT
+    vis = f'SUBTOTAL(102,A{AP_R0}:A{AP_R1})'          # 看得见的家数（A 列序号是数字）
     put(ws, f'A{r}', '', F_TXTB, FILL_TOT)
-    put(ws, f'B{r}', f'="合计（"&{cnt}&" 家）"', F_TXTB, FILL_TOT, align=AC)
+    put(ws, f'B{r}', f'=IF({vis}={cnt},"合计（"&{cnt}&" 家）","筛选出 "&{vis}&" 家（共 "&{cnt}&" 家）")', F_TXTB, FILL_TOT, align=AC)
     put(ws, f'C{r}', '', F_TXTB, FILL_TOT)
     for c in 'DEFGHI':
-        put(ws, f'{c}{r}', f'=ROUND(SUM({c}{AP_R0}:{c}{AP_R1}),2)', F_AUTOB, FILL_TOT, MONEY, AR)
+        put(ws, f'{c}{r}', f'=ROUND(SUBTOTAL(109,{c}{AP_R0}:{c}{AP_R1}),2)', F_AUTOB, FILL_TOT, MONEY, AR)
     for c in 'JKL':
-        put(ws, f'{c}{r}', f'=IF(COUNT({c}{AP_R0}:{c}{AP_R1})=0,"",MAX({c}{AP_R0}:{c}{AP_R1}))', F_AUTOB, FILL_TOT, DATE, AC)
+        put(ws, f'{c}{r}', f'=IF(SUBTOTAL(102,{c}{AP_R0}:{c}{AP_R1})=0,"",SUBTOTAL(104,{c}{AP_R0}:{c}{AP_R1}))', F_AUTOB, FILL_TOT, DATE, AC)
     put(ws, f'M{r}', '', F_AUTOB, FILL_TOT)
-    put(ws, f'N{r}', f'=IF(COUNTIF(N{AP_R0}:N{AP_R1},"⚠*")=0,"","⚠ "&COUNTIF(N{AP_R0}:N{AP_R1},"⚠*")&" 家付多了")', F_AUTOB, FILL_TOT,
-        align=AL)
+    put(ws, f'N{r}', f'=IF(COUNTIF(N{AP_R0}:N{AP_R1},"⚠*")=0,"","⚠ 全部单位里 "&COUNTIF(N{AP_R0}:N{AP_R1},"⚠*")&" 家付多了")',
+        F_AUTOB, FILL_TOT, align=AL)
     ws.row_dimensions[r].height = 22
-    _neg_red(ws, f'D{AP_TOT}:I{AP_R1}', f'D{AP_TOT}')
+    _neg_red(ws, f'D{AP_TOT}:I{AP_TOT}', f'D{AP_TOT}')
+    _neg_red(ws, f'D{AP_R0}:I{AP_R1}', f'D{AP_R0}')
     _chk_cf(ws, f'N{AP_R0}:N{AP_R1}', f'$N{AP_R0}')
     _help(ws, AP_HDR, [(AP_IDX, '往来单位第几行'), (AP_LD, '最后送货'), (AP_LR, '最后收单'), (AP_LP, '最后付款')], AP_R0, AP_R1)
-    _help(ws, AP_HDR, [(AP_HD, '送货日期'), (AP_HR, '收单日期')], DN_R0, DN_R1)
-    _help(ws, AP_HDR, [(AP_HOD, '外发单据日期'), (AP_HOR, '外发收单日期')], OT_R0, OT_R1)
-    _help(ws, AP_HDR, [(AP_HP, '付款日期')], J_R0, J_R1)
+    # 跟源表一行对一行的帮手列：第 5 行起是数据，小标题写在第 4 行
+    _help(ws, AP_TOT, [(AP_HD, '送货日期'), (AP_HR, '收单日期')], DN_R0, DN_R1)
+    _help(ws, AP_TOT, [(AP_HOD, '外发单据日期'), (AP_HOR, '外发收单日期')], OT_R0, OT_R1)
+    _help(ws, AP_TOT, [(AP_HP, '付款日期')], J_R0, J_R1)
     ws[f'{AP_IDX}{AP_HDR}'].font = F_HELP
     ws.auto_filter.ref = f'A{AP_HDR}:N{AP_R1}'
     ws.freeze_panes = f'C{AP_R0}'
-    print_setup(ws, f'{AP_HDR}:{AP_TOT}', landscape=True)
+    print_setup(ws, f'{AP_TOT}:{AP_HDR}', landscape=True)
+    ws.print_area = f'A1:N{AP_R1}'
 
 
 # ═══════════════════════════ 供应商对账单 ═══════════════════════════
@@ -620,8 +657,8 @@ def build_sst(wb, ctx):
     title(ws, '供 应 商 对 账 单', 'N', C_VIEW,
           '💡 C3 选供应商 / 加工厂，F3、H3 填起止日期（黄格）。上面是汇总：期初欠款（起始日以前，含建账时的期初）＋ 本期送货 / 加工 − 本期付款 ＝ 期末欠款；'
           '下面按日期一笔一笔列出来（送货、退货、加工、付款、对方退款、手工调整），最后一列滚动余额，最下面是合计和签字栏。'
-          '日期＝记账日期（一般就是送货单上的日期；被结账挪到收单月的，备注里写了原来的送货日期）。'
-          '打印：A4 横向，选中要打印的行（到签字栏那一行）再打印。最多列 300 笔，多了把日期范围缩短。', h2=48)
+          '日期＝记账日期（一般就是送货单上的日期；那个月已结账、单子晚到被挪到收单月的，备注里写了原来的送货日期）。'
+          '打印：A4 横向，打印区域已经设好（到清单最后一行），每页重复表头。最多列 300 笔，多了把日期范围缩短。', h2=48)
     _home(ws, 'N')
     sup = _first_unit(ctx, '材料供应商')
     selector(ws, 'B3', '供应商', 'C3', sup, f'={UN_NAMES}', '@', '选【往来单位】里的供应商 / 加工厂')
@@ -738,6 +775,7 @@ def build_sst(wb, ctx):
     ws[f'{SS_SLOT}5'].font = ws[f'{SS_SLOT}6'].font = F_HELP
     ws.freeze_panes = f'A{SS_HDR + 1}'
     print_setup(ws, f'{SS_HDR}:{SS_HDR}', landscape=True)
+    ws.print_area = f'A1:N{SS_R1}'                # 到清单容量末行（含浮动的合计、签字栏），不带右边隐藏列
 
 
 # ═══════════════════════════ 客户对账单 ═══════════════════════════
@@ -747,19 +785,25 @@ CS_LN, CS_RN, CS_ON = 400, 100, 100           # 交货明细 / 收款等 / 按�
 CS_L1 = CS_R0 + CS_LN                         # 多 1 行给浮动「合计」
 CS_RR1 = CS_R0 + CS_RN
 CS_O1 = CS_R0 + CS_ON
-CS_LI, CS_LK, CS_RS, CS_RK, CS_OF, CS_OI, CS_OK_, CS_ONO = 'U', 'V', 'W', 'X', 'Y', 'Z', 'AA', 'AB'
+CS_LI, CS_LK, CS_RS, CS_RK, CS_OF, CS_OI, CS_OK_, CS_ONO, CS_OH = 'U', 'V', 'W', 'X', 'Y', 'Z', 'AA', 'AB', 'AC'
 # 隐藏：U 交货第 k 行在订单明细第几行  V 种类 ｜ W 收款等第 k 笔的分录槽位  X 种类 ｜
-#       Y（跟【订单明细】一行对一行）这一行是不是这个订单号在清单里第一次出现  Z 第 k 个订单在订单明细第几行  AA 种类  AB 订单号原值
+#       Y（跟【订单明细】一行对一行）这一行是不是这张单在清单里第一次出现（是＝本行序号 i）
+#       AC（跟【订单明细】一行对一行）在清单里的行＝这张单的 OFR（单在订单明细第一次出现的序号，按 NOK 规范写法认单），否则 ""
+#       Z 第 k 张单在清单里第一次出现是订单明细第几行  AA 种类  AB 这张单的 OFR（按它分组小计）
+#   「第一次出现」只在同一张单的行里找：从这张单在订单明细的首行（OFR）找到本行，用 MATCH（找到第一个就停），不从表头数起
 
 
 def build_cst(wb, ctx):
     ws = wb[SH_CST]
     widths(ws, {'A': 5, 'B': 11, 'C': 10, 'D': 10, 'E': 14, 'F': 7, 'G': 9, 'H': 12, 'I': 2,
-                'J': 5, 'K': 11, 'L': 26, 'M': 12, 'N': 12, 'O': 2, 'P': 11, 'Q': 7, 'R': 8, 'S': 12, 'T': 2})
+                'J': 5, 'K': 11, 'L': 26, 'M': 12, 'N': 12, 'O': 2, 'P': 11, 'Q': 7, 'R': 9, 'S': 12, 'T': 2})
     title(ws, '客 户 对 账 单（给电商部对账）', 'S', C_VIEW,
           '💡 C3 选客户，F3、H3 填起止日期（黄格）。上面是汇总：期初应收（起始日以前没收回的，含建账时的期初）＋ 本期交货 − 本期收款 ＋ 其他（退款给客户等）'
           '＝ 期末应收（正数＝客户还欠我们）。左边是这段时间每一笔交货（【订单明细】填了交货日期的行，退回来的是负数），右边是收款等'
-          '（资金日记账收的货款、退的钱、手工分录调的），最右边按订单号（采购单号）小计，方便跟电商部一张单一张单对。', h2=48)
+          '（资金日记账收的货款、退的钱、手工分录调的），最右边按订单号（采购单号）小计，方便跟电商部一张单一张单对。'
+          '金额都是净数（退货已经扣掉、返修重交照样算钱）；「交货双数」不含退货（负数）和返修重交的行（备注写了「返修」的），'
+          '跟【订单汇总】【款式成本利润】的已交双数一个口径，所以左边清单「数量」逐行加起来可能跟它不一样。'
+          '打印：A4 横向，打印区域已经设好，每页重复表头。', h2=64)
     _home(ws, 'S')
     cus = _first_unit(ctx, '客户')
     selector(ws, 'B3', '客户', 'C3', cus, f'={UN_NAMES}', '@', '选【往来单位】里的客户')
@@ -799,9 +843,9 @@ def build_cst(wb, ctx):
         _val(ws, vc, f, MONEY, merge_v, font)
     put(ws, 'M4', '期末＝期初＋本期交货−本期收款＋其他\n（正数＝客户还欠我们）', F_NOTE, KPI_FILL, align=ACW)
     ws.merge_cells('M4:N5')
-    put(ws, 'P4', '本期交货双数', F_KPI_L, KPI_FILL, align=ACW)
+    put(ws, 'P4', '本期交货双数\n不含退货、返修', F_KPI_L, KPI_FILL, align=ACW)
     ws.merge_cells('P4:Q4')
-    _val(ws, 'P5', f'=SUMIFS({odr(OD_DQ)},{odr(OD_CSK)},">0")', CNTF, 'P5:Q5')
+    _val(ws, 'P5', f'=SUMIFS({odr(OD_CQ)},{odr(OD_CSK)},">0")', CNTF, 'P5:Q5')      # 成本双数 CQ：跟订单汇总、款式成本利润一个口径
     put(ws, 'R4', '本期交货\n订单数', F_KPI_L, KPI_FILL, align=ACW)
     ws.merge_cells('R4:S4')
     _val(ws, 'R5', f'={oc_raw}', CNTF, 'R5:S5')
@@ -817,8 +861,9 @@ def build_cst(wb, ctx):
     section(ws, 7, 'P', 'S', '按订单号小计', H_DARK)
     header(ws, CS_HDR, [('A', '序号'), ('B', '交货日期'), ('C', '订单号'), ('D', '款式'), ('E', '颜色及规格'), ('F', '数量'),
                         ('G', '单价'), ('H', '金额'), ('J', '序号'), ('K', '日期'), ('L', '摘要'), ('M', '收款'), ('N', '其他\n（退款等）'),
-                        ('P', '订单号'), ('Q', '交货\n行数'), ('R', '双数'), ('S', '金额')], H_VIEW)
-    # 左：交货明细
+                        ('P', '订单号'), ('Q', '交货\n行数'), ('R', '交货双数\n不含退货\n和返修'), ('S', '金额')], H_VIEW, height=46)
+    # 左：交货明细（合计行的「数量」＝清单逐行加起来的净数，含退货负数、返修重交）
+    dq_net = f'SUMIFS({odr(OD_DQ)},{odr(OD_CSK)},">0")'
     for r in range(CS_R0, CS_L1 + 1):
         Uc, V = f'${CS_LI}{r}', f'${CS_LK}{r}'
         k = f'ROW()-{CS_R0 - 1}'
@@ -828,10 +873,10 @@ def build_cst(wb, ctx):
         ws[f'{CS_LK}{r}'] = f'=IF({Uc}>0,1,IF({k}={lc}+1,2,0))'
         ws[f'A{r}'] = f'=IF({d},"",{k})'
         ws[f'B{r}'] = f'=IF({V}=2,"合计",IF({d},"",INT({od(OD_DDATE)})))'
-        ws[f'C{r}'] = f'=IF({d},"",{od(OD_NO)}&"")'
+        ws[f'C{r}'] = f'=IF({d},"",{od(OD_NOK)}&"")'
         ws[f'D{r}'] = f'=IF({d},"",{od(OD_STY)}&"")'
         ws[f'E{r}'] = f'=IF({d},"",{od(OD_SPEC)}&"")'
-        ws[f'F{r}'] = f'=IF({V}=2,$P$5,IF({d},"",{od(OD_DQ)}))'
+        ws[f'F{r}'] = f'=IF({V}=2,{dq_net},IF({d},"",{od(OD_DQ)}))'
         ws[f'G{r}'] = f'=IF({d},"",{od(OD_PRICEU)})'
         ws[f'H{r}'] = f'=IF({V}=2,$D$5,IF({d},"",{od(OD_AMT)}))'
     # 右：收款等
@@ -847,23 +892,28 @@ def build_cst(wb, ctx):
         ws[f'L{r}'] = f'=IF({d},"",{je(JE_MEMO)}&"")'
         ws[f'M{r}'] = f'=IF({X}=2,$F$5,IF({d},"",IF({je(JE_CR)}="1122",{je(JE_AMT)},"")))'
         ws[f'N{r}'] = f'=IF({X}=2,$H$5,IF({d},"",IF({je(JE_DR)}="1122",{je(JE_AMT)},"")))'
-    # 订单号第一次出现（跟【订单明细】一行对一行；只在这一行在清单里时才查，别的行直接空）
+    # 这张单第一次在清单里出现（跟【订单明细】一行对一行；只在这一行在清单里时才查，别的行直接空）
+    #   AC＝在清单里的行放这张单的 OFR（数字），Y＝从这张单的首行（OFR）往下 MATCH 第一个在清单里的同单行，就是本行 → 本行序号 i
+    oh = f'${CS_OH}${OD_R0}:${CS_OH}${OD_R1}'
     for r in range(OD_R0, OD_R1 + 1):
         csk = f'{q(SH_ORD)}!${OD_CSK}{r}'
-        ws[f'{CS_OF}{r}'] = (f'=IF({csk}="","",IF(COUNTIFS({q(SH_ORD)}!${OD_NO}${OD_HDR}:${OD_NO}{r - 1},{q(SH_ORD)}!${OD_NO}{r},'
-                             f'{q(SH_ORD)}!${OD_CSK}${OD_HDR}:${OD_CSK}{r - 1},">0")=0,ROW()-{OD_R0 - 1},""))')
-    # 右右：按订单号小计
+        ofr = f'{q(SH_ORD)}!${OD_OFR}{r}'
+        o = f'${CS_OH}{r}'
+        ws[f'{CS_OH}{r}'] = f'=IF({csk}="","",N({ofr}))'
+        ws[f'{CS_OF}{r}'] = (f'=IF({o}="","",IF({o}<1,ROW()-{OD_HDR},'
+                             f'IF(MATCH({o},INDEX({oh},{o}):${CS_OH}${OD_R1},0)=ROW()-{OD_HDR}-{o}+1,ROW()-{OD_HDR},"")))')
+    # 右右：按订单号小计（按 OFR 分组＝按订单号规范写法 NOK 认单：数字 / 文字 / 前后空格都算同一张）
     for r in range(CS_R0, CS_O1 + 1):
         Z, AA, AB = f'${CS_OI}{r}', f'${CS_OK_}{r}', f'${CS_ONO}{r}'
         k = f'ROW()-{CS_R0 - 1}'
         d = f'{AA}<>1'
-        crit = f'{odr(OD_NO)},{AB},{odr(OD_CSK)},">0"'
+        crit = f'{odr(OD_OFR)},{AB},{odr(OD_CSK)},">0"'
         ws[f'{CS_OI}{r}'] = f'=IF({k}>{oc},0,SMALL(${CS_OF}${OD_R0}:${CS_OF}${OD_R1},{k}))'
         ws[f'{CS_OK_}{r}'] = f'=IF({Z}>0,1,IF({k}={oc}+1,2,0))'
-        ws[f'{CS_ONO}{r}'] = f'=IF({Z}=0,"",INDEX({odr(OD_NO)},{Z}))'
-        ws[f'P{r}'] = f'=IF({AA}=2,"合计",IF({d},"",{AB}&""))'
+        ws[f'{CS_ONO}{r}'] = f'=IF({Z}=0,0,N(INDEX({odr(OD_OFR)},{Z})))'
+        ws[f'P{r}'] = f'=IF({AA}=2,"合计",IF({d},"",INDEX({odr(OD_NOK)},{Z})&""))'
         ws[f'Q{r}'] = f'=IF({AA}=2,{lc_raw},IF({d},"",COUNTIFS({crit})))'
-        ws[f'R{r}'] = f'=IF({AA}=2,$P$5,IF({d},"",SUMIFS({odr(OD_DQ)},{crit})))'
+        ws[f'R{r}'] = f'=IF({AA}=2,$P$5,IF({d},"",SUMIFS({odr(OD_CQ)},{crit})))'
         ws[f'S{r}'] = f'=IF({AA}=2,$D$5,IF({d},"",SUMIFS({odr(OD_AMT)},{crit})))'
     _plain_rows(ws, CS_R0, CS_L1, list('ABCDEFGH'), fmts={'A': CNTF, 'B': DATE, 'F': QTYF, 'G': MONEY, 'H': MONEY},
                 aligns={'B': AL, 'E': AL, 'F': AR, 'G': AR, 'H': AR})
@@ -875,12 +925,13 @@ def build_cst(wb, ctx):
     _float_cf(ws, f'P{CS_R0}:S{CS_O1}', f'${CS_OK_}{CS_R0}')
     _neg_red(ws, f'F{CS_R0}:H{CS_L1}', f'F{CS_R0}')
     _help(ws, CS_HDR, [(CS_LI, '订单明细第几行'), (CS_LK, '种类'), (CS_RS, '分录槽位'), (CS_RK, '种类'),
-                       (CS_OI, '订单首行'), (CS_OK_, '种类'), (CS_ONO, '订单号')], CS_R0, CS_L1)
-    _help(ws, 4, [(CS_OF, '订单号首次（对订单明细行）')], OD_R0, OD_R1)
+                       (CS_OI, '订单首行'), (CS_OK_, '种类'), (CS_ONO, '这张单的 OFR')], CS_R0, CS_L1)
+    _help(ws, OD_HDR, [(CS_OF, '本单在清单里首次（对订单明细行）'), (CS_OH, '清单里的行：本单 OFR')], OD_R0, OD_R1)
     for c in (CS_LI, CS_RS, CS_OI):
         ws[f'{c}6'].font = ws[f'{c}7'].font = F_HELP
     ws.freeze_panes = f'A{CS_R0}'
     print_setup(ws, f'{CS_HDR}:{CS_HDR}', landscape=True)
+    ws.print_area = f'A1:S{max(CS_L1, CS_RR1, CS_O1)}'      # 到三块清单容量最长那块的末行，不带右边隐藏列
 
 
 # ═══════════════════════════ 费用汇总 ═══════════════════════════
@@ -934,14 +985,17 @@ def build_fee(wb, ctx):
         for c in MC:
             ws[f'{c}{r}'] = amt(r, c)
         ws[f'O{r}'] = f'=IF(OR($A{r}="",${FX_CODE}{r}=""),"",SUM(C{r}:N{r}))'
-    # 未分项目：科目（含下级）本月借−贷（制造费用不算月末转出到生产成本的那笔）− 上面各项目里这个科目的
+    # 未分项目：科目（含下级）本月借−贷（科目×月矩阵 mat()；制造费用不算月末转出到生产成本的那笔）− 上面各项目里这个科目的
+    #   制造转入那笔＝【记账分录】制造转入块第 m 个槽位的金额（借 400104 贷 4101，layout JE_BLK）
+    xfer0 = JE_BLK['制造转入'][0]
     for i, code in enumerate((MOH, '5601', '5602', '5603')):
         r = FX_NONE + i
         ws[f'A{r}'], ws[f'B{r}'], ws[f'{FX_CODE}{r}'] = '未分项目', code_cls[code], code
         Qc = f'${FX_CODE}{r}'
-        for c in MC:
-            ws[f'{c}{r}'] = (f'=ROUND(SUMIFS({jer(JE_AMT)},{jer(JE_DR)},{Qc}&"*",{jer(JE_M)},{c}${FE_HDR_})'
-                             f'-SUMIFS({jer(JE_AMT)},{jer(JE_CR)},{Qc}&"*",{jer(JE_M)},{c}${FE_HDR_},{jer(JE_SRC)},"<>制造转入")'
+        for m, c in enumerate(MC, 1):
+            back = f'+N({q(SH_JE)}!${JE_AMT}${xfer0 + m - 1})' if code == MOH else ''
+            ws[f'{c}{r}'] = (f'=ROUND({mat(Qc + chr(38) + chr(34) + "*" + chr(34), "D", m)}'
+                             f'-{mat(Qc + chr(38) + chr(34) + "*" + chr(34), "C", m)}{back}'
                              f'-SUMIFS({c}${FE_R0}:{c}${FX_DEP + 2},${FX_CODE}${FE_R0}:${FX_CODE}${FX_DEP + 2},{Qc}),2)')
         ws[f'O{r}'] = f'=SUM(C{r}:N{r})'
     cols = ['A', 'B'] + MC + ['O']
@@ -1034,6 +1088,7 @@ def build_wsum(wb, ctx):
     put(ws, f'O{WS_HDR}', '全年', F_HDR, fill(H_VIEW), align=ACW)
     ws.row_dimensions[WS_HDR].height = 30
     MC = [CL(3 + i) for i in range(12)]
+    W2211 = '"2211*"'                             # 应付职工薪酬（含下级）：科目×月矩阵 mat() 取累计借贷
     for r in range(DP_R0, DP_R1 + 1):
         a = f'$A{r}'
         ws[f'A{r}'] = f"={q(SH_BASE)}!${DP_NAME}${r}&\"\""
@@ -1054,8 +1109,8 @@ def build_wsum(wb, ctx):
         (WS_PAID, '实发（付工资）', '资金日记账',
          lambda c: f'=-SUMIFS({jr(J_NET)},{jr(J_CATX)},"付工资",{jr(J_CM)},{c}${WS_HDR},{jr(J_OK)},1)', FILL_SUB, 'sum'),
         (WS_OWE, '月末还没发的工资', '应付职工薪酬余额',
-         lambda c: (f'=ROUND({COA_OPEN_OF("2211")}+{je_sum(chr(34) + "2211*" + chr(34), "C", chr(34) + "<=" + chr(34) + "&" + c + "$" + str(WS_HDR))}'
-                    f'-{je_sum(chr(34) + "2211*" + chr(34), "D", chr(34) + "<=" + chr(34) + "&" + c + "$" + str(WS_HDR))},2)'),
+         lambda c: (f'=ROUND({COA_OPEN_OF("2211")}+{mat(W2211, "C", MC.index(c) + 1, True)}'
+                    f'-{mat(W2211, "D", MC.index(c) + 1, True)},2)'),
          FILL_SUB, 'last'),
     ]
     for r, lab, note, fm, fl, yr in rows:
@@ -1086,8 +1141,7 @@ def build_wsum(wb, ctx):
     ws.row_dimensions[r + 1].height = 30
     _help(ws, WS_HDR, [(WS_CODE, '科目')], WS_D0, WS_DT - 1)
     # 第 3 行
-    owe_now = (f'ROUND({COA_OPEN_OF("2211")}+{je_sum(chr(34) + "2211*" + chr(34), "C")}'
-               f'-{je_sum(chr(34) + "2211*" + chr(34), "D")},2)')
+    owe_now = f'ROUND({COA_OPEN_OF("2211")}+{mat(W2211, "C", 12, True)}-{mat(W2211, "D", 12, True)},2)'   # 全年累计＝现在
     _lbl(ws, 'A3', '年初没发的工资')
     _val(ws, 'B3', f'={COA_OPEN_OF("2211")}', MONEY, 'B3:C3')
     _lbl(ws, 'D3', '本年应发', 'D3:E3')
@@ -1117,6 +1171,7 @@ AB_CHDR = AB_CSEC + 1
 AB_C0 = AB_CHDR + 1
 NCT = CT_R1 - CT_R0 + 1
 AB_CTOT = AB_C0 + NCT
+AB_OM, AB_LM = 'P3', 'Q3'                     # 隐藏：建账月、最新月份（② 块只显示这两个月之间的）
 
 
 def build_accb(wb, ctx):
@@ -1127,7 +1182,7 @@ def build_accb(wb, ctx):
           '💡 全自动，来自【资金日记账】。① 每个账户：期初＋本年收入−本年支出＋内部转入−内部转出＝当前余额（跟资金日记账、【基础资料】② 一样）；'
           '「记账的余额」是会计科目里的数（只算校验不是 ✗ 的行），两个不一样就是日记账里有 ✗ 的行没进账（或手工分录动了资金科目），提示列会说。'
           '「实际余额」是在【基础资料】② 手填的银行 App / 支付宝上的数，对不上就是漏记、记错了。'
-          '② 每个账户每个月月底的余额（含账户之间转账的两头）。③ 每个收支类别每个月的净额（收进来是正数、付出去是负数；自己账户之间转账不算）。', h2=64)
+          '② 每个账户每个月月底的余额（含账户之间转账的两头；建账以前的月份、最新月份以后还没到的月份空着）。③ 每个收支类别每个月的净额（收进来是正数、付出去是负数；自己账户之间转账不算）。', h2=64)
     _home(ws, 'N')
     heads = [('A', '账户'), ('B', '类型'), ('C', '科目编码'), ('D', '期初余额\n（建账日）'), ('E', '本年收入\n（不含内部转入）'),
              ('F', '本年支出\n（不含内部转出）'), ('G', '内部转入'), ('H', '内部转出'), ('I', '当前余额\n（按日记账）'),
@@ -1147,7 +1202,8 @@ def build_accb(wb, ctx):
         ws[f'G{r}'] = f'=IF({e},"",SUMIFS({net},{acc},{a},{catx},"{XFER}",{net},">0")-SUMIFS({net},{tox},{a},{net},"<0"))'
         ws[f'H{r}'] = f'=IF({e},"",-SUMIFS({net},{acc},{a},{catx},"{XFER}",{net},"<0")+SUMIFS({net},{tox},{a},{net},">0"))'
         ws[f'I{r}'] = f'=IF({e},"",N({base(AC_NOW, r)}))'
-        ws[f'J{r}'] = f'=IF(OR({e},$C{r}=""),"",ROUND(D{r}+{je_sum(f"$C{r}", "D")}-{je_sum(f"$C{r}", "C")},2))'
+        ws[f'J{r}'] = (f'=IF(OR({e},$C{r}=""),"",ROUND(D{r}+{mat(f"$C{r}", "D", 12, True)}'
+                       f'-{mat(f"$C{r}", "C", 12, True)},2))')          # 科目×月矩阵：全年累计
         ws[f'K{r}'] = f'=IF(J{r}="","",ROUND(I{r}-J{r},2))'
         ws[f'L{r}'] = f'=IF(OR({e},{base(AC_REAL, r)}=""),"",N({base(AC_REAL, r)}))'
         ws[f'M{r}'] = f'=IF(L{r}="","",ROUND(L{r}-I{r},2))'
@@ -1186,8 +1242,12 @@ def build_accb(wb, ctx):
     _chk_cf(ws, 'M3', '$M$3')
     ws.row_dimensions[3].height = 32
 
-    # ── ② 各账户月末余额
-    section(ws, AB_BSEC, 'A', 'N', '② 各账户每月月底的余额（含账户之间转账的两头；日期不对的行不算）', H_DARK)
+    # ── ② 各账户月末余额：建账以前的月份、最新月份以后的月份显示空（不是 0：那些月份还没有数）
+    put(ws, AB_OM, f'={OPEN_M}', F_HELP, border=False)            # 建账月
+    put(ws, AB_LM, f'={LATEST}', F_HELP, border=False)            # 最新月份（有业务的最后一个月；还没业务＝建账月）
+    hide(ws, AB_OM[0], AB_LM[0])
+    om, lm = f'${AB_OM[0]}${AB_OM[1:]}', f'${AB_LM[0]}${AB_LM[1:]}'
+    section(ws, AB_BSEC, 'A', 'N', '② 各账户每月月底的余额（含账户之间转账的两头；日期不对的行不算；建账以前、最新月份以后的月份不显示）', H_DARK)
     put(ws, f'A{AB_BHDR}', '账户', F_HDR, fill(H_VIEW), align=ACW)
     _mhdr(ws, AB_BHDR, 'B')
     put(ws, f'N{AB_BHDR}', '当前余额', F_HDR, fill(H_VIEW), align=ACW)
@@ -1200,7 +1260,7 @@ def build_accb(wb, ctx):
         ws[f'A{r}'] = f'=A{r - off}'
         for c in MB:
             mm = f'{c}${AB_BHDR}'
-            ws[f'{c}{r}'] = (f'=IF({a}="","",ROUND(N($D{r - off})+SUMIFS({net},{acc},{a},{jr(J_CM)},">=1",{jr(J_CM)},"<="&{mm})'
+            ws[f'{c}{r}'] = (f'=IF(OR({a}="",{mm}<{om},{mm}>{lm}),"",ROUND(N($D{r - off})+SUMIFS({net},{acc},{a},{jr(J_CM)},">=1",{jr(J_CM)},"<="&{mm})'
                              f'-SUMIFS({net},{tox},{a},{jr(J_CM)},">=1",{jr(J_CM)},"<="&{mm}),2))')
         ws[f'N{r}'] = f'=IF({a}="","",I{r - off})'
     cols = ['A'] + MB + ['N']
@@ -1213,7 +1273,8 @@ def build_accb(wb, ctx):
     r = AB_BTOT
     put(ws, f'A{r}', '合计', F_TXTB, FILL_TOT, align=AC)
     for c in MB + ['N']:
-        put(ws, f'{c}{r}', f'=ROUND(SUM({c}{AB_B0}:{c}{AB_BTOT - 1}),2)', F_AUTOB, FILL_TOT, MONEY, AR)
+        put(ws, f'{c}{r}', f'=IF(COUNT({c}{AB_B0}:{c}{AB_BTOT - 1})=0,"",ROUND(SUM({c}{AB_B0}:{c}{AB_BTOT - 1}),2))',
+            F_AUTOB, FILL_TOT, MONEY, AR)
     _neg_red(ws, f'B{AB_B0}:N{AB_BTOT}', f'B{AB_B0}')
 
     # ── ③ 收支类别 × 月

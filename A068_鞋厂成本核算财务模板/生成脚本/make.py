@@ -3,10 +3,11 @@
    先按顺序把所有表建好（空表），再让各模块往里写——模块之间互相引用的表一定存在。"""
 import importlib
 import re
+from copy import copy
 import openpyxl
-from openpyxl.styles import Protection
+from openpyxl.styles import Protection, Font, PatternFill, Border, Alignment
 from openpyxl.worksheet.protection import SheetProtection
-from common import home_link, print_setup, CL
+from common import print_setup, link, CL
 from layout import *
 import demo
 
@@ -65,6 +66,40 @@ def _fit_widths(wb):
                 cd.width = w
 
 
+def _home_corner(ws):
+    """每张表（首页除外）左上角 A1 放「←首页」（#23）：第 1 行标题合并区改成从 B1 开始（内容、样式挪到 B1），
+       A1 白字、跟标题同底色、表内链接到首页 A1；各模块原来放在标题右边的「← 回首页」去掉；冻结窗格保证 A 列一直看得见。"""
+    for c in ws[1]:                                   # 原来标题右边的回首页链接
+        if c.column > 1 and c.hyperlink is not None and SH_HOME in (c.hyperlink.location or ''):
+            c.hyperlink = None
+            c.value = None
+            c.font, c.fill, c.border = Font(), PatternFill(fill_type=None), Border()
+    a1 = ws['A1']
+    mg = next((m for m in ws.merged_cells.ranges if m.min_row == 1 and m.max_row == 1 and m.min_col == 1), None)
+    val, fnt, fil, aln = a1.value, copy(a1.font), copy(a1.fill), copy(a1.alignment)
+    last = mg.max_col if mg is not None else 2
+    if mg is not None:
+        ws.unmerge_cells(str(mg))
+    if val is not None or mg is not None:
+        b1 = ws['B1']
+        b1.value, b1.font, b1.fill, b1.alignment = val, fnt, fil, aln
+        if last > 2:
+            ws.merge_cells(start_row=1, start_column=2, end_row=1, end_column=last)
+    cd = ws.column_dimensions['A']
+    cd.width = max(cd.width or 8.43, 6)
+    a1.value = '←首页'
+    a1.font = Font(name='微软雅黑', sz=9 if cd.width < 8 else 10, bold=True, color='FFFFFFFF', underline='single')
+    a1.fill = fil if (fil is not None and fil.fill_type) else PatternFill('solid', fgColor=C_HOME)
+    a1.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    a1.border = Border()
+    link(a1, SH_HOME, 'A1')
+    fp = ws.freeze_panes                              # 冻结了行、没冻结列（如 A5）：改成连 A 列一起冻住，往右拉也看得见「←首页」
+    if fp:
+        col, row = re.match(r'([A-Z]+)(\d+)', fp).groups()
+        if col == 'A':
+            ws.freeze_panes = f'B{row}'
+
+
 BANNED = re.compile(r'(?<![A-Z0-9_.])(XLOOKUP|XMATCH|FILTER|UNIQUE|SORT|SORTBY|SEQUENCE|LET|LAMBDA|MAXIFS|MINIFS|IFS|SWITCH|'
                     r'TEXTJOIN|CONCAT|INDIRECT|OFFSET|TODAY|NOW|RAND|RANDBETWEEN)\(')
 
@@ -114,10 +149,8 @@ def build(only=None, scenario=None):
         for n in names:
             ws = wb[n]
             ws.sheet_properties.tabColor = color[2:]
-            if grp in ('录入', '档案'):
-                end = max((mg.max_col for mg in ws.merged_cells.ranges if mg.min_row == 1 and mg.min_col == 1), default=ws.max_column)
-                home_link(ws, f'{CL(end + 1)}1')
-                ws.column_dimensions[CL(end + 1)].width = max(ws.column_dimensions[CL(end + 1)].width or 0, 10)
+            if grp != '首页':
+                _home_corner(ws)
             if grp in ('查看', '报表', '校验', '首页'):
                 for row in ws.iter_rows():
                     for c in row:

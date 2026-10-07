@@ -2,7 +2,8 @@
 """成本核心（第二阶段）：【_款式月】（隐藏取数表）【成本分摊表】【款式成本利润】【订单汇总】【订单查询】。
 
 核算办法（开发说明「模块 s_cost」）：
-  · 款式 × 月：直接记到款式的成本（CKEY＝"款|款式|组件"）本月有交货才转出（到本月累计 − 以前已转出），没交货挂着；
+  · 款式 × 月：直接记到款式的成本（CKEY＝"款|款式|组件"）本月有交货才转出，按交货进度转：
+    转出＝(到本月累计 − 以前已转出) × 本月双数 ÷ (本月双数＋月末还没交的订单双数)，没交货挂着；
     公共成本（CKEY＝"公||组件"，制造另加车间折旧）本月有交货就按「交货双数 × 权重」全部分掉（减手填的「在制估计」），
     一双都没交的月份整月结转下月。
   · 分公共成本时每个款的份额用「累计舍入」：第 i 个款分到 ROUND(公共×前 i 个款累计加权双数÷加权双数,2) − ROUND(公共×前 i−1 个…,2)，
@@ -37,11 +38,6 @@ def _w(comp):
 def _od(col, r):
     """【订单明细】某列第 r 行（单格，绝对列）"""
     return f'{q(SH_ORD)}!${col}{r}'
-
-
-def _odg(col, r):
-    """【订单明细】某列「表头行 ～ 第 r 行」（往下拖时变长）"""
-    return f'{q(SH_ORD)}!${col}${OD_HDR}:${col}{r}'
 
 
 def _lbl(ws, coord, text, merge=None, fill_=KPI_FILL):
@@ -82,7 +78,8 @@ def build_sm(wb, ctx):
     ws = wb[SH_SM]
     r0, r1 = SM_R0, SM_R1
     ws['A1'] = ('_款式月（隐藏取数表，全自动）：第 r 行＝【款式档案】第 r 行。每块 12 列＝1～12 月（第 3 行是月份数字）。'
-                '双数/收入来自【订单明细】；转X＝直接成本本月转出；本X＝转X＋分到的公共成本；成本＝四块合计；单双＝成本÷双数。')
+                '双数（成本双数，不含退货、返修重交）/收入来自【订单明细】；未交＝月末还没交的订单双数；'
+                '转X＝直接成本本月转出＝未转余额×双数÷(双数＋未交)；本X＝转X＋分到的公共成本；成本＝四块合计；单双＝成本÷双数。')
     ws['A1'].font = F_TXTB
     ws['A2'] = '别的表按 layout.py 取数，不要改动、不要插行删行。D 列＝款式序号（【订单明细】SROW 就是它）。'
     ws['A2'].font = F_NOTE
@@ -96,7 +93,8 @@ def build_sm(wb, ctx):
             put(ws, f'{c}{SM_MROW}', m, F_AUTOB, align=AC)
             put(ws, f'{c}{SM_HDR}', f'{blk}{m}', F_HDR, fill(color), align=AC)
             ws.column_dimensions[c].width = 9
-    od_dq, od_srow, od_dm, od_ok, od_amt = odr(OD_DQ), odr(OD_SROW), odr(OD_DM), odr(OD_OK), odr(OD_AMT)
+    od_srow, od_amt, od_smk, od_cq, od_oq = odr(OD_SROW), odr(OD_AMT), odr(OD_SMK), odr(OD_CQ), odr(OD_OQ)
+    od_odate, od_ddate = odr(OD_DATE), odr(OD_DDATE)
     for r in range(r0, r1 + 1):
         A, D = f'${SM_CODE}{r}', f'$D{r}'
         key = f'{q(SH_STY)}!${ST_KEY}{r}'
@@ -105,16 +103,24 @@ def build_sm(wb, ctx):
         ws[f'{SM_WL}{r}'] = f'=IF({A}="",0,N({q(SH_STY)}!${ST_WL}{r}))'
         ws[f'D{r}'] = f'=ROW()-{r0 - 1}'
         for m in range(1, 13):
-            cq, cr = sm_col('双数', m), sm_col('收入', m)
-            ws[f'{cq}{r}'] = (f'=IF({A}="",0,SUMIFS({od_dq},{od_srow},{D},{od_dm},{cq}${SM_MROW},{od_dq},">0",{od_ok},1))')
-            ws[f'{cr}{r}'] = f'=IF({A}="",0,ROUND(SUMIFS({od_amt},{od_srow},{D},{od_dm},{cr}${SM_MROW},{od_ok},1),2))'
+            cq, cr, cu = sm_col('双数', m), sm_col('收入', m), sm_col('未交', m)
+            # 双数＝成本双数 CQ（不含退货、返修重交）；收入含退货负数、返修重交。SMK＝IF(OK=1, SROW*16+DM, 0)：一个数字条件
+            ws[f'{cq}{r}'] = f'=IF({A}="",0,SUMIFS({od_cq},{od_smk},{D}*16+{cq}${SM_MROW}))'
+            ws[f'{cr}{r}'] = f'=IF({A}="",0,ROUND(SUMIFS({od_amt},{od_smk},{D}*16+{cr}${SM_MROW}),2))'
             dq = f'{cq}{r}'
-            # 转X：本月有交货 → 到本月累计的直接成本 − 1～m−1 月已转出；没交货 0（IF 短路：双数 0 时不算 cost_sum）
+            # 未交＝本月末还没交的订单双数（只在本月有交货时算）：下单日期 < 下月 1 日（空着也算已下单）的订单数量 − 交货日期 < 下月 1 日的成本双数
+            nxt = f'DATE({P["YEAR"]},{cu}${SM_MROW}+1,1)'
+            ws[f'{cu}{r}'] = (f'=IF(OR({A}="",{dq}<=0),0,MAX(0,SUMIFS({od_oq},{od_srow},{D})'
+                              f'-SUMIFS({od_oq},{od_srow},{D},{od_odate},">="&{nxt})'
+                              f'-SUMIFS({od_cq},{od_srow},{D},{od_ddate},"<"&{nxt})))')
+            uq = f'{cu}{r}'
+            # 转X：本月有交货 → (到本月累计的直接成本 − 1～m−1 月已转出) × 双数 ÷ (双数＋未交)：按交货进度转，还有没交的订单就留一部分；
+            #      没交货 0（IF 短路：双数 0 时不算 cost_sum）
             for comp in COMPS:
                 ct = sm_col(f'转{comp}', m)
                 cs = cost_sum(f'"款|"&{esc(A)}&"|{comp}"', f'"<="&{ct}${SM_MROW}', comp)
                 prior = '' if m == 1 else f'-SUM(${sm_col(f"转{comp}", 1)}{r}:{sm_col(f"转{comp}", m - 1)}{r})'
-                ws[f'{ct}{r}'] = f'=IF({A}="",0,IF({dq}<=0,0,ROUND({cs}{prior},2)))'
+                ws[f'{ct}{r}'] = f'=IF({A}="",0,IF({dq}<=0,0,ROUND(({cs}{prior})*{dq}/({dq}+{uq}),2)))'
             # 本X：转X ＋ 公共本月分摊 × 本款加权双数 ÷ 全部加权双数（累计舍入，各款之和正好＝公共本月分摊）
             for comp in COMPS:
                 cb, ct = sm_col(f'本{comp}', m), sm_col(f'转{comp}', m)
@@ -146,7 +152,7 @@ _ITEM_NOTE = {'其中直接到款式': '填了「用在哪」款式的：等这�
               '公共月末留在制': '下面「在制估计」按四块可分摊额拆到这块',
               '公共本月分摊': '有交货：可分摊−留在制；没交货：0（整月结转）',
               '公共结转下月': '可分摊−本月分到各款',
-              '直接本月转出': '本月交货的款：累计直接成本−以前已转出',
+              '直接本月转出': '本月交货的款：未转余额×本月交货÷(本月交货＋月末未交订单)',
               '本月转出合计': '直接转出＋公共分摊 → 月末结转营业成本'}
 
 
@@ -156,12 +162,14 @@ def build_alloc(wb, ctx):
     widths(ws, {'A': 24, 'B': 40, **{al_col(m): 11.5 for m in range(1, 13)}, AL_TOT: 13, 'P': 10})
     title(ws, '成 本 分 摊 表（月度成本计算单 · 每个月各款式的成本是怎么来的）', last, C_VIEW,
           '💡 全自动，每个月一列（只有「在制估计」一行可以手填）。成本分四块：材料、外发加工、直接人工、制造费用，每块分两种：'
-          '① 直接记到款式的（送货单 / 外发 / 计件工资 / 日记账里「用在哪」填了款式编码的）——这个款本月有交货才转出（到本月为止累计的减去以前转过的），'
-          '没交货就挂着等交货；② 公共的（没写用在哪的材料、外发、计时工资、房租水电、车间折旧……）——本月有交货就按「交货双数 × 款式系数」'
+          '① 直接记到款式的（送货单 / 外发 / 计件工资 / 日记账里「用在哪」填了款式编码的）——这个款本月有交货才转出，按交货进度转：'
+          '还没转的 × 本月交货双数 ÷（本月交货＋月末还没交的订单双数），后面还有没交的订单就留一部分给后面几批；没交货就挂着等交货'
+          '（每个款挂着多少看【款式档案】「挂着没转」列；款式不做了把状态改「停产」，以后再来的专用成本按公共分）；② 公共的（没写用在哪的材料、外发、计时工资、房租水电、车间折旧……）——本月有交货就按「交货双数 × 款式系数」'
           '全部分到本月交货的各款；一双都没交的月份整月结转到下个月。'
           '「在制估计」：月末车间里还有一大批没做完、不想让本月交货的款把公共成本全背了，就估个数填进去（比如 3000），这部分留到下个月再分；不填＝全部分掉。'
           '「本月转出合计」月末自动结转到营业成本；「月末在制」＝生产成本科目余额（挂着还没交货的）。最下面「核对」行 12 个月都要是 √。'
-          '晚到的送货单录进去以后，那个月的数会变（【基础资料】结了账的月份除外）。', h2=80)
+          '晚到的送货单录进去以后，那个月的数会变（【基础资料】⑩ 填了结账日期的月份不变：结账以后才收到的单算到收单那个月）。'
+          '「公共：本月分到各款」是负数（红字）多半是冲回暂估记到了下个月，看【数据校验】。', h2=80)
     home_link(ws, 'P1')
     R = AL_ROWS
     CR = AL_CROWS
@@ -192,7 +200,7 @@ def build_alloc(wb, ctx):
 
     # 双数、加权双数
     dq_col = lambda m: smr('双数', m)
-    row_style(R['双数'], '本月交货双数', '【订单明细】本月交货（只算实交>0、能记账的行）', INT, True, FILL_SUB)
+    row_style(R['双数'], '本月交货双数', '【订单明细】本月交货（成本双数：不含退货、返修重交）', INT, True, FILL_SUB)
     row_style(R['加权材料'], '加权双数（材料）', 'Σ 各款 交货双数×材料权重（分材料公共成本用）', WT)
     row_style(R['加权工费'], '加权双数（工费）', 'Σ 各款 交货双数×工费权重（分外发/人工/制造用）', WT)
     wm_r, wl_r = rng(SH_SM, SM_WM, SM_R0, SM_R1), rng(SH_SM, SM_WL, SM_R0, SM_R1)
@@ -259,7 +267,7 @@ def build_alloc(wb, ctx):
     row_style(R['标准材料'], '标准材料成本', 'Σ 交货双数×标准材料/双（填了标准的款）', MONEY)
     row_style(R['实际材料'], '实际材料成本', '这些款本月分到的材料成本（直接＋分摊）', MONEY)
     row_style(R['材料差额'], '差额（实际−标准）', '负数＝比标准少', MONEY)
-    row_style(R['提示'], '提示', '比标准少 10% 以上：可能还有送货单没拿到', 'General')
+    row_style(R['提示'], '提示', '比标准少 10% 以上：可能还有送货单没拿到；在制估计填得比可分摊的还多也在这里说', 'General')
     row_style(R['核对'], '核对', 'Σ 各款式本月成本 − 本月转出合计，应为 0（√＝平）', CHKF, True)
     sdm = str_(ST_SDM)
     occ_rows = [CR[x]['本月发生'] for x in COMPS]
@@ -280,8 +288,16 @@ def build_alloc(wb, ctx):
         ws[f'{c}{R["在制估计"]}'].font = F_IN
     for c in allm + [AL_TOT]:
         s, d = f'{c}{R["标准材料"]}', f'{c}{R["材料差额"]}'
-        ws[f'{c}{R["提示"]}'] = f'=IF(AND({s}>0,{d}<-0.1*{s}),"⚠ 比标准少 "&TEXT(-{d}/{s},"0%"),"")'
-        ws[f'{c}{R["提示"]}'].alignment = AC
+        std = f'IF(AND({s}>0,{d}<-0.1*{s}),"⚠ 比标准少 "&TEXT(-{d}/{s},"0%"),"")'
+        if c == AL_TOT:
+            ws[f'{c}{R["提示"]}'] = f'={std}'
+        else:   # 在制估计填得比四块可分摊合计还多：公式按可分摊全部留下（MIN(1,…)），这里说一声
+            tot = '+'.join(f'{c}{CR[x]["公共本月可分摊"]}' for x in COMPS)
+            est = f'N({c}{R["在制估计"]})'
+            over = f'AND(N({c}{R["双数"]})>0,({tot})>0,{est}>ROUND({tot},2))'
+            ws[f'{c}{R["提示"]}'] = f'=IF({over},"⚠ 在制估计比可分摊的还多，按可分摊全部留下",{std})'
+        ws[f'{c}{R["提示"]}'].alignment = ACW
+        ws[f'{c}{R["提示"]}'].font = F_NOTE
     for k in ('发生合计', '转出合计', '标准材料', '实际材料'):
         sum_year(R[k])
     T = AL_TOT
@@ -305,6 +321,11 @@ def build_alloc(wb, ctx):
     for r in range(4, rk + 1):
         ws.row_dimensions[r].height = 18
     ws.row_dimensions[4].height = 24
+    ws.row_dimensions[rt].height = 40            # 提示行：「在制估计比可分摊的还多…」一格放不下，折行
+    # 公共本月分摊 < 0（多半是冲回暂估记到了下个月）：红字
+    for comp in COMPS:
+        ra = CR[comp]['公共本月分摊']
+        _neg_red(ws, f'{C1}{ra}:{T}{ra}', f'{C1}{ra}')
     ws.freeze_panes = 'C5'
     print_setup(ws, '4:4', landscape=True)
 
@@ -316,38 +337,50 @@ SPL_R1 = SPL_R0 + SPL_N - 1
 # 隐藏帮手列：AF3 单款行号；AG3 起始月 AH3 截止月 AI3 期间费用 AJ3 全部收入；
 #   AG～AQ（第 6～405 行，第 k 行＝第 k 个款）：编码、双数、收入、材料、外发、人工、制造、成本、订单数、序号键、第 k 个是第几个款
 #   AS、AT（第 5～6004 行，跟【订单明细】一行对一行）：「订单|款式」在所选月份第一次交货＝1；订单在所选月份第一次交货＝1
+#   AU、AV（同上一行对一行）：本行在所选月份交了货（OK=1、成本双数>0）→ 订单|款式 / 订单号（规范写法），否则 ""；
+#     AS/AT 只在「这张单第一次出现的行（OFR）～上一行」里 MATCH 找有没有同样的——不再从表头数起（#36）
+#   AW（第 6～17 行＝1～12 月）：所选月份里有交货、【工资登记】那个月一笔能记账的工资都没有 → 月份，否则 99
 SPL_SROW = '$AF$3'
 SPL_LO, SPL_HI, SPL_PEXP, SPL_REVT = '$AG$3', '$AH$3', '$AI$3', '$AJ$3'
 (SH_CODE, SH_DQ, SH_REV, SH_MAT_, SH_OUT_, SH_LAB, SH_MOH, SH_COST, SH_NORD, SH_KEY, SH_IDX) = \
     'AG AH AI AJ AK AL AM AN AO AP AQ'.split()
 SH_OSF, SH_OF = 'AS', 'AT'
+SH_OSK, SH_ONK = 'AU', 'AV'
+SH_NOWG = 'AW'
 
 
-def _je_net(code, lo, hi):
-    """记账分录里某科目（前缀）在 lo～hi 月的「借−贷」发生额"""
-    def s(col):
-        return (f'SUMIFS({jer(JE_AMT)},{jer(col)},"{code}*",{jer(JE_M)},">="&{lo},{jer(JE_M)},"<="&{hi})')
-    return f'({s(JE_DR)}-{s(JE_CR)})'
+def _pexp_net(codes, lo, hi):
+    """科目（前缀）在 lo～hi 月的「借−贷」发生额：从【科目余额表】科目×月矩阵取（mat 累计列）。
+       lo＝1 时不取「lo−1 月累计」（INDEX(区域,0,0) 会变成整块），用 IF 挡住"""
+    def net(m):
+        return '+'.join(f'{mat(chr(34) + c + "*" + chr(34), "D", m, True)}-{mat(chr(34) + c + "*" + chr(34), "C", m, True)}'
+                        for c in codes)
+    return f'(({net(hi)})-IF({lo}>1,{net(f"({lo}-1)")},0))'
 
 
 def build_spl(wb, ctx):
     ws = wb[SH_SPL]
-    widths(ws, {'A': 5, 'B': 11, 'C': 12, 'D': 8, 'E': 12, 'F': 9, 'G': 11, 'H': 10, 'I': 10, 'J': 10, 'K': 12, 'L': 9,
+    widths(ws, {'A': 5, 'B': 11, 'C': 12, 'D': 10, 'E': 12, 'F': 9, 'G': 11, 'H': 10, 'I': 10, 'J': 10, 'K': 12, 'L': 9,
                 'M': 9, 'N': 12, 'O': 8, 'P': 11, 'Q': 12, 'R': 7, 'S': 2,
                 'T': 7, 'U': 8, 'V': 11, 'W': 10, 'X': 10, 'Y': 10, 'Z': 10, 'AA': 11, 'AB': 9, 'AC': 11, 'AD': 8, 'AE': 2})
     title(ws, '款 式 成 本 利 润（每个款卖了多少 · 成本多少 · 赚多少）', 'AD', C_VIEW,
-          '💡 老板看。黄格子选月份范围（起始月～截止月，1～12）。成本＝直接记到这个款的（专用材料、外发、计件工资、专用模具）'
+          '💡 老板看。黄格子选月份范围（起始月～截止月，1～12；截止月空着＝最新月份）。成本＝直接记到这个款的（专用材料、外发、计件工资、专用模具）'
           '＋按「交货双数×系数」分到的公共成本（没写用在哪的材料、计时工资、房租水电、车间折旧……），每个月怎么分的看【成本分摊表】。'
-          '只列所选月份有交货（或有成本）的款；「只看有交货」选「是」就只列有交货双数的。'
+          '直接成本按交货进度转：还有没交的订单，就留一部分给后面那几批；还挂在车间没转的（在制）这里看不到，看【款式档案】「挂着没转」列。'
+          '交货双数不含退货、返修重交（退货只冲收入）。只列所选月份有交货（或有成本）的款；「只看有交货」选「是」就只列有交货双数的。'
           '「期间费用分摊」＝所选月份的管理、销售、财务费用按收入比例摊给各款（【基础资料】「期间费用摊到款式」可改成「不摊」），毛利减掉它就是「净利」。'
-          '晚到的送货单录进去以后，那个月的成本会变（【基础资料】结了账的月份不变）。右边「单款逐月」选一个款看 1～12 月。', h2=64)
+          '月底工资、房租水电录全以前，这个月交货的款成本偏低（右上角会提醒）。'
+          '晚到的送货单录进去以后，那个月的成本会变（【基础资料】⑩ 填了结账日期的月份不变）。右边「单款逐月」选一个款看 1～12 月。', h2=64)
     home_link(ws, 'AE1')
     ws.column_dimensions['AE'].width = 10
     # 第 3 行：选择
     selector(ws, 'B3', '起始月', 'C3', 1, '"1,2,3,4,5,6,7,8,9,10,11,12"', MONTHF, '从几月（1～12）')
-    selector(ws, 'D3', '截止月', 'E3', 12, '"1,2,3,4,5,6,7,8,9,10,11,12"', MONTHF, '到几月（1～12）')
+    selector(ws, 'D3', '截止月', 'E3', None, '"1,2,3,4,5,6,7,8,9,10,11,12"', MONTHF, '到几月（1～12）；空着＝最新月份')
+    lastm = f'IF(N({P["LASTM"]})>=1,MIN(12,INT(N({P["LASTM"]}))),12)'
+    ws['D3'] = f'=IF(ISNUMBER($E$3),"截止月","截止月"&CHAR(10)&"空＝"&{lastm}&"月")'
+    ws['D3'].alignment = ACW
     selector(ws, 'F3', '只看有交货', 'G3', '否', '"否,是"', None, '是＝只列所选月份有交货双数的款')
-    _lbl(ws, 'H3', '所选月份\n期间费用', 'H3:I3')
+    _lbl(ws, 'H3', f'="所选月份期间费用"&CHAR(10)&IF({PERIOD}="按收入","（按收入摊到各款）","（不摊，只算到毛利）")', 'H3:I3')
     _val(ws, 'J3', f'={SPL_PEXP}', MONEY, 'J3:K3')
     _lbl(ws, 'L3', '跟成本分摊表', 'L3:M3')
     mrow = f'{SMQ}!${sm_col("双数", 1)}${SM_MROW}:${sm_col("双数", 12)}${SM_MROW}'
@@ -355,17 +388,21 @@ def build_spl(wb, ctx):
     alloc_out = f'SUMPRODUCT(({mrow}>={SPL_LO})*({mrow}<={SPL_HI})*{out_row})'
     _val(ws, 'N3', f'=IF(ROUND(SUM({SH_COST}{SPL_R0}:{SH_COST}{SPL_R1})-{alloc_out},2)=0,"√ 成本对得上",'
                    f'"✗ 差 "&TEXT(SUM({SH_COST}{SPL_R0}:{SH_COST}{SPL_R1})-{alloc_out},"#,##0.00"))', None, 'N3:O3', F_KPI_L)
-    put(ws, 'P3', f'=IF({PERIOD}="按收入","期间费用按收入比例摊到各款","期间费用不摊（只算到毛利）")', F_NOTE, align=ALW, border=False)
+    # 所选月份里有交货、【工资登记】那个月一笔都没有 → 提醒（#19）；AW 第 6～17 行是 1～12 月的帮手格
+    nw = f'${SH_NOWG}${SPL_R0}:${SH_NOWG}${SPL_R0 + 11}'
+    put(ws, 'P3', f'=IF(COUNTIF({nw},"<99")=0,"","⚠ "&MIN({nw})&" 月"&IF(COUNTIF({nw},"<99")>1,"等 "&COUNTIF({nw},"<99")&" 个月","")'
+                  f'&"有交货、【工资登记】还没录这个月的工资：成本偏低、毛利虚高，录完再看")', F_RED, align=ALW, border=False)
+    ws['P3'].font = Font(name=YH, sz=9, bold=True, color='FFC00000')
     ws.merge_cells('P3:R3')
-    ws.row_dimensions[3].height = 32
+    ws.row_dimensions[3].height = 40
     ws.conditional_formatting.add('N3', FormulaRule(formula=['LEFT($N$3,1)="✗"'], fill=FILL_WARN, font=F_RED))
+    ws.conditional_formatting.add('P3', FormulaRule(formula=['LEFT($P$3,1)="⚠"'], fill=FILL_YEL))
     # 隐藏的选择换算
     a = f'IF(ISNUMBER($C$3),MAX(1,MIN(12,INT($C$3))),1)'
-    b = f'IF(ISNUMBER($E$3),MAX(1,MIN(12,INT($E$3))),12)'
+    b = f'IF(ISNUMBER($E$3),MAX(1,MIN(12,INT($E$3))),{lastm})'
     ws[SPL_LO.replace('$', '')] = f'=MIN({a},{b})'
     ws[SPL_HI.replace('$', '')] = f'=MAX({a},{b})'
-    pexp = '+'.join(_je_net(code, SPL_LO, SPL_HI) for code in ('5601', '5602', '5603'))
-    ws[SPL_PEXP.replace('$', '')] = f'=ROUND({pexp},2)'
+    ws[SPL_PEXP.replace('$', '')] = f'=ROUND({_pexp_net(("5601", "5602", "5603"), SPL_LO, SPL_HI)},2)'
     ws[SPL_REVT.replace('$', '')] = f'=ROUND(SUM({SH_REV}{SPL_R0}:{SH_REV}{SPL_R1}),2)'
     ws['AF2'], ws['AG2'], ws['AH2'], ws['AI2'], ws['AJ2'] = '单款行号', '起始月', '截止月', '期间费用', '全部收入'
     # 表头
@@ -391,16 +428,22 @@ def build_spl(wb, ctx):
         ws[f'{SH_KEY}{r}'] = (f'=IF({e},"",IF(IF({only},{SH_DQ}{r}>0,OR({SH_DQ}{r}<>0,{SH_REV}{r}<>0,{SH_COST}{r}<>0)),'
                               f'ROW()-{SPL_R0 - 1},""))')
         ws[f'{SH_IDX}{r}'] = f'=IFERROR(SMALL(${SH_KEY}${SPL_R0}:${SH_KEY}${SPL_R1},ROW()-{SPL_R0 - 1}),0)'
-    # 跟【订单明细】一行对一行：所选月份里「订单|款式」、订单第一次交货（数订单个数用）
+    # 跟【订单明细】一行对一行：所选月份里「订单|款式」、订单第一次交货（数订单个数用）。
+    #   AU/AV：本行在所选月份交了货（OK=1、成本双数>0）→ 订单|款式 / 订单号；AS/AT：在「本单第一行（OFR）～上一行」的 AU/AV 里
+    #   MATCH 不到 → 1。本行就是本单第一行（OFR≥本行序号）或 OFR＝0 → 直接 1（不进 INDEX，挡住 INDEX(…,0)）
     for r in range(OD_R0, OD_R1 + 1):
-        ok, dq, dm, osk = _od(OD_OK, r), _od(OD_DQ, r), _od(OD_DM, r), _od(OD_OSKEY, r)
-        hit = f'AND({ok}=1,{dq}>0,{dm}>={SPL_LO},{dm}<={SPL_HI})'
-        rest = (f'{_odg(OD_OK, r - 1)},1,{_odg(OD_DQ, r - 1)},">0",{_odg(OD_DM, r - 1)},">="&{SPL_LO},'
-                f'{_odg(OD_DM, r - 1)},"<="&{SPL_HI}')
-        ws[f'{SH_OSF}{r}'] = f'=IF({hit},IF(COUNTIFS({_odg(OD_OSKEY, r - 1)},{esc(osk)},{rest})=0,1,0),0)'
-        left = 'LEFT(' + osk + ',FIND("|",' + osk + '))'
-        pre = esc(left) + '&"*"'
-        ws[f'{SH_OF}{r}'] = f'=IF({hit},IF(COUNTIFS({_odg(OD_OSKEY, r - 1)},{pre},{rest})=0,1,0),0)'
+        ok, cq, dm = _od(OD_OK, r), _od(OD_CQ, r), _od(OD_DM, r)
+        ofr = _od(OD_OFR, r)
+        hit = f'AND({ok}=1,{cq}>0,{dm}>={SPL_LO},{dm}<={SPL_HI})'
+        ws[f'{SH_OSK}{r}'] = f'=IF({hit},{_od(OD_OSKEY, r)}&"","")'
+        ws[f'{SH_ONK}{r}'] = f'=IF({hit},{_od(OD_NOK, r)}&"","")'
+        early = f'OR({ofr}<1,{ofr}>=ROW()-{OD_R0 - 1})'
+        for col, kc in ((SH_OSF, SH_OSK), (SH_OF, SH_ONK)):
+            seg = f'INDEX(${kc}${OD_R0}:${kc}${OD_R1},{ofr}):{kc}{r - 1}' if r > OD_R0 else None
+            if seg is None:
+                ws[f'{col}{r}'] = f'=IF({kc}{r}="",0,1)'
+            else:
+                ws[f'{col}{r}'] = f'=IF({kc}{r}="",0,IF({early},1,IF(ISNA(MATCH({esc(f"{kc}{r}")},{seg},0)),1,0)))'
     # 清单
     rg = lambda col: f'${col}${SPL_R0}:${col}${SPL_R1}'
     for r in range(SPL_R0, SPL_R1 + 1):
@@ -484,12 +527,19 @@ def build_spl(wb, ctx):
     put(ws, 'AB5', f'=IF({SPL_SROW}=0,"",IF(N(U5)>0,ROUND(AA5/U5,2),""))', F_AUTOB, FILL_TOT, MONEY, AR)
     put(ws, 'AD5', f'=IF({SPL_SROW}=0,"",IF(N(V5)<=0,"",ROUND(AC5/V5,4)))', F_AUTOB, FILL_TOT, PCT, AR)
     _neg_red(ws, f'AC5:AC{rN}', 'AC5')
+    # 1～12 月：所选月份里有交货（成本分摊表「本月交货双数」>0）、【工资登记】那个月一笔能记账的工资都没有 → 月份，否则 99
+    for m in range(1, 13):
+        r = SPL_R0 + m - 1
+        ws[f'{SH_NOWG}{r}'] = (f'=IF(OR({m}<{SPL_LO},{m}>{SPL_HI}),99,IF(N({alr("双数", m)})<=0,99,'
+                               f'IF(COUNTIFS({wgr(WG_CM)},{m},{wgr(WG_OK)},1)=0,{m},99)))')
     # 帮手列隐藏
     _help_cols(ws, 4, [(SH_CODE, '编码'), (SH_DQ, '双数'), (SH_REV, '收入'), (SH_MAT_, '材料'), (SH_OUT_, '外发'),
                        (SH_LAB, '人工'), (SH_MOH, '制造'), (SH_COST, '成本'), (SH_NORD, '订单数'), (SH_KEY, '序号键'),
-                       (SH_IDX, '第k个'), (SH_OSF, '订单|款式首次'), (SH_OF, '订单首次')], SPL_R0, SPL_R1)
+                       (SH_IDX, '第k个'), (SH_OSF, '订单|款式首次'), (SH_OF, '订单首次'), (SH_OSK, '本行订单|款式(选中月)'),
+                       (SH_ONK, '本行订单号(选中月)'), (SH_NOWG, '工资未录月')], SPL_R0, SPL_R1)
     for r in range(OD_R0, OD_R1 + 1):
-        ws[f'{SH_OSF}{r}'].font = ws[f'{SH_OF}{r}'].font = F_HELP
+        for c in (SH_OSF, SH_OF, SH_OSK, SH_ONK):
+            ws[f'{c}{r}'].font = F_HELP
     for c in ('AF', 'AG', 'AH', 'AI', 'AJ'):
         ws[f'{c}2'].font = ws[f'{c}3'].font = F_HELP
     hide(ws, 'AF', 'AR')
@@ -499,6 +549,7 @@ def build_spl(wb, ctx):
 
 
 # ═══════════════════════════ 订单汇总 ═══════════════════════════
+OS_TOT, OS_HDR = 4, 5                                        # 第 4 行合计（跟着筛选变）、第 5 行表头（自动筛选从这里起，不包住合计）
 OS_R0, OS_N = 6, 600
 OS_R1 = OS_R0 + OS_N - 1
 OS_IDX, OS_DMIN, OS_DMAX, OS_OMIN = 'T', 'U', 'V', 'W'       # 隐藏：第 k 张单在【订单明细】第几行；首次/最后交货、下单日期的原始数
@@ -510,13 +561,15 @@ def build_osum(wb, ctx):
     widths(ws, {'A': 5, 'B': 11, 'C': 10, 'D': 11, 'E': 7, 'F': 7, 'G': 8, 'H': 8, 'I': 8, 'J': 8, 'K': 11, 'L': 11,
                 'M': 12, 'N': 12, 'O': 12, 'P': 8, 'Q': 8, 'R': 30, 'S': 2})
     title(ws, '订 单 汇 总（每张订单 · 交货进度 · 收入成本毛利）', 'R', C_VIEW,
-          '💡 每张订单（电商部采购单）一行，按【订单明细】里第一次出现的顺序列出。交货进度＝已交双数÷订单双数；'
-          '订单的成本＝每行 实交双数×那个款那个月的单双成本（【成本分摊表】分出来的）；没交的行没有成本；'
-          '款式没在【款式档案】登记的行也没有成本（「提示」列会说）。退回来的（实交填负数）冲减收入，不算在已交双数里。'
-          '想看某一张单的每一行，去【订单查询】选订单号。', h2=48)
+          '💡 每张订单（电商部采购单）一行，按【订单明细】里第一次出现的顺序列出（订单号是数字、文字还是前后多了空格，都算同一张单）。'
+          '交货进度＝已交双数÷订单双数；已交双数不含退货（实交填负数的只冲收入）和返修重交（备注写「返修」的只算收入）。'
+          '订单的成本＝每行 实交双数×那个款那个月的单双成本（【成本分摊表】分出来的；专用材料、外发、计件这些直接成本按交货进度分到各批）；'
+          '没交的行没有成本；款式没在【款式档案】登记的行也没有成本（「提示」列会说）。'
+          '第 4 行合计跟着筛选变（筛选了只合计看得见的）。想看某一张单的每一行，去【订单查询】选订单号。', h2=64)
     home_link(ws, 'S1')
     ws.column_dimensions['S'].width = 10
-    rgv = lambda col: f'${col}${OS_R0}:${col}${OS_R1}'
+    R0, R1 = OS_R0, OS_R1
+    rgv = lambda col: f'${col}${R0}:${col}${R1}'
     _lbl(ws, 'A3', '订单数', 'A3:B3')
     _val(ws, 'C3', f'=COUNT({odr(OD_OFIRST)})', INT)
     _lbl(ws, 'D3', '已交完')
@@ -531,30 +584,30 @@ def build_osum(wb, ctx):
     heads = [('A', '序号'), ('B', '订单号'), ('C', '客户'), ('D', '下单日期'), ('E', '款式数'), ('F', '订单\n行数'),
              ('G', '订单\n双数'), ('H', '已交\n双数'), ('I', '未交\n双数'), ('J', '交货\n进度'), ('K', '首次交货'), ('L', '最后交货'),
              ('M', '交货收入'), ('N', '成本'), ('O', '毛利'), ('P', '毛利率'), ('Q', '状态'), ('R', '提示')]
-    header(ws, 4, heads, H_VIEW)
-    # 跟【订单明细】一行对一行：交货日期、下单日期变成数字（取最早/最晚用，文字、空的当 0）
+    header(ws, OS_HDR, heads, H_VIEW)
+    # 跟【订单明细】一行对一行：交货日期（只算能记账、实交>0 的行；退货、建账前、次年的不算）、下单日期变成数字（取最早/最晚用，文字、空的当 0）
     for r in range(OD_R0, OD_R1 + 1):
-        ws[f'{OS_HD}{r}'] = f'=IF({_od(OD_DQ, r)}<>0,INT({_od(OD_DDATE, r)}),0)'
+        ws[f'{OS_HD}{r}'] = f'=IF(AND({_od(OD_OK, r)}=1,{_od(OD_DQ, r)}>0),INT({_od(OD_DDATE, r)}),0)'
         ws[f'{OS_HO}{r}'] = f'=IF(ISNUMBER({_od(OD_DATE, r)}),INT({_od(OD_DATE, r)}),0)'
     hd, ho = f'${OS_HD}${OD_R0}:${OS_HD}${OD_R1}', f'${OS_HO}${OD_R0}:${OS_HO}${OD_R1}'
-    no = odr(OD_NO)
-    for r in range(OS_R0, OS_R1 + 1):
+    ofr = odr(OD_OFR)                    # 订单分组一律按 OFR（这张单在【订单明细】第一次出现的行序号，由订单号规范写法 NOK 算出）
+    for r in range(R0, R1 + 1):
         ix = f'${OS_IDX}{r}'
         e = f'{ix}=0'
-        B = f'$B{r}'
-        crit = no + ',' + esc(B + '&""')
-        ws[f'{OS_IDX}{r}'] = f'=IFERROR(SMALL({odr(OD_OFIRST)},ROW()-{OS_R0 - 1}),0)'
-        ws[f'{OS_DMAX}{r}'] = f'=IF({e},0,SUMPRODUCT(MAX(({no}={B})*{hd})))'
-        ws[f'{OS_DMIN}{r}'] = f'=IF({e},0,SUMPRODUCT(MAX(({no}={B})*({hd}>0)*(100000000-{hd}))))'
-        ws[f'{OS_OMIN}{r}'] = f'=IF({e},0,SUMPRODUCT(MAX(({no}={B})*({ho}>0)*(100000000-{ho}))))'
-        ws[f'A{r}'] = f'=IF({e},"",ROW()-{OS_R0 - 1})'
-        ws[f'B{r}'] = f'=IF({e},"",INDEX({no},{ix}))'
+        crit = f'{ofr},{ix}'
+        same = f'({ofr}={ix})'
+        ws[f'{OS_IDX}{r}'] = f'=IFERROR(SMALL({odr(OD_OFIRST)},ROW()-{R0 - 1}),0)'
+        ws[f'{OS_DMAX}{r}'] = f'=IF({e},0,SUMPRODUCT(MAX({same}*{hd})))'
+        ws[f'{OS_DMIN}{r}'] = f'=IF({e},0,SUMPRODUCT(MAX({same}*({hd}>0)*(100000000-{hd}))))'
+        ws[f'{OS_OMIN}{r}'] = f'=IF({e},0,SUMPRODUCT(MAX({same}*({ho}>0)*(100000000-{ho}))))'
+        ws[f'A{r}'] = f'=IF({e},"",ROW()-{R0 - 1})'
+        ws[f'B{r}'] = f'=IF({e},"",INDEX({odr(OD_NOK)},{ix})&"")'
         ws[f'C{r}'] = f'=IF({e},"",INDEX({odr(OD_CUSTK)},{ix})&"")'
         ws[f'D{r}'] = f'=IF({e},"",IF(${OS_OMIN}{r}=0,"",100000000-${OS_OMIN}{r}))'
         ws[f'E{r}'] = f'=IF({e},"",SUMIFS({odr(OD_OSFIRST)},{crit}))'
         ws[f'F{r}'] = f'=IF({e},"",COUNTIFS({crit}))'
         ws[f'G{r}'] = f'=IF({e},"",SUMIFS({odr(OD_OQ)},{crit}))'
-        ws[f'H{r}'] = f'=IF({e},"",SUMIFS({odr(OD_DQ)},{crit},{odr(OD_DQ)},">0"))'
+        ws[f'H{r}'] = f'=IF({e},"",SUMIFS({odr(OD_CQ)},{crit}))'
         ws[f'I{r}'] = f'=IF({e},"",MAX(0,G{r}-H{r}))'
         ws[f'J{r}'] = f'=IF({e},"",IF(N(G{r})>0,ROUND(H{r}/G{r},4),""))'
         ws[f'K{r}'] = f'=IF({e},"",IF(${OS_DMIN}{r}=0,"",100000000-${OS_DMIN}{r}))'
@@ -569,42 +622,43 @@ def build_osum(wb, ctx):
         ws[f'R{r}'] = (f'=IF({e},"",IF({nx}>0,"✗ "&{nx}&" 行要改（看【订单明细】校验）",'
                        f'IF({nu}>0,"⚠ "&{nu}&" 行款式没登记：没有成本","")))')
     cols = [CL(i) for i in range(1, 19)]
-    style_rows(ws, OS_R0, OS_R1, cols, auto=cols,
+    style_rows(ws, R0, R1, cols, auto=cols,
                fmts={'D': DATE, 'E': INT, 'F': INT, 'G': INT, 'H': INT, 'I': INT, 'J': PCT, 'K': DATE, 'L': DATE,
                      'M': MONEY, 'N': MONEY, 'O': MONEY, 'P': PCT},
                aligns={'B': AL, 'C': AL, 'R': AL, 'M': AR, 'N': AR, 'O': AR}, bold=['B', 'O'])
-    for r in range(OS_R0, OS_R1 + 1):
+    for r in range(R0, R1 + 1):
         for c in cols:
             ws[f'{c}{r}'].fill = FILL_NONE
-    # 合计行
-    put(ws, 'A5', '', F_TXTB, FILL_TOT)
-    put(ws, 'B5', f'="合计（"&COUNT({rgv("A")})&" 张）"', F_TXTB, FILL_TOT, align=AC)
-    ws.merge_cells('B5:D5')
+    # 合计行（第 4 行，表头上面）：SUBTOTAL 只合计筛选后看得见的行
+    T_ = OS_TOT
+    put(ws, f'A{T_}', '', F_TXTB, FILL_TOT)
+    put(ws, f'B{T_}', f'="合计（"&SUBTOTAL(102,{rgv("A")})&" 张）"', F_TXTB, FILL_TOT, align=AC)
+    ws.merge_cells(f'B{T_}:D{T_}')
     for c in 'EFGHI':
-        put(ws, f'{c}5', f'=SUM({c}{OS_R0}:{c}{OS_R1})', F_AUTOB, FILL_TOT, INT, AC)
-    put(ws, 'J5', '=IF(G5>0,ROUND(H5/G5,4),"")', F_AUTOB, FILL_TOT, PCT, AC)
-    put(ws, 'K5', f'=IF(COUNT({rgv("K")})=0,"",MIN({rgv("K")}))', F_AUTOB, FILL_TOT, DATE, AC)
-    put(ws, 'L5', f'=IF(COUNT({rgv("L")})=0,"",MAX({rgv("L")}))', F_AUTOB, FILL_TOT, DATE, AC)
+        put(ws, f'{c}{T_}', f'=SUBTOTAL(109,{c}{R0}:{c}{R1})', F_AUTOB, FILL_TOT, INT, AC)
+    put(ws, f'J{T_}', f'=IF(G{T_}>0,ROUND(H{T_}/G{T_},4),"")', F_AUTOB, FILL_TOT, PCT, AC)
+    put(ws, f'K{T_}', f'=IF(SUBTOTAL(102,{rgv("K")})=0,"",SUBTOTAL(105,{rgv("K")}))', F_AUTOB, FILL_TOT, DATE, AC)
+    put(ws, f'L{T_}', f'=IF(SUBTOTAL(102,{rgv("L")})=0,"",SUBTOTAL(104,{rgv("L")}))', F_AUTOB, FILL_TOT, DATE, AC)
     for c in 'MNO':
-        put(ws, f'{c}5', f'=ROUND(SUM({c}{OS_R0}:{c}{OS_R1}),2)', F_AUTOB, FILL_TOT, MONEY, AR)
-    put(ws, 'P5', '=IF(M5<=0,"",ROUND(O5/M5,4))', F_AUTOB, FILL_TOT, PCT, AC)
-    put(ws, 'Q5', f'="未交完 "&(COUNTIF({rgv("Q")},"未交")+COUNTIF({rgv("Q")},"部分交"))&" 张"', F_AUTOB, FILL_TOT, align=AC)
-    put(ws, 'R5', f'=IF(COUNTIF({rgv("R")},"✗*")+COUNTIF({rgv("R")},"⚠*")=0,"",'
-                  f'"有提示的 "&(COUNTIF({rgv("R")},"✗*")+COUNTIF({rgv("R")},"⚠*"))&" 张")', F_AUTOB, FILL_TOT, align=AL)
-    ws.row_dimensions[5].height = 22
-    _neg_red(ws, f'O5:O{OS_R1}', 'O5')
-    _chk_cf(ws, f'R{OS_R0}:R{OS_R1}', f'$R{OS_R0}')
-    ws.conditional_formatting.add(f'Q{OS_R0}:Q{OS_R1}', FormulaRule(formula=[f'$Q{OS_R0}="已交完"'], font=F_GOOD))
-    ws.conditional_formatting.add(f'Q{OS_R0}:Q{OS_R1}', FormulaRule(formula=[f'$Q{OS_R0}="部分交"'], fill=FILL_YEL))
-    ws.conditional_formatting.add(f'Q{OS_R0}:Q{OS_R1}', FormulaRule(formula=[f'$Q{OS_R0}="未交"'], font=F_WAIT))
-    _help_cols(ws, 4, [(OS_IDX, '订单明细第几行'), (OS_DMIN, '首次交货(反)'), (OS_DMAX, '最后交货'), (OS_OMIN, '下单日期(反)')],
-               OS_R0, OS_R1)
-    _help_cols(ws, 4, [(OS_HD, '交货日期数字'), (OS_HO, '下单日期数字')], OD_R0, OD_R1)
+        put(ws, f'{c}{T_}', f'=ROUND(SUBTOTAL(109,{c}{R0}:{c}{R1}),2)', F_AUTOB, FILL_TOT, MONEY, AR)
+    put(ws, f'P{T_}', f'=IF(N(M{T_})<=0,"",ROUND(O{T_}/M{T_},4))', F_AUTOB, FILL_TOT, PCT, AC)
+    put(ws, f'Q{T_}', f'="未交完 "&(COUNTIF({rgv("Q")},"未交")+COUNTIF({rgv("Q")},"部分交"))&" 张"', F_AUTOB, FILL_TOT, align=AC)
+    put(ws, f'R{T_}', f'=IF(COUNTIF({rgv("R")},"✗*")+COUNTIF({rgv("R")},"⚠*")=0,"",'
+                      f'"有提示的 "&(COUNTIF({rgv("R")},"✗*")+COUNTIF({rgv("R")},"⚠*"))&" 张（全部）")', F_AUTOB, FILL_TOT, align=AL)
+    ws.row_dimensions[T_].height = 22
+    _neg_red(ws, f'O{T_}:O{R1}', f'O{T_}')
+    _chk_cf(ws, f'R{R0}:R{R1}', f'$R{R0}')
+    ws.conditional_formatting.add(f'Q{R0}:Q{R1}', FormulaRule(formula=[f'$Q{R0}="已交完"'], font=F_GOOD))
+    ws.conditional_formatting.add(f'Q{R0}:Q{R1}', FormulaRule(formula=[f'$Q{R0}="部分交"'], fill=FILL_YEL))
+    ws.conditional_formatting.add(f'Q{R0}:Q{R1}', FormulaRule(formula=[f'$Q{R0}="未交"'], font=F_WAIT))
+    _help_cols(ws, OS_HDR, [(OS_IDX, '订单明细第几行'), (OS_DMIN, '首次交货(反)'), (OS_DMAX, '最后交货'), (OS_OMIN, '下单日期(反)')],
+               R0, R1)
+    _help_cols(ws, OD_HDR, [(OS_HD, '交货日期数字'), (OS_HO, '下单日期数字')], OD_R0, OD_R1)   # 跟订单明细对齐：第 5 行起是数
     hide(ws, 'X')
-    ws.auto_filter.ref = f'A4:R{OS_R1}'
-    ws.freeze_panes = f'C{OS_R0}'
-    print_setup(ws, '4:5', landscape=True)
-    ws.print_area = f'A1:R{OS_R1}'
+    ws.auto_filter.ref = f'A{OS_HDR}:R{R1}'
+    ws.freeze_panes = f'C{R0}'
+    print_setup(ws, f'{OS_TOT}:{OS_HDR}', landscape=True)
+    ws.print_area = f'A1:R{R1}'
 
 
 # ═══════════════════════════ 订单查询 ═══════════════════════════
@@ -621,7 +675,8 @@ def build_oq(wb, ctx):
     title(ws, '订 单 查 询（选一张订单 · 看每一行交了多少、收入成本毛利）', 'W', C_VIEW,
           '💡 黄格子选订单号（下拉是【订单汇总】里的订单，也可以直接打），下面先是这张单的汇总，再是每一行（最多 200 行），右边按款式小计。'
           '单双成本＝这个款交货那个月的平均每双成本（【成本分摊表】分出来的），晚到的送货单录进去以后会变；没交的行、款式没登记的行没有成本。'
-          '要改数据去【订单明细】改。', h2=36)
+          '「已交」不含退货（实交负数，只冲收入）和返修重交（备注写「返修」：算收入、不算双数和成本）。'
+          '要改数据去【订单明细】改。', h2=48)
     home_link(ws, 'X1')
     ws.column_dimensions['X'].width = 10
     sel = OQ_SEL.split('!')[1].replace('$', '')          # C3
@@ -647,7 +702,7 @@ def build_oq(wb, ctx):
         'D': (f'=SUMIFS({odr(OD_OSFIRST)},{qs},">0")', INT),
         'E': (f'=COUNT({qs})', INT),
         'F': (f'=SUMIFS({odr(OD_OQ)},{qs},">0")', INT),
-        'G': (f'=SUMIFS({odr(OD_DQ)},{qs},">0",{odr(OD_DQ)},">0")', INT),
+        'G': (f'=SUMIFS({odr(OD_CQ)},{qs},">0")', INT),
         'H': ('=MAX(0,F5-G5)', INT),
         'I': ('=IF(F5>0,ROUND(G5/F5,4),"")', PCT),
         'J': (f'=ROUND(SUMIFS({odr(OD_AMT)},{qs},">0",{odr(OD_OK)},1),2)', MONEY),
@@ -712,7 +767,7 @@ def build_oq(wb, ctx):
         osk_sel = 'TRIM(' + S + '&"")&"|"&TRIM($Q' + str(r) + ')'
         key = f'{odr(OD_OSKEY)},{esc(osk_sel)}'
         ws[f'R{r}'] = f'=IF({e},"",SUMIFS({odr(OD_OQ)},{key}))'
-        ws[f'S{r}'] = f'=IF({e},"",SUMIFS({odr(OD_DQ)},{key},{odr(OD_DQ)},">0"))'
+        ws[f'S{r}'] = f'=IF({e},"",SUMIFS({odr(OD_CQ)},{key}))'
         ws[f'T{r}'] = f'=IF({e},"",ROUND(SUMIFS({odr(OD_AMT)},{key},{odr(OD_OK)},1),2))'
         ws[f'U{r}'] = f'=IF({e},"",ROUND(SUMIFS({odr(OD_COSTV)},{key}),2))'
         ws[f'V{r}'] = f'=IF({e},"",ROUND(T{r}-U{r},2))'
