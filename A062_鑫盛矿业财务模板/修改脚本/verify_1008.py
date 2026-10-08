@@ -237,9 +237,11 @@ def main():
     ok([x[0] for x in lst] == list(range(1, len(lst) + 1)), '凭证号不连续')
     pg = 1
     for no, vid, pages, start, a4, src in lst:
-        ok(start == pg and a4 == -(-start // 2), f'记-{no} 起始页 {start}/{a4}，该是 {pg}/{-(-pg // 2)}')
+        s1, s2 = -(-start // 2), -(-(start + pages - 1) // 2)
+        want = f'{s1}' if s1 == s2 else f'{s1}～{s2}'
+        ok(start == pg and str(a4) == want, f'记-{no} 起始页 {start}「在 A4 第几张」{a4}，该是 {pg} / {want}')
         pg += pages
-    ok(sm['N3'].value == -(-(pg - 1) // 2), f'A4 张数 {sm["N3"].value}')
+    ok(sm['N3'].value == -(-(pg - 1) // 2) and sm['O3'].value == f'A4 张数：{-(-(pg - 1) // 2)}', f'A4 张数 {sm["N3"].value} / {sm["O3"].value}')
     print(f'   {ym}：凭证 {len(lst)} 张（改之前 {old["凭证汇总"]["D3"].value} 张），凭证页 {pg - 1}，A4 {sm["N3"].value} 张；'
           f'最后几张：{[(x[0], x[5]) for x in lst[-3:]]}')
     pz = new['记账凭证']

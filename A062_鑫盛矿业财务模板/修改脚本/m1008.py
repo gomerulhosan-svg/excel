@@ -139,6 +139,14 @@ def step_merge(wb, log):
     assert not bad, '\n'.join(bad[:5])
 
     # 新加 4 个辅助列（隐藏）
+    # AH 原来是「组首」（只给旧的 AI 用），改成「查找用的合并键」：把 ~ * ? 转义，账户名、合并号里有这些字符也不会被当通配符
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                v = c.value
+                if isinstance(v, str) and v.startswith('=') and (f'{CASH}!$AH' in v or (ws.title == CASH and '$AH$' in v and c.column_letter != 'AI')):
+                    raise AssertionError(f'{ws.title}!{c.coordinate} 还在用 现金流水总表 AH：{v[:120]}')
+    cs['AH5'].value = '合并键\n(查找用)'
     hdr = {'AK': '合并键', 'AL': '组笔数', 'AM': '组合计\n(苏姆)', 'AN': '合并行摘要'}
     for col, t in hdr.items():
         cp(cs['AJ5'], cs[f'{col}5'])
@@ -151,14 +159,14 @@ def step_merge(wb, log):
             cp(cs[f'AJ{r}'], cs[f'{col}{r}'])
         cs[f'AM{r}'].number_format = '#,##0.00'
         cs[f'AK{r}'].value = (f'=IF($AE{r}=0,"",IF($X{r}<>"","X|"&$X{r},INT($A{r})&"|"&$B{r}&"|"&IF($O{r}>0,"收","支")))')
-        cs[f'AG{r}'].value = f'=IF($AE{r}=0,"",COUNTIF($AK${C0}:$AK{r},$AK{r}))'
-        cs[f'AH{r}'].value = f'=IF($AG{r}=1,$AK{r},"")'
-        cs[f'AI{r}'].value = f'=IF($AE{r}=0,"",100000+MATCH($AK{r},{rng("AK")},0))'
-        cs[f'AL{r}'].value = f'=IF($AG{r}=1,COUNTIF({rng("AK")},$AK{r}),"")'
-        cs[f'AM{r}'].value = f'=IF(AND($AG{r}=1,$X{r}=""),ABS(SUMIF({rng("AK")},$AK{r},{rng("O")})),"")'
+        cs[f'AH{r}'].value = f'=IF($AK{r}="","",SUBSTITUTE(SUBSTITUTE(SUBSTITUTE($AK{r},"~","~~"),"*","~*"),"?","~?"))'
+        cs[f'AG{r}'].value = f'=IF($AE{r}=0,"",COUNTIF($AK${C0}:$AK{r},$AH{r}))'
+        cs[f'AI{r}'].value = f'=IF($AE{r}=0,"",100000+MATCH($AH{r},{rng("AK")},0))'
+        cs[f'AL{r}'].value = f'=IF($AG{r}=1,COUNTIF({rng("AK")},$AH{r}),"")'
+        cs[f'AM{r}'].value = f'=IF(AND($AG{r}=1,$X{r}=""),ABS(SUMIF({rng("AK")},$AH{r},{rng("O")})),"")'
         cs[f'AN{r}'].value = (f'=IF(OR($AG{r}<>1,$X{r}<>""),"",IF($AL{r}=1,$AJ{r},$B{r}&" "&MONTH($A{r})&"月"&DAY($A{r})&"日"'
                               f'&IF($O{r}>0,"收款","付款")&$AL{r}&"笔合计"&IF($D{r}=本位币,"","（"&$D{r}&" "'
-                              f'&FIXED(ABS(SUMIF({rng("AK")},$AK{r},{rng("N")})),2)&"）")))')
+                              f'&FIXED(ABS(SUMIF({rng("AK")},$AH{r},{rng("N")})),2)&"）")))')
     a2 = cs['A2'].value
     s1, s2 = '每一笔自动生成一张记账凭证。', '几笔想并成一张凭证：「凭证合并号」写同一个号（要在同一个月）。'
     assert s1 in a2 and s2 in a2
@@ -243,12 +251,11 @@ def step_close(wb, log):
         je.column_dimensions[col].hidden = True
     for r in range(JE0, JE1 + 1):
         assert je[f'R{r}'].value is None and je[f'S{r}'].value is None
-        je[f'R{r}'].value = (f'=IF($P{r}=0,"",IF(LEFT($D{r},1)<>"5","",IFERROR(MATCH($D{r},{HP}!$C$5:$C${4 + NPL},0)*100'
+        je[f'R{r}'].value = (f'=IF($L{r}="","",IF(LEFT($D{r},1)<>"5","",IFERROR(MATCH($D{r},{HP}!$C$5:$C${4 + NPL},0)*100'
                              f'+(YEAR($A{r})-YEAR(起始月份))*12+MONTH($A{r})-MONTH(起始月份)+1,"")))')
-        je[f'S{r}'].value = f'=IF($R{r}="",0,ROUND($F{r}-$G{r},2))'
+        je[f'S{r}'].value = f'=IF($R{r}="",0,$F{r}-$G{r})'
         cp(je[f'P{r}'], je[f'R{r}'])
         cp(je[f'P{r}'], je[f'S{r}'])
-    je.column_dimensions['Q'].hidden = True
 
     # 2) 辅助表 _结转损益
     assert HP not in wb.sheetnames
@@ -258,10 +265,10 @@ def step_close(wb, log):
     fb = Font(name='微软雅黑', sz=9, bold=True)
     hp['A1'] = '结转损益辅助（自动，不用动）：每月把损益科目（科目表里 5 开头的）本月发生额转进 3103 本年利润；12 月 31 日把本年利润转进 310415 未分配利润'
     hp['A1'].font = Font(name='微软雅黑', sz=11, bold=True)
-    hp['A2'] = ('A 列对齐科目表第 5 行起（损益科目的排序键）；B~E 是第 k 个损益科目；G~AL 是 32 个月各科目的本月发生（借-贷，不含结转凭证本身，'
-                '只从【记账分录】第 4~16063 行取）；AN~BS 是累计条数；210 行起把每月有发生的科目挤到前面，记账分录的结转损益块按这里取数。')
+    hp['A2'] = ('A 列对齐科目表第 5 行起（损益科目的排序键）；B~F 是第 k 个损益科目（F＝上级科目直接记了账）；AM＝科目表期初；G~AL 是 32 个月各科目要结转的数'
+                '（到本月的累计发生＋期初，四舍五入后减掉前几个月已结的；借-贷，不含结转凭证本身，只从【记账分录】第 4~16063 行取）；AN~BS 是累计条数；210 行起把每月有发生的科目挤到前面，记账分录的结转损益块按这里取数。')
     hp['A2'].font = f9
-    for col, t in zip('ABCDEF', ['排序键', '科目表行', '科目编码', '科目全称', '分录条数', '月序 →']):
+    for col, t in zip('ABCDEF', ['排序键', '科目表行', '科目编码', '科目全称', '分录条数', '非末级有账']):
         hp[f'{col}3'] = t
         hp[f'{col}3'].font = fb
     hp['B4'] = '最后有账月序：'
@@ -286,10 +293,15 @@ def step_close(wb, log):
         hp[f'B{r}'] = f'=IFERROR(MATCH(SMALL($A$5:$A$454,{k}),$A$5:$A$454,0),"")'
         hp[f'C{r}'] = f'=IF($B{r}="","",INDEX(科目表!$A$5:$A$454,$B{r})&"")'
         hp[f'D{r}'] = f'=IF($B{r}="","",INDEX(科目表!$K$5:$K$454,$B{r}))'
-        hp[f'E{r}'] = f'=IF($C{r}="",0,COUNTIFS({rr},">"&{k * 100},{rr},"<"&{k * 100 + 100}))'
+        hp[f'AM{r}'] = f'=IF($C{r}="",0,N(SUMIF(科目表!$A$5:$A$454,$C{r},科目表!$M$5:$M$454)))'
+        hp[f'E{r}'] = f'=IF($C{r}="",0,COUNTIFS({rr},">"&{k * 100},{rr},"<"&{k * 100 + 100})+IF($AM{r}<>0,1,0))'
+        hp[f'F{r}'] = f'=IF($C{r}="",0,IF(AND($E{r}>0,INDEX(科目表!$L$5:$L$454,$B{r})="否"),1,0))'
         for m in range(1, NM + 1):
             c, cc = mcol(m), cumcol(m)
-            hp[f'{c}{r}'] = f'=IF(OR($E{r}=0,{c}$3>$C$4),0,ROUND(SUMIF({rr},{k * 100}+{c}$3,{ss}),2))'
+            # 结到本月为止的累计（含科目表期初）四舍五入后，减掉前几个月已经结掉的——尾差不会一个月一个月攒下来
+            prev = '' if m == 1 else f'-SUM($G{r}:{mcol(m - 1)}{r})'
+            hp[f'{c}{r}'] = (f'=IF(OR($E{r}=0,{c}$3>$C$4),0,ROUND(SUMIFS({ss},{rr},">"&{k * 100},{rr},"<="&({k * 100}+{c}$3))'
+                             f'+$AM{r},2){prev})')
             hp[f'{c}{r}'].number_format = '#,##0.00;-#,##0.00;'
             hp[f'{cc}{r}'] = f'={cc}{r - 1}+IF({c}{r}<>0,1,0)'
     last = 4 + NPL
@@ -333,6 +345,8 @@ def step_close(wb, log):
         for c in row:
             if c.value is not None and c.font.name != '微软雅黑':
                 c.font = f9
+    hp['AM3'] = '期初'
+    hp['AM3'].font = fb
     hp.column_dimensions['D'].width = 28
     hp.freeze_panes = 'G5'
     log.append(f'新加隐藏表 {HP}（损益科目×32 个月的发生额、每月结转行、年末余额）')
@@ -522,7 +536,6 @@ def step_close(wb, log):
     for col, t in (('J', '结转损益\n本月利润\n(负＝亏损)'), ('K', '年末结转\n未分配利润')):
         cp(mj['I5'], mj[f'{col}5'])
         mj[f'{col}5'].value = t
-        mj.column_dimensions[col].width = 17
     for m in range(1, NM + 1):
         r = 5 + m
         cp(mj[f'I{r}'], mj[f'J{r}'])
@@ -549,12 +562,13 @@ def step_print(wb, log):
     # 宽：原来 B~G 共 112 个字宽，A4 纵向印不下（贷方、√ 两列会跑到别的页）。收窄到 97 个字宽，缩放 75%：
     #     中文 Excel / WPS（宋体 11 每字宽 8 像素）印出来约 455 磅，LibreOffice 约 510 磅，A4 去掉页边能用 530 磅
     # 高：一页凭证 471 磅，两页＋中间 60 磅空＋末尾 6 磅＝1008 磅，×75%＝756 磅，A4 去掉页边能用 792 磅
-    for col, w in (('B', 27), ('C', 12), ('D', 21), ('E', 16), ('F', 16), ('G', 5)):
+    assert ws.column_dimensions['E'].min == 5 and ws.column_dimensions['E'].max == 6     # E:F 原来就是同一组列宽
+    for col, w in (('B', 27), ('C', 12), ('D', 21), ('E', 16), ('G', 5)):
         ws.column_dimensions[col].width = w
     H = {1: 33.75, 2: 21.75, 3: 25.5, 12: 40.5, 13: 25.5}
     for i in range(4, 12):
         H[i] = 40.5
-    fsz = {1: {'B': 18}, 2: {'B': 10, 'C': 11, 'E': 11, 'G': 9}, 3: {c: 11 for c in 'BCDEFG'},
+    fsz = {1: {'B': 18}, 2: {'B': 9, 'C': 11, 'E': 11, 'G': 9}, 3: {c: 11 for c in 'BCDEFG'},
            12: {c: 11 for c in 'BCEFG'}, 13: {c: 10 for c in 'BCDEF'}}
     for i in range(4, 12):
         fsz[i] = {'B': 10, 'C': 10.5, 'D': 10.5, 'E': 11, 'F': 11, 'G': 11}
@@ -567,6 +581,13 @@ def step_print(wb, log):
                 f = copy(c.font)
                 f.sz = sz
                 c.font = f
+            # 单位名、金额（上百亿的 13 位数）放不下时自动缩小字号，不会印成 ####
+            if i == 2 or 4 <= i <= 12:
+                for col in (('B',) if i == 2 else ('E', 'F')):
+                    c = ws[f'{col}{base + i}']
+                    al = copy(c.alignment)
+                    al.shrink_to_fit, al.wrap_text = True, False
+                    c.alignment = al
         ws.row_dimensions[base + 14].height = 60 if blk % 2 == 0 else 6
     ws.row_breaks = RowBreak()
     for p in range(1, NB // 2):
@@ -580,6 +601,9 @@ def step_print(wb, log):
     pm = ws.page_margins
     pm.left, pm.right, pm.top, pm.bottom, pm.header, pm.footer = 0.6, 0.3, 0.4, 0.3, 0.2, 0.2
     ws.print_options.horizontalCentered = True
+    s1 = 'I＝打印第几页'
+    assert s1 in ws['S1'].value
+    ws['S1'].value = ws['S1'].value.replace(s1, 'I＝凭证第几页（一张 A4 印两页：A4 第几张＝I÷2 进位，或看【凭证汇总】「在 A4 第几张」）')
     ws['S3'].value = ('月份跟【首页】的报表年度/月份走；一张 A4 纸上下印两页凭证（中间留宽，裁开后分别装订）。'
                       '打印时页码范围填 1 到【凭证汇总】右上角的「A4 张数」，后面的空页不用印。')
     ws['S4'].value = ('纸张已设好：A4 纵向、缩放 75%、左边留 1.5 厘米装订边。别改成「调整为一页」或「缩放到纸张」，不然两张凭证会挤在一起。'
@@ -597,14 +621,20 @@ def step_print(wb, log):
     cp(sm['H3'], sm['N3'])
     sm['M3'].value = 'A4 张数：'
     sm['N3'].value = '=ROUNDUP(H3/2,0)'
+    cp(sm['G3'], sm['O3'])
+    sm['O3'].value = '="A4 张数："&N3'
     assert sm['O5'].value is None
     cp(sm['J5'], sm['O5'])
     sm['O5'].value = '在 A4\n第几张'
     for r in range(6, 456):
         cp(sm[f'J{r}'], sm[f'O{r}'])
-        sm[f'O{r}'] = f'=IF($J{r}="","",ROUNDUP($J{r}/2,0))'
-    sm.column_dimensions['O'].width = 8
-    log.append('记账凭证：A4 纵向、缩放 80%，每 28 行一页（上下两页凭证，中间空 49.5 磅），字号放大；凭证汇总加「A4 张数」「在 A4 第几张」')
+        sm[f'O{r}'] = (f'=IF($J{r}="","",ROUNDUP($J{r}/2,0)&IF(ROUNDUP(($J{r}+$I{r}-1)/2,0)>ROUNDUP($J{r}/2,0),'
+                       f'"～"&ROUNDUP(($J{r}+$I{r}-1)/2,0),""))')
+        al = copy(sm[f'O{r}'].alignment)
+        al.horizontal = 'center'
+        sm[f'O{r}'].alignment = al
+    sm.column_dimensions['O'].width = 13
+    log.append('记账凭证：A4 纵向、缩放 75%，每 28 行一页（上下两页凭证，中间空 60 磅），列宽收窄、行高字号放大；凭证汇总加「A4 张数」「在 A4 第几张」')
 
 
 # =====================================================================
@@ -628,6 +658,10 @@ def step_check(wb, log):
         for col, v in zip('ABCD', vals):
             cp(ck[f'{col}42'], ck[f'{col}{r}'])
             ck[f'{col}{r}'].value = v
+    c29 = ck['C29'].value
+    x = 'COUNTIFS(余额末级,"否",余额期末直接,"<>0")'
+    assert c29.count(x) == 2
+    ck['C29'].value = c29.replace(x, f'(COUNTIFS(余额末级,"否",余额期末直接,"<>0")+SUM({HP}!$F$5:$F${4 + NPL}))')
     old = ck['C3'].value
     assert old.count('C5:C42') == 3
     ck['C3'].value = old.replace('C5:C42', 'C5:C44')
@@ -652,6 +686,10 @@ def step_check(wb, log):
         'B5': ('一笔一张凭证；', '同一天、同一个账户的收款并成一张凭证（一借多贷），付款并成一张（多借一贷），苏姆现金、人民币现金、美元现金、各银行账户各自分开；'),
         'B6': ('月末结转（折旧、调汇、成本结转）全自动。', '月末结转（折旧、调汇、成本结转、结转损益到本年利润）和 12 月 31 日结转本年利润到未分配利润，全自动。'),
         'B15': ('「凭证合并号」写同一个号（同一个月）。', '「凭证合并号」写同一个号（同一个月）；不填就按天、按账户、按收付自动并。'),
+        'B8': ('损益类科目不做结转（表结法）：利润表直接取发生额，',
+               '损益类科目每月末自动结转（账结法）：月末最后一天「结转损益」把损益科目转进 3103 本年利润，12 月 31 日本年利润转进 310415 未分配利润；'
+               '利润表取不含结转凭证的发生额，'),
+        'B12': ('67 号矿井溢价款记采矿权；', '67 号矿井溢价款和退回的款记 122106 其他应收款-保证金（10/08 改）；'),
         'B25': ('【凭证汇总】看总页数 → 【记账凭证】打印，页码范围 1 到总页数（A5 横向，一页 8 条分录，超过的接下一页）。',
                 '【凭证汇总】看「A4 张数」→ 【记账凭证】打印，页码范围 1 到 A4 张数（A4 纵向，一张纸上下两页凭证，中间留宽好裁开分别装订；'
                 '一页凭证 8 条分录，超过的接下一页）。月末结转和 12 月底的年末结转凭证排在当月最后几号，一起印。'),
@@ -660,7 +698,37 @@ def step_check(wb, log):
         v = us[ref].value
         assert a in v, (ref, v)
         us[ref].value = v.replace(a, b)
-    log.append('使用说明：凭证合并、结转、打印几条改了')
+    others = {
+        ('科目余额表', 'A2'): ('损益类科目不结转（表结法），本年累计就是利润表的数；',
+                            '损益类科目每月末结转进本年利润（账结法），所以损益科目月末余额是 0、发生额里含结转凭证；利润表取的是不含结转凭证的发生额；'),
+        ('资产负债表', 'A2'): ('损益不结转（表结法），', '损益每月末结转进本年利润、12 月 31 日转进未分配利润，'),
+        ('首页', 'F34'): ('打印记账凭证（A5 横向）', '打印记账凭证（A4 纵向，一张两页）'),
+        ('首页', 'F35'): ('折旧、调汇、生产成本转原矿、结转销售成本', '折旧、调汇、生产成本转原矿、结转销售成本、结转损益、年末结转本年利润'),
+        ('首页', 'B54'): ('生产成本转原矿、结转销售成本全自动，凭证日期是月末最后一天。',
+                        '生产成本转原矿、结转销售成本、结转损益全自动，凭证日期是月末最后一天；12 月 31 日自动把本年利润转进未分配利润。'),
+    }
+    for (sh, ref), (a, b) in others.items():
+        v = wb[sh][ref].value
+        assert a in v, (sh, ref, v)
+        wb[sh][ref].value = v.replace(a, b)
+    from openpyxl.comments import Comment
+    cs = wb[CASH]
+    for r in SAVE_ROWS:
+        old_c = cs[f'V{r}'].comment
+        cm = Comment('10/08 改：67 号矿井溢价款（及退回的款）是保证金，记 122106 其他应收款-保证金（原来记 170101 采矿权）', '模板')
+        cm.width, cm.height = (old_c.width, old_c.height) if old_c else (144, 79)
+        cs[f'V{r}'].comment = cm
+    log.append('使用说明、科目余额表、资产负债表、首页的说明文字和流水 6 行的批注改成新口径')
+
+
+def no_col_overlap(wb):
+    bad = []
+    for ws in wb.worksheets:
+        rng = sorted((d.min, d.max, k) for k, d in ws.column_dimensions.items() if d.min)
+        for (a1, b1, k1), (a2, b2, k2) in zip(rng, rng[1:]):
+            if a2 <= b1:
+                bad.append(f'{ws.title}: {k1}({a1}-{b1}) 跟 {k2}({a2}-{b2}) 重叠')
+    assert not bad, bad
 
 
 def apply(wb):
@@ -670,4 +738,5 @@ def apply(wb):
     step_close(wb, log)
     step_print(wb, log)
     step_check(wb, log)
+    no_col_overlap(wb)
     return log
