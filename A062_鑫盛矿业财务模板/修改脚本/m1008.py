@@ -546,13 +546,18 @@ def step_print(wb, log):
     NB = 500
     assert ws['I1'].value == '=IF(1>本月总页数,"",1)' and ws['I15'].value == '=IF(2>本月总页数,"",2)'
     assert ws[f'I{14 * (NB - 1) + 1}'].value == f'=IF({NB}>本月总页数,"",{NB})'
-    H = {1: 33.75, 2: 21.75, 3: 25.5, 12: 37.5, 13: 25.5}
+    # 宽：原来 B~G 共 112 个字宽，A4 纵向印不下（贷方、√ 两列会跑到别的页）。收窄到 97 个字宽，缩放 75%：
+    #     中文 Excel / WPS（宋体 11 每字宽 8 像素）印出来约 455 磅，LibreOffice 约 510 磅，A4 去掉页边能用 530 磅
+    # 高：一页凭证 471 磅，两页＋中间 60 磅空＋末尾 6 磅＝1008 磅，×75%＝756 磅，A4 去掉页边能用 792 磅
+    for col, w in (('B', 27), ('C', 12), ('D', 21), ('E', 16), ('F', 16), ('G', 5)):
+        ws.column_dimensions[col].width = w
+    H = {1: 33.75, 2: 21.75, 3: 25.5, 12: 40.5, 13: 25.5}
     for i in range(4, 12):
-        H[i] = 37.5
-    fsz = {1: {'B': 18}, 2: {'B': 10, 'C': 11, 'E': 11, 'G': 10}, 3: {c: 11 for c in 'BCDEFG'},
+        H[i] = 40.5
+    fsz = {1: {'B': 18}, 2: {'B': 10, 'C': 11, 'E': 11, 'G': 9}, 3: {c: 11 for c in 'BCDEFG'},
            12: {c: 11 for c in 'BCEFG'}, 13: {c: 10 for c in 'BCDEF'}}
     for i in range(4, 12):
-        fsz[i] = {'B': 10, 'C': 11, 'D': 10.5, 'E': 11, 'F': 11, 'G': 11}
+        fsz[i] = {'B': 10, 'C': 10.5, 'D': 10.5, 'E': 11, 'F': 11, 'G': 11}
     for blk in range(NB):
         base = 14 * blk
         for i in range(1, 14):
@@ -562,22 +567,22 @@ def step_print(wb, log):
                 f = copy(c.font)
                 f.sz = sz
                 c.font = f
-        ws.row_dimensions[base + 14].height = 49.5 if blk % 2 == 0 else 6
+        ws.row_dimensions[base + 14].height = 60 if blk % 2 == 0 else 6
     ws.row_breaks = RowBreak()
     for p in range(1, NB // 2):
         ws.row_breaks.append(Break(id=28 * p))
     ps = ws.page_setup
     ps.paperSize = 9
     ps.orientation = 'portrait'
-    ps.scale = 80
+    ps.scale = 75
     ps.fitToWidth = ps.fitToHeight = None
     ws.sheet_properties.pageSetUpPr.fitToPage = False
     pm = ws.page_margins
-    pm.left, pm.right, pm.top, pm.bottom, pm.header, pm.footer = 0.7, 0.35, 0.4, 0.3, 0.2, 0.2
+    pm.left, pm.right, pm.top, pm.bottom, pm.header, pm.footer = 0.6, 0.3, 0.4, 0.3, 0.2, 0.2
     ws.print_options.horizontalCentered = True
     ws['S3'].value = ('月份跟【首页】的报表年度/月份走；一张 A4 纸上下印两页凭证（中间留宽，裁开后分别装订）。'
                       '打印时页码范围填 1 到【凭证汇总】右上角的「A4 张数」，后面的空页不用印。')
-    ws['S4'].value = ('纸张已设好：A4 纵向、缩放 80%、左边留 1.8 厘米装订边。别改成「调整为一页」或「缩放到纸张」，不然两张凭证会挤在一起。'
+    ws['S4'].value = ('纸张已设好：A4 纵向、缩放 75%、左边留 1.5 厘米装订边。别改成「调整为一页」或「缩放到纸张」，不然两张凭证会挤在一起。'
                       '月末结转（折旧、调汇、成本、结转损益）和 12 月底的结转本年利润排在当月最后几号，跟着一起印。')
     cp(ws['S3'], ws['S4'])
 

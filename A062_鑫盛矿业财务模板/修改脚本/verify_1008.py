@@ -205,10 +205,11 @@ def main():
                     bs_diff[f'{c}{r} {new["资产负债表"][("A" if c in "CD" else "E") + str(r)].value}'] = (a, b)
     print('   资产负债表变化：', bs_diff)
     names = {k.split(' ', 1)[1] for k in bs_diff}
-    ok(names <= {'其他应收款', '无形资产'}, f'资产负债表别的行也变了：{bs_diff}')
-    if bs_diff:
-        d = [float(b or 0) - float(a or 0) for (a, b) in bs_diff.values()]
-        ok(abs(sum(d)) < 0.02, f'其他应收款、无形资产变动不相抵：{d}')
+    ok(names <= {'其他应收款', '无形资产（采矿权等）', '流动资产合计', '非流动资产合计'}, f'资产负债表别的行也变了：{bs_diff}')
+    for col in 'CD':                                  # 期末、年初：其他应收款增加的＝无形资产减少的，资产总计不变
+        d = [float(b or 0) - float(a or 0) for k, (a, b) in bs_diff.items()
+             if k.startswith(col) and ('其他应收款' in k or '无形资产' in k)]
+        ok(abs(sum(d)) < 0.02, f'{col} 列其他应收款、无形资产变动不相抵：{d}')
     ok(str(new['资产负债表']['C39'].value).startswith('√'), f'资产负债表：{new["资产负债表"]["C39"].value}')
     for c in ('B8', 'D8', 'F8', 'H8'):
         a, b = old['首页'][c].value, new['首页'][c].value
@@ -260,14 +261,18 @@ def main():
     out = openpyxl.load_workbook(OUT)
     ws = out['记账凭证']
     ps = ws.page_setup
-    ok(int(ps.paperSize) == 9 and ps.orientation == 'portrait' and int(ps.scale) == 80, f'纸张 {ps.paperSize} {ps.orientation} {ps.scale}')
+    sc = int(ps.scale) / 100
+    ok(int(ps.paperSize) == 9 and ps.orientation == 'portrait' and sc == 0.75, f'纸张 {ps.paperSize} {ps.orientation} {ps.scale}')
     brk = [b.id for b in ws.row_breaks.brk]
     ok(brk == [28 * i for i in range(1, 250)], f'分页 {brk[:5]}…')
     h = sum(ws.row_dimensions[r].height for r in range(1, 29))
     usable = 842 - (ws.page_margins.top + ws.page_margins.bottom) * 72
-    ok(h * 0.8 < usable - 15, f'两页凭证 {h * 0.8:.0f} 磅放不下 A4（{usable:.0f}）')
-    print(f'   打印：A4 纵向 80%，两页凭证共 {h * 0.8:.0f} 磅（纸上能用 {usable:.0f} 磅），中间空 {ws.row_dimensions[14].height * 0.8:.0f} 磅 ≈ '
-          f'{ws.row_dimensions[14].height * 0.8 / 72 * 2.54:.1f} 厘米')
+    ok(h * sc < usable - 15, f'两页凭证 {h * sc:.0f} 磅放不下 A4（{usable:.0f}）')
+    px = sum(ws.column_dimensions[c].width * 8 + 5 for c in 'BCDEFG')      # 中文 Excel：宋体 11 每字宽 8 像素
+    wide = 595 - (ws.page_margins.left + ws.page_margins.right) * 72
+    ok(px * 0.75 * sc < wide - 20, f'宽 {px * 0.75 * sc:.0f} 磅放不下 A4（{wide:.0f}）')
+    print(f'   打印：A4 纵向 {ps.scale}%，两页凭证共 {h * sc:.0f} 磅（纸上能用 {usable:.0f} 磅），宽 {px * 0.75 * sc:.0f} 磅（能用 {wide:.0f}），'
+          f'中间空 {ws.row_dimensions[14].height * sc:.0f} 磅 ≈ {ws.row_dimensions[14].height * sc / 72 * 2.54:.1f} 厘米')
 
     print(f'\n核对 {n_ok + len(fails)} 项：{n_ok} 项对，{len(fails)} 项不对')
     for f in fails[:40]:
