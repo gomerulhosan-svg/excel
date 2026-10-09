@@ -9,12 +9,14 @@
    清单都用 counter/kth（隐藏列在可见区右边 AG 列以后；counter 的条件列从 CA 起）。"""
 import datetime as dt
 from openpyxl.formatting.rule import FormulaRule
+from openpyxl.styles import Alignment, Font
 from openpyxl.worksheet.datavalidation import DataValidation
 from layout import *
 from common import *
 
 MONF = 'yyyy"年"m"月"'
-DAYF = 'General'
+DAYF = 'General;-General;""'                  # 天数：0 不显示
+ACS = Alignment(horizontal='center', vertical='center', shrink_to_fit=True)
 TEAM, EXTRA, DED, ANOTE = (inref(SH_ATT, c) for c in (ATT_TEAM, ATT_EXTRA, ATT_DED, ATT_NOTE))
 CO_NAME = '公司管理（办公室等）'
 # 全部人（不含过账）的期初欠薪
@@ -248,7 +250,9 @@ def build_pay(ws):
         ws[f'AA{r}'] = f'=IF(AP{r}="",{an},IF({an}="",AP{r},AP{r}&"；"&{an}))'
     fm = {c: DAYF for c in P_DYC + ['T']}
     fm.update({'U': MONEY, 'V': MONEY, 'W': MONEY, 'X': MONEY, 'Y': MONEY, 'Z': MONEY})
-    body(ws, R0, last, 'A', 'AA', 'B', fm, {'AA': AL, 'B': AC})
+    al = {c: ACS for c in P_PJC + ['B', 'C']}
+    al['AA'] = AL
+    body(ws, R0, last, 'A', 'AA', 'B', fm, al)
     # 过账人员那行灰字
     ws.conditional_formatting.add(f'A{R0}:AA{last}', FormulaRule(formula=[f'$AN{R0}=1'], font=Font(name=YH, sz=10, color='FF808080', italic=True)))
 
@@ -420,8 +424,8 @@ def build_paysum(ws):
     # ── ③ 按月（右边，② 下面）──
     section(ws, S_MSEC, 'K', 'N', '③ 按月', C_VIEW)
     NMON = f'((YEAR({ME1})-YEAR({MS0}))*12+MONTH({ME1})-MONTH({MS0})+1)'
-    ws[f'K{S_MSEC}'] = f'="③ 按月（"&MAX(0,{NMON})&" 个月"&IF({NMON}>{S_MN},"，只显示前 {S_MN} 个","")&"）"'
-    header(ws, S_MHDR, [('K', '月份'), ('L', '应发'), ('M', '已发\n（不含过账）'), ('N', '月底欠薪合计')], C_VIEW, height=36)
+    ws[f'K{S_MSEC}'] = f'="③ 按月（"&MAX(0,{NMON})&" 个月"&IF({NMON}>{S_MN},"，只显示前 {S_MN} 个","")&"；已发不含过账）"'
+    header(ws, S_MHDR, [('K', '月份'), ('L', '应发'), ('M', '已发'), ('N', '月底欠薪')], C_VIEW, height=None)
     m1 = S_MR0 + S_MN - 1
     tot(ws, {f'K{S_MTOT}': '合计（欠薪＝期末）', f'L{S_MTOT}': f'=SUM(L{S_MR0}:L{m1})', f'M{S_MTOT}': f'=SUM(M{S_MR0}:M{m1})',
              f'N{S_MTOT}': f'={GH}'}, {'L': MONEY, 'M': MONEY, 'N': MONEY})
@@ -750,6 +754,7 @@ def build_arrear(ws, ctx):
     hide_range(ws, 'AH', 'AM')
     ws.freeze_panes = f'C{R0}'
     print_setup(ws, f'{A_HDR}:{A_TOT}', landscape=True)
+    ws.print_area = f'A1:{A_LAST}{last + 2}'
 
 
 def build(wb, ctx=None):
