@@ -383,10 +383,10 @@ def build_pl(wb, ctx):
     selector(ws, 'E3', '止', 'F3', None, fmt=DATE)
     dv_date(ws, 'C3')
     dv_date(ws, 'F3')
-    ws.merge_cells('G3:Q3')
+    ws.merge_cells('G3:O3')
     put(ws, 'G3', (f'="实际："&TEXT({X},"yyyy/mm/dd")&"～"&TEXT({Y},"yyyy/mm/dd")&"（空着＝首页的年初～截止日）"'
                    f'&IF({X}>{Y},"　⚠ 起 晚于 止，请改日期","")'), F_NOTE, align=AL, border=False)
-    home_link(ws, f'{PL_TIP}3')
+    home_link(ws, PL_C1['净利率'] + '3')
     # 只列工程项目
     counter(ws, 'AU', R0, N_PJ, lambda i: f'INDEX(项目_类型,{i + 1})="工程"')
     NCNT = cnt('AU', R0, N_PJ)
