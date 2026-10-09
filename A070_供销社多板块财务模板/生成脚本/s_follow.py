@@ -345,7 +345,8 @@ def build(wb, ctx=None):
             'C': {'U': f'IF({inl},IF(INDEX(单位_类型,{ui})="","（没填类型）",INDEX(单位_类型,{ui})),"⚠ 不在名单")',
                   'H3': '"应收/应付"', 'D3': w('类型'), 'S3': f'"共 "&{S("逾期笔数")}&" 笔"'},
             'D': {'U': f'IF({inl},INDEX(单位_联系人,{ui}),"")', 'H3': '"日期"', 'D3': w('日期')},
-            'E': {'U': f'IF({inl},INDEX(单位_电话,{ui}),"")', 'H3': '"摘要"', 'D3': w('显示摘要')},
+            'E': {'U': f'IF({inl},INDEX(单位_电话,{ui}),"")', 'H3': '"摘要"', 'D3': w('显示摘要'),
+                  'S3': '"逾期最久的在前"', 'N3': f'IF({S("逾期笔数")}>{NL3},"⚠ 只列了前 {NL3} 笔","")'},
             'F': {'U': f'IF({wR}=1,{cv("收发生")},"")', 'H3': '"金额"', 'D3': w('金额')},
             'G': {'U': f'IF({wR}=1,{cv("收回")},"")', 'H3': '"还没结的"', 'D3': w('未结')},
             'H': {'U': f'IF({wR}=1,{cv("收余额")},"")', 'H3': '"约定日期"', 'D3': f'TEXT({w("约定日期")},"yyyy-mm-dd")'},
@@ -364,9 +365,7 @@ def build(wb, ctx=None):
             'U': {'U': f'IF({sr}&{sp}="","已结清",{sr}&IF(AND({sr}<>"",{sp}<>""),"；","")&{sp})',
                   'N2': (f'IF({S("要列的单位数")}>{NL2},"⚠ 超过 {NL2} 个，只列了前 {NL2} 个",'
                          f'IF(AND({S("只看没结清")}=1,{S("有往来的单位数")}>{S("要列的单位数")}),'
-                         f'"另有 "&({S("有往来的单位数")}-{S("要列的单位数")})&" 个已结清的没列出",""))'),
-                  'S3': f'"逾期最久的在前；最多列 {NL3} 笔"',
-                  'N3': f'IF({S("逾期笔数")}>{NL3},"⚠ 超过 {NL3} 笔，只列了前 {NL3} 笔","")'},
+                         f'"另有 "&({S("有往来的单位数")}-{S("要列的单位数")})&" 个已结清的没列出",""))')},
         }
         for col, m in disp.items():
             cell = ws[f'{col}{r}']
@@ -380,15 +379,16 @@ def build(wb, ctx=None):
     reg = f'A{R0}:{LAST}{R1}'
     c0 = f'${HC}{R0}'
     ws.conditional_formatting.add(f'I{R0}:I{R1}', FormulaRule(formula=[f'{c0}="D3"'], font=F_WARN, border=CF_BD, stopIfTrue=True))
+    reg3 = f'A{R0}:L{R1}'                  # ③ 只用 A～L
     rules = [
-        (f'AND({c0}="U",OR(N($I{R0})>0,N($P{R0})>0))', cf_fill('FFFFC7CE'), F_OVER, CF_BD),
-        (f'{c0}="U"', None, None, CF_BD),
-        (f'{c0}="H3"', cf_fill(C_WL), F_WHITE_B, CF_BD),
-        (f'{c0}="S3"', cf_fill('FFFCE4D6'), F_ORANGE_B, None),
-        (f'{c0}="D3"', None, None, CF_BD),
-        (f'OR({c0}="N2",{c0}="N3")', None, F_GRAY, None),
+        (reg, f'AND({c0}="U",OR(N($I{R0})>0,N($P{R0})>0))', cf_fill('FFFFC7CE'), F_OVER, CF_BD),
+        (reg, f'{c0}="U"', None, None, CF_BD),
+        (reg3, f'{c0}="H3"', cf_fill(C_WL), F_WHITE_B, CF_BD),
+        (reg3, f'{c0}="S3"', cf_fill('FFFCE4D6'), F_ORANGE_B, None),
+        (reg3, f'{c0}="D3"', None, None, CF_BD),
+        (reg, f'OR({c0}="N2",{c0}="N3")', None, F_GRAY, None),
     ]
-    for cond, fl, ft, bd in rules:
+    for rg, cond, fl, ft, bd in rules:
         kw = {}
         if fl is not None:
             kw['fill'] = fl
@@ -396,7 +396,7 @@ def build(wb, ctx=None):
             kw['font'] = ft
         if bd is not None:
             kw['border'] = bd
-        ws.conditional_formatting.add(reg, FormulaRule(formula=[cond], stopIfTrue=True, **kw))
+        ws.conditional_formatting.add(rg, FormulaRule(formula=[cond], stopIfTrue=True, **kw))
 
     hide(ws, *[CL(i) for i in range(CI('V'), CI(OKS[-1]) + 1)])
     ws.column_dimensions['V'].hidden = False
