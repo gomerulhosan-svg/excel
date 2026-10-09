@@ -140,8 +140,8 @@ def build(wb, ctx):
     nseg = sum(1 for s in ctx.get('segments', []) if str(s.get('名称', '') or '').strip())
     M1 = min(N_SEG, nseg + 2)
 
-    widths(ws, {'A': 14, 'B': 13, 'C': 13, 'D': 22, 'E': 19, 'F': 19, 'G': 19, 'H': 19, 'I': 19, 'J': 19, 'K': 19,
-                'L': 19, 'M': 19, 'N': 26})
+    widths(ws, {'A': 14, 'B': 13, 'C': 13, 'D': 22, 'E': 19.5, 'F': 19.5, 'G': 19.5, 'H': 19.5, 'I': 19.5, 'J': 19.5, 'K': 19.5,
+                'L': 19.5, 'M': 19.5, 'N': 26})
     title(ws, '查  询（按日期、业务板块、经手人）', 'M', C_VIEW)
     home_link(ws, 'N1')
 
