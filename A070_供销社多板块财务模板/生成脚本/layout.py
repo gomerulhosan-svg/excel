@@ -17,7 +17,7 @@ SEGMENTS = ['培训学校', '为农服务中心', '粮食烘干', '粮食购销'
 SEG_KIND = {'培训学校': '通用', '为农服务中心': '通用', '粮食烘干': '烘干', '粮食购销': '购销', '供销社': '通用'}
 SH_FUND, SH_FOLLOW, SH_STMT = '资金台账', '应收应付跟进', '对账单'
 SH_BASE, SH_UNIT, SH_CHK = '基础资料', '往来单位', '数据校验'
-H_PAR, H_SHOU, H_WANG, H_LIST = '_参', '_收', '_往', '_表'
+H_PAR, H_SHOU, H_WANG, H_LIST, H_SORT = '_参', '_收', '_往', '_表', '_序'
 
 C_HOME, C_IN, C_VIEW, C_SEG, C_WL, C_MASTER, C_CHK = (
     'FF1F3864', 'FF2F75B5', 'FF548235', 'FF548235', 'FFC65911', 'FF7F7F7F', 'FF833C0C')
@@ -29,7 +29,7 @@ GROUPS = [
     ('基础', C_MASTER, [SH_BASE, SH_UNIT]),
     ('校验', C_CHK, [SH_CHK]),
 ]
-HIDDEN = [H_PAR, H_SHOU, H_WANG, H_LIST]
+HIDDEN = [H_PAR, H_SHOU, H_WANG, H_LIST, H_SORT]        # _序：板块表共用的排序键（s_seg 写）
 VIEW_GROUPS = ('查看', '往来', '校验')          # 这些组的表保护（黄格不锁）
 
 HOME_END = 'C4'                                 # 首页：截止日期（黄格；空＝两张登记表里最后一笔的日期）
