@@ -133,7 +133,7 @@ def build_ord(ws, ctx):
     _write_rows(ws, rows, C, ORD_R0, date_keys=('预订日期', '出行日期', '定金日期', '取消日期', '结算日期'))
     ok = 'INDEX(单_有效,{n})<>1'
     _show(ws, ORD_R0, nshow, ORD_HDR, {
-        S['预计利润']: f'IF({ok},"",IF(OR(INDEX(单_取消,{{n}})=1,INDEX(单_有预计,{{n}})=1),INDEX(单_预计利润,{{n}}),"没填预计成本"))',
+        S['预计利润']: f'IF({ok},"",IF(INDEX(单_有预计,{{n}})=1,INDEX(单_预计利润,{{n}}),"没填预计成本"))',
         S['实际利润']: f'IF({ok},"",INDEX(单_实际显示,{{n}}))',
         S['尾款收否']: f'IF({ok},"",INDEX(单_尾款收否,{{n}}))',
         S['订单提成']: f'IF({ok},"",INDEX(单_订单提成,{{n}}))',
@@ -158,7 +158,7 @@ def build_ord(ws, ctx):
     ws.conditional_formatting.add(f'{S["订单提成"]}{ORD_R0}:{S["订单提成"]}{last}',      # 没结算：预估
                                   FormulaRule(formula=[f'AND({S["出行状态"]}{ORD_R0}<>"已结算",{S["出行状态"]}{ORD_R0}<>"")'], font=grey))
     ws.conditional_formatting.add(f'A{ORD_R0}:{C["备注"]}{last}',
-                                  FormulaRule(formula=[f'{S["出行状态"]}{ORD_R0}="已取消"'], font=Font(name=YH, sz=10, color='FF808080', strike=True)))
+                                  FormulaRule(formula=[f'${S["出行状态"]}{ORD_R0}="已取消"'], font=Font(name=YH, sz=10, color='FF808080', strike=True)))
     rng = lambda col: f'{col}{ORD_R0}:{col}{ORD_R0 + N_ORD - 1}'
     for k in ('预订日期', '出行日期', '定金日期', '取消日期', '结算日期'):
         dv_date(ws, rng(C[k]))

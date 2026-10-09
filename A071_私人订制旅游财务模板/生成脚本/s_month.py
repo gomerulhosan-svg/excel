@@ -121,7 +121,7 @@ def build(wb, ctx=None):
     dv.add('B3')
     ws.merge_cells('C3:E3')
     put(ws, 'C3', (f'="＝ "&{S("年份")}&" 年"&IF(TRIM(B3&"")="","（空着＝截止日那年）","")'
-                   f'&IF({S("年份认出")}=0,"（⚠ 没认出来，先按截止日那年）","")'), F_NOTE, align=AL, border=False)
+                   f'&IF({S("年份认出")}=0,"（⚠ 没认出来，先按截止日那年）","")'), F_NOTE, align=ALW, border=False)
     ws.merge_cells('F3:M3')
     put(ws, 'F3', '口径：钱按收付日期，只算建账日～截止日、已付的（未付的不算）；预订按预订日期；利润、应发提成按结算月；出行按出行日期。',
         F_NOTE, align=ALW, border=False)

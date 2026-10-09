@@ -43,6 +43,26 @@ def cf_fill(rgb):
     return PatternFill('solid', fgColor=rgb, bgColor=rgb)
 
 
+def cf_blocks(ws, r0, r1, rules):
+    """条件格式：rules＝[(起列, 止列, cond(块首列)→公式, 样式)]，按优先顺序。
+       把列切成「规则集合一样」的连续块，每格只落在一个块里、块里规则按顺序排（都 stopIfTrue）：
+       Excel 按优先级取第一条成立的；LibreOffice / 有的 WPS 版本对重叠的几个块只认一个，这样写哪边都一样。"""
+    lo = min(CI(a) for a, _b, _c, _k in rules)
+    hi = max(CI(b) for _a, b, _c, _k in rules)
+    runs = []
+    for i in range(lo, hi + 1):
+        sig = tuple(j for j, (a, b, _c, _k) in enumerate(rules) if CI(a) <= i <= CI(b))
+        if runs and runs[-1][2] == sig:
+            runs[-1][1] = i
+        else:
+            runs.append([i, i, sig])
+    for i0, i1, sig in runs:
+        for j in sig:
+            _a, _b, cond, kw = rules[j]
+            ws.conditional_formatting.add(f'{CL(i0)}{r0}:{CL(i1)}{r1}',
+                                          FormulaRule(formula=[cond(CL(i0))], stopIfTrue=True, **kw))
+
+
 TIP = ('💡 每个订单一行（用户要的「每个订单详细清单」），全自动不用填，要改订单去【订单登记】改。黄格可以筛：按哪个日期（预订日期 / 出行日期）、'
        '起止（空着＝不限）、销售、状态（未出行 / 已出行 / 已结算 / 已取消 / 没收齐＝没取消、还有钱没收）、客户（填名字里的几个字）；黄格都空着＝全部订单。'
        '按选的日期从早到晚排（同一天按登记顺序，没填这个日期的排最后）。上面合计是筛出来的全部订单（不受「只列前 1500 单」限制）。'
@@ -217,19 +237,16 @@ def build(wb, ctx=None):
             if col in fm:
                 x.number_format = fm[col]
     R1 = R0 + NROW - 1
-    rng = f'A{R0}:{LAST}{R1}'
     ix0 = f'${IDX}{R0}'
-    rules = [
-        (rng, f'AND({ix0}=0,$B{R0}<>"")', dict(font=F_GREY)),                                  # 「共 N 单」
-        (rng, f'AND({ix0}>0,$R{R0}="已取消")', dict(font=F_GREY, border=CF_BD)),                # 已取消：整行灰
-        (f'I{R0}:I{R1}', f'AND({ix0}>0,$R{R0}="已出行")', dict(font=F_GREY_I, border=CF_BD)),  # 暂算
-        (f'L{R0}:L{R1}', f'AND({ix0}>0,$R{R0}<>"已结算")', dict(font=F_GREY_I, border=CF_BD)),  # 预估
-        (f'J{R0}:J{R1}', f'AND({ix0}>0,$R{R0}<>"已取消",N($P{R0})>0)', dict(font=F_ORANGE_B, border=CF_BD)),  # 没收齐
-        (f'H{R0}:H{R1}', f'AND({ix0}>0,$H{R0}="没填")', dict(font=F_GREY, border=CF_BD)),
-        (rng, f'{ix0}>0', dict(border=CF_BD)),
-    ]
-    for rg, cond, kw in rules:
-        ws.conditional_formatting.add(rg, FormulaRule(formula=[cond], stopIfTrue='font' in kw, **kw))
+    cf_blocks(ws, R0, R1, [
+        ('A', LAST, lambda c: f'AND({ix0}=0,$B{R0}<>"")', dict(font=F_GREY)),                           # 「共 N 单」
+        ('A', LAST, lambda c: f'AND({ix0}>0,$R{R0}="已取消")', dict(font=F_GREY, border=CF_BD)),         # 已取消：整行灰
+        ('I', 'I', lambda c: f'AND({ix0}>0,$R{R0}="已出行")', dict(font=F_GREY_I, border=CF_BD)),        # 暂算
+        ('L', 'L', lambda c: f'AND({ix0}>0,$R{R0}<>"已结算")', dict(font=F_GREY_I, border=CF_BD)),       # 预估
+        ('J', 'J', lambda c: f'AND({ix0}>0,$R{R0}<>"已取消",N($P{R0})>0)', dict(font=F_ORANGE_B, border=CF_BD)),  # 没收齐
+        ('H', 'H', lambda c: f'AND({ix0}>0,$H{R0}="没填")', dict(font=F_GREY, border=CF_BD)),
+        ('A', LAST, lambda c: f'{ix0}>0', dict(border=CF_BD)),
+    ])
 
     hide(ws, *[CL(i) for i in range(CI(SL), CI(KEY) + 1)])
     ws.freeze_panes = f'C{R0}'

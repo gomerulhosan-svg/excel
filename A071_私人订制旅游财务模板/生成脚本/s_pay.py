@@ -229,14 +229,16 @@ def build(wb, ctx=None):
                    f'累计未发、预估提成截至 "&TEXT(P_截止,"yyyy-mm-dd")'), F_NOTE, align=ALW, border=False)
     ws.row_dimensions[4].height = 28
     ws.merge_cells(f'A5:{LAST}5')
+    paid_ok, due_ok = f'ABS({S("不在表发钱")})<0.005', f'ABS({S("不在表应发")})<0.005'
     put(ws, 'A5', (f'=IF({np_}=0,"⚠ 【基础资料】的人员表是空的：先把销售、员工填进去",'
-                   f'IF(ABS({S("不在表发钱")})<0.005,"✓ 这段时间的工资、提成都发给了人员表里的人",'
-                   f'"⚠ 这段时间有 "&TEXT({S("不在表发钱")},"#,##0.00")&" 元工资、提成发给了不在人员表里的人'
-                   f'（【收支登记】往来对象没选人员表里的名字），没算进下面每个人——见 ① 合计下面灰色那行"))'
-                   f'&IF(ABS({S("不在表应发")})<0.005,"","；销售名字不在人员表里的订单，应发提成 "&TEXT({S("不在表应发")},"#,##0.00")&" 元")'),
-        F_NOTE, align=AL, border=False)
+                   f'IF(AND({paid_ok},{due_ok}),"✓ 这段时间的工资、提成都发给了人员表里的人",'
+                   f'"⚠ "&IF({paid_ok},"","这段时间有 "&TEXT({S("不在表发钱")},"#,##0.00")&" 元工资、提成发给了不在人员表里的人'
+                   f'（【收支登记】往来对象没选人员表里的名字）")'
+                   f'&IF({due_ok},"",IF({paid_ok},"","；")&"销售没填或不在人员表里的订单，这段时间应发提成 "'
+                   f'&TEXT({S("不在表应发")},"#,##0.00")&" 元")&"，没算进下面每个人——见 ① 合计下面灰色那行"))'),
+        F_NOTE, align=ALW, border=False)
     ws.conditional_formatting.add('A5', FormulaRule(formula=['LEFT($A$5,1)="⚠"'], font=Font(bold=True, color='FFC65911')))
-    ws.row_dimensions[5].height = 20
+    ws.row_dimensions[5].height = 28
     ws.row_dimensions[6].height = 6
 
     # ── 活动区 ──
@@ -308,8 +310,10 @@ def build(wb, ctx=None):
 
     # ── 条件格式（按隐藏列 AD 这一行是什么） ──
     full = f'A{R0}:{LAST}{R1}'
+    w2, w3, w3t = f'A{R0}:K{R1}', f'A{R0}:F{R1}', f'A{R0}:I{R1}'      # ② 用到 K 列、③ 明细到 F 列、③ 合计到 I 列
     c0, d0 = f'${HC}{R0}', f'${HD}{R0}'
     is_ = lambda *ks: 'OR(' + ','.join(f'{c0}="{x}"' for x in ks) + ')'
+    tot = dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)
     rules = [
         (full, is_('S1', 'S2', 'S3'), dict(fill=cf_fill(C_VIEW), font=F_WHITE_B)),
         (full, f'AND({is_("H1", "H2", "H3")},A{R0}<>"")', dict(fill=cf_fill(GREEN_H), font=F_WHITE_B, border=CF_BD)),
@@ -317,12 +321,16 @@ def build(wb, ctx=None):
                                           border=CF_BD)),
         (f'G{R0}:I{R1}', f'{c0}="Tb"', dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True, italic=True, color='FF9E9E9E'),
                                           border=CF_BD)),
-        (full, is_('T1', 'Ta', 'Tb', 'T3'), dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)),
+        (full, f'{c0}="T1"', tot),
+        (w2, is_('Ta', 'Tb'), tot),
+        (w3t, f'{c0}="T3"', tot),
         (full, f'{c0}="N1"', dict(fill=cf_fill('FFF2F2F2'), font=F_GREY, border=CF_BD)),
         (f'I{R0}:I{R1}', f'AND({c0}="D1",N(I{R0})>0.005)', dict(font=F_ORANGE_B, border=CF_BD)),
         (f'J{R0}:J{R1}', f'{c0}="D1"', dict(font=F_GREY_I, border=CF_BD)),
         (f'G{R0}:I{R1}', f'AND({c0}="D2",{d0}<>1)', dict(font=F_GREY_I, border=CF_BD)),
-        (full, is_('D1', 'D2', 'D3'), dict(border=CF_BD)),
+        (full, f'{c0}="D1"', dict(border=CF_BD)),
+        (w2, f'{c0}="D2"', dict(border=CF_BD)),
+        (w3, f'{c0}="D3"', dict(border=CF_BD)),
         (full, is_('N2', 'N3'), dict(font=F_GREY)),
     ]
     for rg, cond, kw in rules:

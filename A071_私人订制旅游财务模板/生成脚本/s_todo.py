@@ -53,6 +53,26 @@ def cf_fill(rgb):
     return PatternFill('solid', fgColor=rgb, bgColor=rgb)
 
 
+def cf_blocks(ws, r0, r1, rules):
+    """条件格式：rules＝[(起列, 止列, cond(块首列)→公式, 样式)]，按优先顺序。
+       把列切成「规则集合一样」的连续块，每格只落在一个块里、块里规则按顺序排（都 stopIfTrue）：
+       Excel 按优先级取第一条成立的；LibreOffice / 有的 WPS 版本对重叠的几个块只认一个，这样写哪边都一样。"""
+    lo = min(CI(a) for a, _b, _c, _k in rules)
+    hi = max(CI(b) for _a, b, _c, _k in rules)
+    runs = []
+    for i in range(lo, hi + 1):
+        sig = tuple(j for j, (a, b, _c, _k) in enumerate(rules) if CI(a) <= i <= CI(b))
+        if runs and runs[-1][2] == sig:
+            runs[-1][1] = i
+        else:
+            runs.append([i, i, sig])
+    for i0, i1, sig in runs:
+        for j in sig:
+            _a, _b, cond, kw = rules[j]
+            ws.conditional_formatting.add(f'{CL(i0)}{r0}:{CL(i1)}{r1}',
+                                          FormulaRule(formula=[cond(CL(i0))], stopIfTrue=True, **kw))
+
+
 def _chain(pairs, default='""'):
     out = default
     for c, v in reversed(pairs):
@@ -312,27 +332,25 @@ def build(wb, ctx=None):
                 x.number_format = fm[col]
 
     # ── 条件格式（按隐藏列 AD 这一行是什么） ──
-    full, left, tbl = f'A{R0}:{LAST}{R1}', f'A{R0}:J{R1}', f'L{R0}:P{R1}'
     c0, t0, red0, code0 = f'${HC}{R0}', f'${HT}{R0}', f'${HR}{R0}', f'${HD}{R0}'
     is_ = lambda *ks: 'OR(' + ','.join(f'{c0}="{x}"' for x in ks) + ')'
-    rules = [
-        (full, is_('S1', 'S2', 'S3'), dict(fill=cf_fill(C_VIEW), font=F_WHITE_B)),
-        (full, f'AND({is_("H1", "H2", "H3")},A{R0}<>"")', dict(fill=cf_fill(GREEN_H), font=F_WHITE_B, border=CF_BD)),
-        (tbl, f'AND({t0}>0,{t0}={S("tN")})', dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)),
-        (tbl, f'{t0}>0', dict(border=CF_BD)),
-        (full, is_('T1', 'T2'), dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)),
-        (left, f'{c0}="Td"', dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)),
-        (left, is_('Ta', 'Tb', 'Tc'), dict(fill=cf_fill('FFDDEBF7'), border=CF_BD)),
-        (full, f'AND({red0}=1,{is_("D1", "D2")})', dict(fill=cf_fill('FFFFC7CE'), font=F_OVER, border=CF_BD)),
-        (left, f'AND({red0}=1,{c0}="D3")', dict(fill=cf_fill('FFFFC7CE'), font=F_OVER, border=CF_BD)),
-        (f'O{R0}:O{R1}', f'OR({c0}="D1",AND({c0}="D2",{code0}=1))', dict(font=F_GREY_I, border=CF_BD)),
-        (f'L{R0}:N{R1}', f'AND({is_("D1", "D2")},L{R0}="没填")', dict(font=F_GREY_I, border=CF_BD)),
-        (full, is_('D1', 'D2'), dict(border=CF_BD)),
-        (left, f'{c0}="D3"', dict(border=CF_BD)),
-        (full, is_('N1', 'N2', 'N3'), dict(font=F_GREY)),
-    ]
-    for rg, cond, kw in rules:
-        ws.conditional_formatting.add(rg, FormulaRule(formula=[cond], stopIfTrue=True, **kw))
+    A, J, L = 'A', 'J', 'L'
+    cf_blocks(ws, R0, R1, [
+        (A, LAST, lambda c: is_('S1', 'S2', 'S3'), dict(fill=cf_fill(C_VIEW), font=F_WHITE_B)),
+        (A, LAST, lambda c: f'AND({is_("H1", "H2", "H3")},{c}{R0}<>"")', dict(fill=cf_fill(GREEN_H), font=F_WHITE_B, border=CF_BD)),
+        (L, LAST, lambda c: f'AND({t0}>0,{t0}={S("tN")})', dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)),
+        (L, LAST, lambda c: f'{t0}>0', dict(border=CF_BD)),
+        (A, LAST, lambda c: is_('T1', 'T2'), dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)),
+        (A, J, lambda c: f'{c0}="Td"', dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)),
+        (A, J, lambda c: is_('Ta', 'Tb', 'Tc'), dict(fill=cf_fill('FFDDEBF7'), border=CF_BD)),
+        (A, LAST, lambda c: f'AND({red0}=1,{is_("D1", "D2")})', dict(fill=cf_fill('FFFFC7CE'), font=F_OVER, border=CF_BD)),
+        (A, J, lambda c: f'AND({red0}=1,{c0}="D3")', dict(fill=cf_fill('FFFFC7CE'), font=F_OVER, border=CF_BD)),
+        ('O', 'O', lambda c: f'OR({c0}="D1",AND({c0}="D2",{code0}=1))', dict(font=F_GREY_I, border=CF_BD)),
+        (L, 'N', lambda c: f'AND({is_("D1", "D2")},{c}{R0}="没填")', dict(font=F_GREY_I, border=CF_BD)),
+        (A, LAST, lambda c: is_('D1', 'D2'), dict(border=CF_BD)),
+        (A, J, lambda c: f'{c0}="D3"', dict(border=CF_BD)),
+        (A, LAST, lambda c: is_('N1', 'N2', 'N3'), dict(font=F_GREY)),
+    ])
 
     hide(ws, *[CL(i) for i in range(CI(SL), CI(K4C) + N_CASH // BLK)])
     ws.freeze_panes = 'A4'

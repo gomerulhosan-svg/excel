@@ -317,8 +317,10 @@ def build(wb, ctx=None):
                 f'"✗ 跟实际成本 "&TEXT(INDEX(单_实际成本,{N}),"#,##0.00")&" 对不上")))')
         na = f'IF({N}=0,"",'
         disp = {
-            'A': {'S1': '"① 收款明细"', 'H1': '"日期"', 'DD': f'IF({dd}>0,{dd},"")', 'D1': x('日期'), 'T1': '"合计"',
-                  'S2': '"② 成本明细"', 'H2': '"日期"', 'D2': x('日期'), 'T2': '"合计"', 'S3': '"③ 利润小结"',
+            'A': {'S1': '"① 收款明细"', 'H1': '"日期"', 'DD': f'IF({dd}>0,{dd},"")', 'D1': x('日期'),
+                  'T1': f'IF({dep}+{S("c1")}>{N1},"前 {N1} 笔合计","合计")',          # 超出显示行数：合计只是列出来的这些
+                  'S2': '"② 成本明细"', 'H2': '"日期"', 'D2': x('日期'), 'T2': f'IF({S("c2")}>{N2},"前 {N2} 笔合计","合计")',
+                  'S3': '"③ 利润小结"',
                   'G1': '"经办人："', 'G2': '"日　期："'},
             'B': {'H1': '"项目"', 'DD': '"定金"', 'D1': x('类别'), 'T1': f'"共 "&({dep}+{S("c1")})&" 笔"',
                   'H2': '"收支类别"', 'D2': x('类别'), 'T2': f'"共 "&{S("c2")}&" 笔"', 'G1': UL(12), 'G2': UL(12)},
@@ -344,6 +346,7 @@ def build(wb, ctx=None):
                   'H2': '"其中未付"', 'D2': nz(f'${HUNP}{r}'), 'T2': S('未付合计'),
                   'P3': f'{na}CHOOSE({cx}+1,"未出行（暂算）","暂算","","已取消"))',
                   'P4': f'{na}IF({cx}=3,"＝实际利润",""))',
+                  'P5': f'{na}IF(AND({cx}<=1,{pv}),"暂算",""))',
                   'P6': f'{na}IF({cy}=1,"应发",IF({cx}=3,"已取消","预估")))',
                   'G1': '"客户确认："', 'G2': '"日　期："'},
             'G': {'H1': '"账户"', 'DD': g('收款账户'), 'D1': x('账户'), 'H2': '"账户"', 'D2': x('账户'), 'G1': UL(10), 'G2': UL(10)},
@@ -368,7 +371,7 @@ def build(wb, ctx=None):
                                        font=Font(bold=True, color='FFC00000')))
     cf.add(f'H{R0}:H{R1}', FormulaRule(formula=[f'OR($H{R0}="应退未退",$H{R0}="未付")'], font=Font(bold=True, color='FFC65911')))
     cf.add(f'E{R0}:F{R0 + NREG - 1}', FormulaRule(
-        formula=[f'OR(AND({t0}="P3",{cx}<=1),AND({t0}="P6",{cy}=0,{cx}<>3))'], font=Font(italic=True, color='FF9E9E9E')))
+        formula=[f'OR(AND(OR({t0}="P3",{t0}="P5"),{cx}<=1),AND({t0}="P6",{cy}=0,{cx}<>3))'], font=Font(italic=True, color='FF9E9E9E')))
     cf.add(reg, FormulaRule(formula=[f'OR({t0}="S1",{t0}="S2",{t0}="S3")'], fill=cf_fill(C_VIEW), font=F_WB, stopIfTrue=True))
     cf.add(reg, FormulaRule(formula=[f'OR({t0}="H1",{t0}="H2")'], fill=cf_fill(GREEN_H), font=F_WB, border=CF_BD,
                             stopIfTrue=True))

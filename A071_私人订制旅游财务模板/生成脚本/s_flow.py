@@ -25,7 +25,8 @@ R_D1 = R_D0 + SHOW + 1                                 # 明细最后一行（�
 # ── 隐藏列 ──
 SL, SV = 'AA', 'AB'
 SC = ['账户', '类别', '账户在', '类别对', '起', '止', '账户数', '笔数', '显示数', '定金笔数', '期初', '本期收入', '本期支出', '期末算',
-      '账户位', '①期末', '滚到', '核对', '末行', '其他要显示']
+      '账户位', '①期末', '滚到', '核对', '末行', '其他要显示', '止算']
+# 止算＝MAX(止, 起－1)：起晚于止（日期范围是空的）时，期末＝期初，①、② 的核对照样对得上（第 5 行另有红字提示改日期）
 SR = {k: 3 + i for i, k in enumerate(SC)}
 HR0 = 5                                                # ① 每个账户的数（第 i 个在 HR0+i-1 行；之后「账户名不对」、合计）
 HA = dict(名称='AD', 期初='AE', 收入='AF', 支出='AG', 期末='AH')
@@ -85,6 +86,7 @@ def build(wb, ctx=None):
     ws.row_dimensions[3].height = 26
 
     ACC, CAT, S0, S1 = S('账户'), S('类别'), S('起'), S('止')
+    S1X = S('止算')
     accN = any_crit('账户_名称', ACC)
     accD = any_crit('单_收款账户', ACC)
     accS = any_crit('收_账户', ACC)
@@ -92,11 +94,11 @@ def build(wb, ctx=None):
     dep_ok = f'OR({CAT}="",{CAT}="定金")'
     kinds_txt = ',' + ','.join(KINDS) + ','
     dep_before = lambda a: f'SUMIFS(单_定金,单_有效,1,{a},单_定金,"<>0",单_定金日期,">="&P_建账日,单_定金日期,"<"&{S0},单_定金日期,"<="&P_截止)'
-    dep_upto = lambda a: f'SUMIFS(单_定金,单_有效,1,{a},单_定金,"<>0",单_定金日期,">="&P_建账日,单_定金日期,"<="&{S1},单_定金日期,"<="&P_截止)'
+    dep_upto = lambda a: f'SUMIFS(单_定金,单_有效,1,{a},单_定金,"<>0",单_定金日期,">="&P_建账日,单_定金日期,"<="&{S1X},单_定金日期,"<="&P_截止)'
     dep_in = lambda a: f'SUMIFS(单_定金,单_有效,1,{a},单_定金,">0",{dr("单_定金日期", S0, S1)})'
     dep_out = lambda a: f'-SUMIFS(单_定金,单_有效,1,{a},单_定金,"<0",{dr("单_定金日期", S0, S1)})'
     cash_before = lambda a: f'SUMIFS(收_净额,收_有效,1,{a},收_日期,"<"&{S0})'
-    cash_upto = lambda a: f'SUMIFS(收_净额,收_有效,1,{a},收_日期,"<="&{S1})'
+    cash_upto = lambda a: f'SUMIFS(收_净额,收_有效,1,{a},收_日期,"<="&{S1X})'
     cash_in = lambda a, c='': f'SUMIFS(收_收入,收_在期,1,收_有效,1,{a}{c},{dr("收_日期", S0, S1)})'
     cash_out = lambda a, c='': f'SUMIFS(收_支出,收_在期,1,收_有效,1,{a}{c},{dr("收_日期", S0, S1)})'
     KEYS = f"{H_SORT}!$A$2:$A${NKEY + 1}"
@@ -125,6 +127,7 @@ def build(wb, ctx=None):
         '核对': (f'=IF({CAT}<>"",-1,IF(AND(ROUND({S("滚到")}-{S("①期末")},2)=0,ROUND({S("期末算")}-{S("①期末")},2)=0),1,0))'),
         '末行': f'={R_D0 + 1}+{S("显示数")}',
         '其他要显示': '=IF(OR(' + ','.join(f'ROUND({HA[k]}{HR0 + A_OTH - 1},2)<>0' for k in ('期初', '收入', '支出', '期末')) + '),1,0)',
+        '止算': f'=MAX({S1},{S0}-1)',
     }
     for k in SC:
         ws[f'{SL}{SR[k]}'] = k
@@ -139,7 +142,10 @@ def build(wb, ctx=None):
     put(ws, 'H4', f'=IF({CAT}="","全部类别",{CAT})', F_AUTOB, FILL_AUTO, align=AC)
     put(ws, 'C4', '', F_NOTE, border=False)
     ws.merge_cells(f'A5:{LAST}5')
-    put(ws, 'A5', (f'=IF({S0}>{S1},"⚠ 起晚于止，请改日期　","")'
+    put(ws, 'A5', (f'=IF({S0}>{S1},IF(AND(ISNUMBER(D3),INT(N(D3))<P_建账日),"⚠ 止早于建账日（建账以前的钱已含在期初余额里），请改日期　",'
+                   f'"⚠ 起晚于止，这段时间是空的（期末＝期初），请改日期　"),"")'
+                   f'&IF(AND(TRIM(B3&"")<>"",NOT(ISNUMBER(B3))),"⚠ 起不是日期（先按建账日算）　","")'
+                   f'&IF(AND(TRIM(D3&"")<>"",NOT(ISNUMBER(D3))),"⚠ 止不是日期（先按截止日算）　","")'
                    f'&IF(AND(ISNUMBER(B3),INT(N(B3))<P_建账日),"起早于建账日，按建账日 "&TEXT(P_建账日,"yyyy/mm/dd")&" 算（建账以前的钱已含在期初余额里）　","")'
                    f'&IF(AND(ISNUMBER(D3),INT(N(D3))>P_截止),"止晚于截止日，按截止日 "&TEXT(P_截止,"yyyy/mm/dd")&" 算（截止日在首页改）　","")'
                    f'&IF({S("账户在")}=0,"⚠ 「"&{ACC}&"」不在【基础资料】的账户里　","")'
@@ -226,7 +232,7 @@ def build(wb, ctx=None):
     section(ws, R_SEC2, 'A', LAST, '② 流水（定金＋收支登记里已付的钱，按日期排；余额从①的期初逐笔往下滚）', C_VIEW)
     N, NN = S('笔数'), S('显示数')
     ws.merge_cells(f'A{R_NOTE2}:{LAST}{R_NOTE2}')
-    put(ws, f'A{R_NOTE2}', (f'=IF({N}=0,"这段时间没有流水"&IF({CAT}="","（余额不变：期初＝期末）","")&"。",'
+    put(ws, f'A{R_NOTE2}', (f'=IF({N}=0,"这段时间没有流水"&IF({CAT}="","（余额不变：期初＝期末）",""),'
                             f'"共 "&{N}&" 笔（其中定金 "&{S("定金笔数")}&" 笔），按日期排（同一天先列收支登记、后列定金）")'
                             f'&IF({N}>{SHOW},"　⚠ 只显示前 {SHOW} 笔（余额也只滚到第 {SHOW} 笔），请缩短日期范围","")'
                             f'&IF({CAT}="","；余额＝"&IF({ACC}="","全部账户合计","「"&{ACC}&"」")&"的余额，从期初 "'
@@ -251,7 +257,7 @@ def build(wb, ctx=None):
         s_ = lambda f_: f'INDEX(收_{f_},{n})'
         d_ = lambda f_: f'INDEX(单_{f_},{n})'
         prev = open_ if k == 1 else f'N(I{r - 1})'
-        chk = (f'IF({CAT}<>"","选了类别：不算余额",IF({N}>{SHOW},"⚠ 只列了前 {SHOW} 笔",'
+        chk = (f'IF({CAT}<>"","选了类别：不算余额",IF({N}>{SHOW},"⚠ 只列了前 {SHOW} 笔（合计行的收入、支出、余额是全期的）",'
                f'IF({S("核对")}=1,"✓ 期末余额＝①的期末","✗ 跟①的期末 "&TEXT({S("①期末")},"#,##0.00")&" 对不上")))')
         cells = {
             'A': [(f'{q}=1', s_('日期')), (f'{q}=2', d_('定金日期')), (f'{q}=3', '"合计"'), (f'{q}=4', f'"共 "&{N}&" 笔"')],
@@ -266,7 +272,7 @@ def build(wb, ctx=None):
             'H': [(f'{q}=1', f'IF({s_("支出")}=0,"",{s_("支出")})'), (f'{q}=2', f'IF({d_("定金")}<0,-{d_("定金")},"")'),
                   (f'{q}=3', S('本期支出'))],
             'I': [(f'OR({q}=1,{q}=2)', f'IF({CAT}="",ROUND({prev}+N(G{r})-N(H{r}),2),"")'),
-                  (f'{q}=3', f'IF({CAT}="",{prev},"")')],
+                  (f'{q}=3', f'IF({CAT}="",IF({N}>{SHOW},{S("①期末")},{prev}),"")')],    # 超出：合计行给真的期末（收入、支出也是全期的）
             'J': [(f'{q}=1', f'"收支 "&{s_("录入行")}'), (f'{q}=2', f'"订单 "&{d_("录入行")}')],
         }
         for c, pairs in cells.items():
