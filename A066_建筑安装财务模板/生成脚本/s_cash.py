@@ -60,6 +60,7 @@ IDX = 'Z'                                                   # 显示行用的「
 SC = 'AA'                                                   # 标量
 S0, S1 = '$B$5', '$D$5'                                     # 本期起、止
 Y0, Y1 = f'${SC}$4', f'${SC}$5'                             # 年报的年初、年末（不超过截止日）
+YB0 = f'${SC}$20'                                           # ② 本年累计的起：本期止那一年的 1 月 1 日
 TYP, DEF, YR, XFER, YPREV, NEND, YXFER = (f'${SC}${i}' for i in (1, 2, 3, 6, 7, 8, 9))
 GROUPS_ = {1: '银行＋现金', 2: '专户', 3: '个人户'}
 
@@ -129,6 +130,7 @@ def build_fund(ws, ctx):
         8: (f'=IF({TYP}="周报",{S0}+6,IF({TYP}="月报",DATE(YEAR({DEF}),MONTH({DEF})+1,0),'
             f'IF({TYP}="年报",DATE(YEAR({DEF}),12,31),H4)))'),
         9: f'=SUMIFS(收_收入,收_归类,"内部转账",{per(Y0, Y1)})+SUMIFS(收_支出,收_归类,"内部转账",{per(Y0, Y1)})',
+        20: f'=DATE(YEAR({S1}),1,1)',
     }
     for i, f in sc.items():
         ws[f'{SC}{i}'] = f
@@ -256,14 +258,14 @@ def build_fund(ws, ctx):
     r += 2
 
     # ═════ ② 按收支项目 ═════
-    section(ws, r, 'A', 'I', '② 按收支项目（本期＝上面的起止；本年累计＝首页年度 1 月 1 日到截止日）', C_VIEW)
+    section(ws, r, 'A', 'I', '② 按收支项目（本期＝上面的起止；本年累计＝本期止那一年的 1 月 1 日到本期止）', C_VIEW)
     r += 1
-    header(ws, r, [('A', '收支项目'), ('B', '归类'), ('C', '本期金额'), ('D', '本年累计\n（年初～截止日）'), ('E', '说明')], GREEN_H)
+    header(ws, r, [('A', '收支项目'), ('B', '归类'), ('C', '本期金额'), ('D', '本年累计\n（1 月 1 日～本期止）'), ('E', '说明')], GREEN_H)
     r += 1
     it_cols = list('ABCDE')
     ifmt = {'A': 'General', 'B': 'General', 'E': 'General'}
     ial = {'A': AL, 'B': AC, 'E': AL}
-    yr0, yr1 = 'P_年初', 'P_截止'
+    yr0, yr1 = YB0, S1
     blocks = {}
     for side, label, cntc, nlist, mshow, nm_name, cat_name, sign, crit in (
             ('收入', '收入项目', ICNT, N_INC, M_INC, '收入项目_名称', '收入项目_归类', '', '"收入"'),

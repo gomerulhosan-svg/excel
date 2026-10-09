@@ -67,6 +67,9 @@ def build(wb, ctx=None):
     # 关键数
     section(ws, 6, 'B', 'L', '关键数（截至截止日期；点名字跳到那张表）', C_HOME)
     kpis = [('本年确认收入', '=汇_收入12月-汇_收入年初前', SH_PL),
+            ('本年净利润', f'={SH_PL}!$C$23', SH_PL),
+            ('欠工人工资（应付工资）', f'={SH_BS}!$F$8', SH_PAYSUM),
+            ('本年保本收入', f'=IF(ISNUMBER({SH_BE}!$B$14),{SH_BE}!$B$14,0)', SH_BE),
             ('银行＋现金＋专户', '=汇_货币资金负债日', SH_FUND),
             ('甲方还欠（应收）', '=汇_应收负债日-汇_预收负债日', SH_AR),
             ('欠供应商（应付）', '=汇_应付负债日-汇_预付负债日', SH_AP),
@@ -84,12 +87,13 @@ def build(wb, ctx=None):
         put(ws, f'{c1}{r + 1}', f, F_KPI_V, fill('FFFFFFFF'), PCT if '率' in lab else MONEY, AC)
         ws.merge_cells(f'{c1}{r + 1}:{c2}{r + 1}')
         ws.row_dimensions[r + 1].height = 26
-    put(ws, 'B11', '资产负债表日期没单独选时＝截止日期。「公司欠老板垫付」＝老板个人账户替公司付了、公司还没还的（负数＝他手上有公司的钱）。',
+    nr = 7 + 2 * ((min(len(kpis), 12) + 3) // 4)
+    put(ws, f'B{nr}', '资产负债表日期没单独选时＝截止日期。「公司欠老板垫付」＝老板个人账户替公司付了、公司还没还的（负数＝他手上有公司的钱）。',
         F_NOTE, align=AL, border=False)
-    ws.merge_cells('B11:L11')
+    ws.merge_cells(f'B{nr}:L{nr}')
 
     # 提醒
-    r = 13
+    r = nr + 2
     section(ws, r, 'B', 'L', '提醒', C_RPT)
     CR = s_check.CHECK_ROWS
     chk = lambda lab: f'{SH_CHK}!$C${CR[lab]}'
