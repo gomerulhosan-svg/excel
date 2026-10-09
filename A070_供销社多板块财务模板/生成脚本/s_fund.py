@@ -39,7 +39,9 @@ A_OTH, A_TOT = N_ACC + 1, N_ACC + 2
 HS = dict(名称='AK', 收入='AL', 支出='AM', 净额='AN')                               # ② 每个板块
 SCNT = 'AJ'
 S_OTH, S_TOT, S_XFER, S_ALL = N_SEG + 1, N_SEG + 2, N_SEG + 3, N_SEG + 4
-IDX, KIND, KEY = 'P', 'Q', 'S'
+IDX, KIND = 'P', 'Q'
+KEY = 'BA'                                       # ③ 排序键：折成 500 行一列的方块（BA:BJ），都在明细行数以内
+BLK = 500
 SHOW = 1500
 
 
@@ -49,6 +51,21 @@ def S(rng, *c):
 
 def R2(x):
     return f'ROUND({x},2)'
+
+
+def key_block(ws, c0, r0, n, cond, datef):
+    """排序键折成 BLK 行一列的方块：第 i 条（0 起）在 c0 右边第 i//BLK 列、第 r0+i%BLK 行；放「日期×10000＋n」，不满足放空。
+       返回（个数格, 方块区域）；SMALL 对整块取第 k 小，MOD(…,10000) 还原 n。"""
+    i0 = CI(c0)
+    ncol = -(-n // BLK)
+    for i in range(n):
+        c = f'{CL(i0 + i // BLK)}{r0 + i % BLK}'
+        ws[c] = f'=IF({cond(i)},{datef(i)}*10000+{i + 1},"")'
+        ws[c].font = F_HELP
+    blk = f'${c0}${r0}:${CL(i0 + ncol - 1)}${r0 + BLK - 1}'
+    ws[f'{c0}{r0 - 1}'] = f'=COUNT({blk})'
+    ws[f'{c0}{r0 - 1}'].font = F_HELP
+    return f'${c0}${r0 - 1}', blk
 
 
 def _sc(ws, cell, f, label):
@@ -84,7 +101,7 @@ def build(wb, ctx):
     tip = ('💡 出纳的现金、银行日记账。黄格：账户（空＝全部账户合起来）、起止日期（空＝首页年初～截止日）、板块（空＝全部）。'
            '① 每个账户的期初（起始日前一天，含建账时的期初余额）、本期收入、支出、期末余额；② 按板块的收支（不含账户之间倒钱）；'
            '③ 逐笔明细，余额从期初逐笔往下滚，可以拿来跟银行对账单、现金盘点逐笔对。现金存银行、银行取现（内部转账）在账户里是真进真出，'
-           '选全部账户时一出一进、余额不变。板块只筛本期收入、支出、笔数和明细，不影响期初、期末（选了板块时明细的余额是账户的实际余额）。'
+           '选全部账户时一出一进、余额不变。板块只筛本期收入、支出、笔数和明细（选了板块就不算内部转账），不影响期初、期末（选了板块时明细的余额是账户的实际余额）。'
            '要改哪一笔，按最后一列行号去【收支登记】改。')
     title(ws, '资金台账（现金 / 银行日记账）', LAST, C_VIEW, tip)
 
@@ -99,8 +116,8 @@ def build(wb, ctx):
     ws.row_dimensions[3].height = 26
     _sc(ws, ACC, '=TRIM(B3&"")', '选的账户')
     _sc(ws, SEG, '=TRIM(H3&"")', '选的板块')
-    _sc(ws, ACC_OK, f'=IF({ACC}="",1,IF(ISNUMBER(MATCH({ACC},账户_名称,0)),1,0))', '账户在基础资料里')
-    _sc(ws, SEG_OK, f'=IF({SEG}="",1,IF(ISNUMBER(MATCH({SEG},板块_名称,0)),1,0))', '板块在基础资料里')
+    _sc(ws, ACC_OK, f'=IF({ACC}="",1,IF(ISNUMBER(MATCH({esc(ACC)},账户_名称,0)),1,0))', '账户在基础资料里')
+    _sc(ws, SEG_OK, f'=IF({SEG}="",1,IF(ISNUMBER(MATCH({esc(SEG)},板块_名称,0)),1,0))', '板块在基础资料里')
     put(ws, 'A4', '实际用的', F_NOTE, align=AC)
     _cell(ws, 'B4', f'=IF({ACC}="","全部账户",{ACC})', None, AC, F_AUTOB, FILL_AUTO)
     put(ws, 'C4', '空＝首页年初→', F_NOTE, align=AR)
@@ -114,7 +131,8 @@ def build(wb, ctx):
                    f'&IF({SEG_OK}=0,"⚠ 「"&{SEG}&"」不在【基础资料】的业务板块里","")'), F_RED, align=AL, border=False)
 
     accS, accN = seg_crit('收_账户', ACC), seg_crit('账户_名称', ACC)
-    segS = seg_crit('收_板块', SEG)
+    # 选了板块：只算这个板块的、而且不是内部转账的（内部转账就算填了板块也不算板块收支）；没选＝全部（含内部转账）
+    segS = seg_crit('收_板块', SEG) + f',收_内部转账,IF({SEG}="","<>@@全部@@",0)'
     pS = dr('收_日期', S0, S1)
 
     # ── 第 5～6 行：所选账户本期汇总（关键结果格 C6:G6） ──
@@ -309,14 +327,14 @@ def build(wb, ctx):
         n = i + 1
         g = lambda k: f'INDEX(收_{k},{n})'
         return (f'AND({g("有效")}=1,{g("日期")}>={S0},{g("日期")}<={S1},'
-                f'OR({ACC}="",{g("账户")}={ACC}),OR({SEG}="",{g("板块")}={SEG}))')
-    n3 = skey(ws, KEY, d0, N_CASH, cond, lambda i: f'INDEX(收_日期,{i + 1})')
+                f'OR({ACC}="",{g("账户")}={ACC}),OR({SEG}="",AND({g("板块")}={SEG},{g("内部转账")}=0)))')
+    n3, blk = key_block(ws, KEY, d0, N_CASH, cond, lambda i: f'INDEX(收_日期,{i + 1})')
     _sc(ws, NN3, f'=MIN({n3},{SHOW})', '③显示几条')
     _sc(ws, LASTR, f'={d0}+{NN3}+1', '明细最后一行（打印到这里）')
     base_acc = S('账户_期初余额', accN)
     for k in range(1, SHOW + 3):
         y, q = f'${IDX}{r}', f'${KIND}{r}'
-        ws[f'{IDX}{r}'] = '=' + ksorted(k, KEY, d0, N_CASH, n3) if k <= SHOW else 0
+        ws[f'{IDX}{r}'] = f'=IF({k}>{n3},0,MOD(SMALL({blk},{k}),10000))' if k <= SHOW else 0
         ws[f'{KIND}{r}'] = f'=IF({y}>0,1,IF({k}={NN3}+1,2,IF({k}={NN3}+2,3,0)))'
         ws[f'{IDX}{r}'].font = ws[f'{KIND}{r}'].font = F_HELP
         g = lambda f_: f'INDEX(收_{f_},{y})'
@@ -359,7 +377,8 @@ def build(wb, ctx):
     for i in range(CI('P'), CI('CD') + 1):
         ws.column_dimensions[CL(i)].hidden = True
     ws.freeze_panes = 'A5'
-    print_setup(ws, '3:4', landscape=True)
+    print_setup(ws, f'{hdr3}:{hdr3}', landscape=True)
+    ws.oddFooter.center.text = '第 &P 页 共 &N 页'
     q_ = f"'{ws.title}'"
     ws.defined_names['Print_Area'] = DefinedName('Print_Area', attr_text=f'{q_}!$A$1:INDEX({q_}!${LAST}$1:${LAST}${d1},{q_}!{LASTR})')
     ws._a070 = dict(sec1=sec1, sec2=sec2, sec3=sec3)

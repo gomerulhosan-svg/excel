@@ -2,8 +2,11 @@
 """【应收应付跟进】（往来组）：截止日＝首页截止日 P_截止（只显示）。黄格：板块（空＝全部）、看哪类（全部/应收/应付）、只看没结清的（是/否）。
    ① 汇总：应收、应付各一行（累计发生、已收回/已付、余额、其中已逾期，按所选板块）＋「其中不在往来单位名单里的」差额行；
       右边账龄（全部板块）：未到期、逾期 1～30、31～90、90 天以上（按 往_未结、往_逾期天数）。
+      ① 还有「7 天内到期」：约定日期在截止日～截止日＋7 天、还没结的（按所选板块）。
    ② 按往来单位：往来单位名单（第一次出现的）＋ 名单外的单位（应收应付登记里出现的、收支登记里收回/支付欠款出现的，最多 30 个），
       只列有往来的（再按「只看没结清」筛）；发生、收回、余额、已逾期按所选板块，约定日、逾期天数、最近日期按单位全部板块。合计行＝①。
+      按紧急程度排（拿去催款）：已逾期（应收＋应付）从大到小 → 余额（应收＋应付）从大到小 → 名单顺序；
+      排名＝1＋排在它前面的单位数（三个 COUNTIFS，精确比较，不用拼大数）。最后一列「跟进备注」＝【往来单位】的备注。
    ③ 逾期明细：往_未结>0 且逾期的每一笔（按约定日期从早到晚＝逾期最久的在前，最多 300 笔）。
    口径：设计.md 第 3 节（往_未结、往_逾期天数、往_最早未结、往_最新发生、收_最新收付 都按 P_截止 算）。
    ②③ 是一块「活动区」：隐藏列先算出每一行是什么（单位行 / 共几个 / ③标题 / ③表头 / ③明细 / 共几笔），③ 紧接在 ② 后面。"""
@@ -13,7 +16,7 @@ from openpyxl.workbook.defined_name import DefinedName
 from layout import *
 from common import *
 
-LAST = 'U'
+LAST = 'V'
 NL2, NL3, N_EXTRA = 300, 300, 30            # ② 最多列几个单位、③ 最多列几笔、名单外的单位最多收几个
 NC = N_UNIT + N_EXTRA                       # 候选单位：名单 500 ＋ 名单外 30
 R_SEC1, R_G1, R_H1, R_AR, R_ARX, R_AP, R_APX = 5, 6, 7, 8, 9, 10, 11
@@ -29,16 +32,16 @@ SC = ['板块', '板块条件', '看哪类', '看应收', '看应付', '只看�
       '名单外单位数', '有往来的单位数', '最后一行']
 SR = {k: 3 + i for i, k in enumerate(SC)}
 CC = ['名称', '名单', '有效', 'i', '收发生', '收回', '收余额', '收逾期', '收约定', '收天数', '收最近',
-      '付发生', '已付', '付余额', '付逾期', '付约定', '付天数', '付最近', '最近赊账', '往来']
-CCOL = {k: CL(CI('AC') + j) for j, k in enumerate(CC)}          # AC..AV
-CNT = CL(CI('AC') + len(CC))                                    # AW：要列的单位（计数）
+      '付发生', '已付', '付余额', '付逾期', '付约定', '付天数', '付最近', '最近赊账', '往来',
+      '序', '急', '余', '显示', '排名']                         # 序＝候选顺序（名单在前）；急＝已逾期合计；余＝余额合计
+CCOL = {k: CL(CI('AC') + j) for j, k in enumerate(CC)}          # AC..BA
 # 长的键列折成 500 行一列的方块（SMALL 可以对整块取第 k 小），隐藏列都在活动区的行数以内，打印、滚动都不会拖出几千行
 BLK = 500
 assert N_WL % BLK == 0 and N_CASH % BLK == 0 and BLK <= NREG
-BN = 'AY'                                                       # 方块的行号 1～500（第 n 条＝行号＋列偏移）
-DKW = [CL(CI('AZ') + j) for j in range(N_WL // BLK)]            # 名单外单位：_往 的键（AZ..BC），键＝n
-DKS = [CL(CI(DKW[-1]) + 1 + j) for j in range(N_CASH // BLK)]   # 名单外单位：_收 的键（BD..BM），键＝10000＋n
-OKS = [CL(CI(DKS[-1]) + 2 + j) for j in range(N_WL // BLK)]     # ③ 排序键（BO..BR）：约定日期×10000＋n
+BN = CL(CI(CCOL['排名']) + 2)                                    # 方块的行号 1～500（第 n 条＝行号＋列偏移）（BC）
+DKW = [CL(CI(BN) + 1 + j) for j in range(N_WL // BLK)]          # 名单外单位：_往 的键（BD..BG），键＝n
+DKS = [CL(CI(DKW[-1]) + 1 + j) for j in range(N_CASH // BLK)]   # 名单外单位：_收 的键（BH..BQ），键＝10000＋n
+OKS = [CL(CI(DKS[-1]) + 2 + j) for j in range(N_WL // BLK)]     # ③ 排序键（BS..BV）：约定日期×10000＋n
 DK_RNG = f'${DKW[0]}${R0}:${DKS[-1]}${R0 + BLK - 1}'
 OK_RNG = f'${OKS[0]}${R0}:${OKS[-1]}${R0 + BLK - 1}'
 
@@ -84,13 +87,14 @@ TIP = ('💡 每个客户、供应商欠多少、欠了多久，全自动不用�
        '黄格：板块（空＝全部板块）、看哪类（全部 / 应收 / 应付）、只看没结清的（是＝余额不为 0 的才列；否＝有过往来的都列）。'
        '应收＝【应收应付登记】里赊出去的，减【收支登记】里「收回欠款」收回的；应付＝赊进来的，减「支付欠款」付掉的；先欠先还，'
        '过了约定日期还没结的就算逾期（逾期的行标红）。① 汇总和账龄；② 每个往来单位一行；③ 每一笔逾期没结的。'
+       '②按紧急程度排：已逾期的多的在前，再按余额从大到小；最后一列「跟进备注」在【往来单位】表的备注里写（催过几次、答应哪天付）。'
        '当场结清（现结）的买卖不在这里，打印给对方核对用【对账单】。')
 
 
 def build(wb, ctx=None):
     ws = wb[SH_FOLLOW]
     W = {'A': 5, 'B': 20, 'C': 12, 'D': 12.5, 'E': 16, 'F': 13.5, 'G': 13.5, 'H': 13.5, 'I': 13.5, 'J': 12.5, 'K': 8,
-         'L': 12.5, 'M': 13.5, 'N': 13.5, 'O': 13.5, 'P': 13.5, 'Q': 12.5, 'R': 8, 'S': 12.5, 'T': 12.5, 'U': 32}
+         'L': 12.5, 'M': 13.5, 'N': 13.5, 'O': 13.5, 'P': 13.5, 'Q': 12.5, 'R': 8, 'S': 12.5, 'T': 12.5, 'U': 32, 'V': 30}
     widths(ws, W)
     title(ws, '应收应付跟进', LAST, C_WL, TIP)
     wR, wP = S('看应收'), S('看应付')
@@ -107,13 +111,13 @@ def build(wb, ctx=None):
     selector(ws, 'H3', '看哪类', 'I3', '全部', '"全部,应收,应付"', prompt='全部 / 应收（别人欠我们的）/ 应付（我们欠别人的）')
     selector(ws, 'J3', '只看没结清的', 'L3', '是', '"是,否"', prompt='是＝余额不为 0 的才列；否＝有过往来的都列（包括已结清的）')
     ws.merge_cells('J3:K3')
-    ws.merge_cells('M3:T3')
-    put(ws, 'M3', f'=IF(AND({S("板块")}<>"",ISNA(MATCH({S("板块")},板块_名称,0))),"⚠ 板块「"&{S("板块")}&"」不在【基础资料】②里，下面都是 0",'
+    ws.merge_cells('M3:U3')
+    put(ws, 'M3', f'=IF(AND({S("板块")}<>"",ISNA(MATCH({esc(S("板块"))},板块_名称,0))),"⚠ 板块「"&{S("板块")}&"」不在【基础资料】②里，下面都是 0",'
                   f'IF({S("名单外单位数")}>{N_EXTRA},"⚠ 不在往来单位名单里的单位超过 {N_EXTRA} 个，②只列了 {N_EXTRA} 个，请到【往来单位】补上",""))',
         F_WARN, align=AL, border=False)
-    home_link(ws, 'U3')
+    home_link(ws, 'V3')
     ws.merge_cells(f'A4:{LAST}4')
-    put(ws, 'A4', (f'="现在看的：截止 "&TEXT(P_截止,"yyyy-mm-dd")&"；"&IF({S("板块")}="","全部板块",{S("板块")}&" 板块")&"；"'
+    put(ws, 'A4', (f'="现在看的：截止 "&TEXT(P_截止,"yyyy/mm/dd")&"；"&IF({S("板块")}="","全部板块",{S("板块")}&" 板块")&"；"'
                    f'&IF({S("看哪类")}="全部","应收和应付",{S("看哪类")})&"；"&IF({S("只看没结清")}=1,"只列没结清的往来单位","有过往来的单位都列")'
                    f'&"。（黄格空着＝全部板块；看哪类空着＝全部；只看没结清的空着＝是）"'), F_NOTE, align=AL, border=False)
     ws.row_dimensions[3].height = 22
@@ -126,7 +130,7 @@ def build(wb, ctx=None):
         '看应收': f'=IF({S("看哪类")}="应付",0,1)',
         '看应付': f'=IF({S("看哪类")}="应收",0,1)',
         '只看没结清': '=IF(TRIM(L3&"")="否",0,1)',
-        '要列的单位数': f'={cnt(CNT, R0, NC)}',
+        '要列的单位数': f'=SUM({crng("显示")})',
         'n2': f'=MIN({S("要列的单位数")},{NL2})',
         '逾期笔数': f'=COUNT({OK_RNG})',
         'n3': f'=MIN({S("逾期笔数")},{NL3})',
@@ -140,19 +144,19 @@ def build(wb, ctx=None):
         ws[f'{SL}{SR[k]}'].font = ws[f'{SV}{SR[k]}'].font = F_HELP
 
     # ── ① 汇总 ＋ 账龄 ──
-    section(ws, R_SEC1, 'A', LAST, f'="① 汇总（截至 "&TEXT(P_截止,"yyyy-mm-dd")&"）"', C_WL)
+    section(ws, R_SEC1, 'A', LAST, f'="① 汇总（截至 "&TEXT(P_截止,"yyyy/mm/dd")&"）"', C_WL)
     lbl_fill = fill('FFD9E1F2')
     ws.merge_cells(f'A{R_G1}:E{R_H1}')
     put(ws, f'A{R_G1}', '', F_HDR, fill(C_WL), align=ACW)
-    ws.merge_cells(f'F{R_G1}:I{R_G1}')
+    ws.merge_cells(f'F{R_G1}:J{R_G1}')
     put(ws, f'F{R_G1}', f'="按所选板块（"&IF({S("板块")}="","全部板块",{S("板块")})&"）"', F_HDR, fill(C_GRP), align=AC)
     ws.merge_cells(f'M{R_G1}:Q{R_G1}')
     put(ws, f'M{R_G1}', '账龄（全部板块；每笔没结的按逾期天数分）', F_HDR, fill(C_GRP), align=AC)
-    ws.merge_cells(f'R{R_G1}:U{R_H1}')
+    ws.merge_cells(f'R{R_G1}:{LAST}{R_H1}')
     put(ws, f'R{R_G1}', '说明', F_HDR, fill(C_WL), align=AC)
-    for col in 'GHINOPQSTU':
+    for col in 'GHIJNOPQSTUV':
         ws[f'{col}{R_G1}'].border = BD
-    for col, t in zip('FGHI', ('累计发生', '已收回 / 已付', '余额', '其中已逾期')):
+    for col, t in zip('FGHIJ', ('累计发生', '已收回 / 已付', '余额', '其中已逾期', '7 天内到期\n（还没结的）')):
         put(ws, f'{col}{R_H1}', t, F_HDR, fill(C_WL), align=ACW)
     for col, t in zip('MNOPQ', ('未到期', '逾期 1～30 天', '逾期 31～90 天', '逾期 90 天以上', '合计\n（没结的）')):
         put(ws, f'{col}{R_H1}', t, F_HDR, fill(C_WL), align=ACW)
@@ -175,6 +179,7 @@ def build(wb, ctx=None):
             'G': f'=ROUND(SUMIFS({chong},收_日期,{upto},收_板块,{seg}),2)',
             'H': f'=ROUND(F{r}-G{r},2)',
             'I': f'=ROUND(SUMIFS(往_未结,往_类型,"{t}",往_逾期天数,">0",往_板块,{seg}),2)',
+            'J': f'=ROUND(SUMIFS(往_未结,往_类型,"{t}",往_约定日期,">="&P_截止,往_约定日期,"<="&(P_截止+7),往_板块,{seg}),2)',
             'M': f'=ROUND(SUMIFS(往_未结,往_类型,"{t}",往_逾期天数,0),2)',
             'N': f'=ROUND(SUMIFS(往_未结,往_类型,"{t}",往_逾期天数,">=1",往_逾期天数,"<=30"),2)',
             'O': f'=ROUND(SUMIFS(往_未结,往_类型,"{t}",往_逾期天数,">=31",往_逾期天数,"<=90"),2)',
@@ -187,18 +192,18 @@ def build(wb, ctx=None):
         for col, key in keys.items():
             c = CCOL[key]
             put(ws, f'{col}{rx}', f'=ROUND({col}{r}-SUM(${c}${R0}:${c}${lst_end}),2)', F_AUTO, None, MONEY, AR)
-        for col in 'MNOPQ':
+        for col in 'JMNOPQ':
             put(ws, f'{col}{rx}', None, F_AUTO, FILL_AUTO)
         bal = f'(SUMIFS({amt},往_日期,{upto})-SUMIFS({chong},收_日期,{upto}))'
-        ws.merge_cells(f'R{r}:U{r}')
+        ws.merge_cells(f'R{r}:{LAST}{r}')
         put(ws, f'R{r}', (f'=IF(ROUND(Q{r}-{bal},2)=0,"✓ 没结的合计＝{t}余额（全部板块）",'
                           f'"没结的合计跟{t}余额（全部板块 "&TEXT({bal},"#,##0.00")&"）差 "&TEXT(Q{r}-{bal},"#,##0.00")'
                           f'&"：有单位{over}（看②的状态），或「{"收回欠款" if p == "收" else "支付欠款"}」没选往来单位")'), F_NOTE, None, align=ALW)
-        ws.merge_cells(f'R{rx}:U{rx}')
+        ws.merge_cells(f'R{rx}:{LAST}{rx}')
         put(ws, f'R{rx}', (f'=IF(AND(F{rx}=0,G{rx}=0),"✓ 都在【往来单位】名单里",'
                            f'"⚠ 有不在名单里的单位（②里标「不在名单」），或「{"收回欠款" if p == "收" else "支付欠款"}」没选往来单位——到【数据校验】看")'),
             F_NOTE, None, align=ALW)
-        for col in 'STU':
+        for col in 'STUV':
             ws[f'{col}{r}'].border = ws[f'{col}{rx}'].border = BD
         ws.row_dimensions[r].height = 20
         ws.row_dimensions[rx].height = 20
@@ -206,11 +211,12 @@ def build(wb, ctx=None):
 
     # ── ② 表头 ＋ 合计 ──
     section(ws, R_SEC2, 'A', LAST,
-            (f'="② 按往来单位（截至 "&TEXT(P_截止,"yyyy-mm-dd")&"；"&IF({S("板块")}="","全部板块",{S("板块")}&" 板块")&"；"'
+            (f'="② 按往来单位（截至 "&TEXT(P_截止,"yyyy/mm/dd")&"；"&IF({S("板块")}="","全部板块",{S("板块")}&" 板块")&"；"'
              f'&IF({S("看哪类")}="全部","应收和应付","只看"&{S("看哪类")})&"；"&IF({S("只看没结清")}=1,"只列没结清的","有过往来的都列")'
              f'&"）　逾期的行标红，下面接着是 ③ 逾期明细"'), C_WL)
     grp = [('A', 'E', '往来单位'), ('F', 'I', '应收（按所选板块）'), ('J', 'L', '应收（全部板块）'),
-           ('M', 'P', '应付（按所选板块）'), ('Q', 'S', '应付（全部板块）'), ('T', 'T', '全部板块'), ('U', 'U', '')]
+           ('M', 'P', '应付（按所选板块）'), ('Q', 'S', '应付（全部板块）'), ('T', 'T', '全部板块'), ('U', 'U', ''),
+           ('V', 'V', '在【往来单位】表的备注里写')]
     for c1, c2, t in grp:
         if c1 != c2:
             ws.merge_cells(f'{c1}{R_G2}:{c2}{R_G2}')
@@ -221,7 +227,7 @@ def build(wb, ctx=None):
     heads = [('A', '序号'), ('B', '往来单位'), ('C', '类型'), ('D', '联系人'), ('E', '电话'),
              ('F', '累计发生'), ('G', '已收回'), ('H', '余额'), ('I', '已逾期'), ('J', '最早没结的\n约定日'), ('K', '逾期\n天数'),
              ('L', '最近一次\n收款日'), ('M', '累计发生'), ('N', '已付'), ('O', '余额'), ('P', '已逾期'), ('Q', '最早没结的\n约定日'),
-             ('R', '逾期\n天数'), ('S', '最近一次\n付款日'), ('T', '最近一笔\n赊账日'), ('U', '状态')]
+             ('R', '逾期\n天数'), ('S', '最近一次\n付款日'), ('T', '最近一笔\n赊账日'), ('U', '状态'), ('V', '跟进备注')]
     header(ws, R_H2, heads, C_WL, height=34)
     T = R_TOT
     put(ws, f'A{T}', None, F_AUTOB, FILL_TOT)
@@ -231,7 +237,7 @@ def build(wb, ctx=None):
         put(ws, f'{col}{T}', f'=IF({wR}=1,{src}{R_AR},"")', F_AUTOB, FILL_TOT, MONEY, AR)
     for col, src in zip('MNOP', 'FGHI'):
         put(ws, f'{col}{T}', f'=IF({wP}=1,{src}{R_AP},"")', F_AUTOB, FILL_TOT, MONEY, AR)
-    for col in 'CDEJKLQRST':
+    for col in 'CDEJKLQRSTV':
         put(ws, f'{col}{T}', None, F_AUTOB, FILL_TOT)
     put(ws, f'U{T}', f'="有往来的 "&{S("有往来的单位数")}&" 个，列出 "&{S("要列的单位数")}&" 个"', F_AUTOB, FILL_TOT, align=AL)
     ws.row_dimensions[T].height = 20
@@ -240,7 +246,7 @@ def build(wb, ctx=None):
     for k, c in CCOL.items():
         ws[f'{c}{R0 - 1}'] = k
         ws[f'{c}{R0 - 1}'].font = F_HELP
-    for c, t in ((CNT, '要列计数'), (BN, '方块行号'), (DKW[0], '名单外:_往键'), (DKS[0], '名单外:_收键'), (OKS[0], '③:键'),
+    for c, t in ((BN, '方块行号'), (DKW[0], '名单外:_往键'), (DKS[0], '名单外:_收键'), (OKS[0], '③:键'),
                  (HK, 'k'), (HC, '类型'), (HI, '第几个'), (HSR, '状态应收'), (HSP, '状态应付')):
         ws[f'{c}{R0 - 1}'] = t
         ws[f'{c}{R0 - 1}'].font = F_HELP
@@ -252,6 +258,7 @@ def build(wb, ctx=None):
         e = esc(nm)
         ws[g('名单').replace('$', '')] = 1 if lst else 0
         ws[g('i').replace('$', '')] = (j + 1) if lst else (j - N_UNIT + 1)
+        ws[g('序').replace('$', '')] = j + 1
         f = {}
         if lst:
             f['名称'] = f'=INDEX(单位_名称,{i_})&""'
@@ -274,13 +281,19 @@ def build(wb, ctx=None):
         cw = lambda t: f'COUNTIFS(往_往来单位,{e},往_类型,"{t}",往_有效,1,往_日期,{upto},往_板块,{seg})'
         cs = lambda u: f'COUNTIFS(收_往来单位,{e},收_用途,"{u}",收_有效,1,收_日期,{upto},收_板块,{seg})'
         f['往来'] = f'=IF({v},0,{wR}*({cw("应收")}+{cs("冲应收")})+{wP}*({cw("应付")}+{cs("冲应付")}))'
+        # 要不要列、排第几：已逾期（应收＋应付）大的在前 → 余额（应收＋应付）大的在前 → 名单顺序
+        f['急'] = f'=ROUND({wR}*{g("收逾期")}+{wP}*{g("付逾期")},2)'
+        f['余'] = f'=ROUND({wR}*{g("收余额")}+{wP}*{g("付余额")},2)'
+        f['显示'] = (f'=IF(AND({g("有效")}=1,{g("往来")}>0,OR({S("只看没结清")}=0,AND({wR}=1,{g("收余额")}<>0),'
+                   f'AND({wP}=1,{g("付余额")}<>0))),1,0)')
+        SH_, JI, YU, XU = crng('显示'), crng('急'), crng('余'), crng('序')
+        f['排名'] = (f'=IF({g("显示")}=0,0,1+COUNTIFS({SH_},1,{JI},">"&{g("急")})'
+                   f'+COUNTIFS({SH_},1,{JI},{g("急")},{YU},">"&{g("余")})'
+                   f'+COUNTIFS({SH_},1,{JI},{g("急")},{YU},{g("余")},{XU},"<"&{g("序")}))')
         for k, val in f.items():
             ws[g(k).replace('$', '')] = val
         for k in CC:
             ws[g(k).replace('$', '')].font = F_HELP
-    counter(ws, CNT, R0, NC,
-            lambda j: (f'AND(${CCOL["有效"]}{R0 + j}=1,${CCOL["往来"]}{R0 + j}>0,OR({S("只看没结清")}=0,'
-                       f'AND({wR}=1,${CCOL["收余额"]}{R0 + j}<>0),AND({wP}=1,${CCOL["付余额"]}{R0 + j}<>0)))'))
 
     # ── 隐藏：名单外的单位（_往 的键＝n 在前、_收 的键＝10000＋n 在后；只取第一次出现的；_收 只看收回/支付欠款的行） ──
     #    ③ 逾期明细的排序键（约定日期×10000＋n）。都是 500 行一列的方块：第 n 条＝方块行号＋列偏移
@@ -316,7 +329,7 @@ def build(wb, ctx=None):
           'M': MONEY, 'N': MONEY, 'O': MONEY, 'P': MONEY, 'Q': DATE, 'R': '0', 'S': DATE, 'T': DATE}
     al = {c: AC for c in 'ACDJKLQRST'}
     al.update({c: AR for c in 'FGHIMNOP'})
-    al.update({'B': AL, 'E': AL, 'U': AL})
+    al.update({'B': AL, 'E': AL, 'U': AL, 'V': AL})
     for kk in range(NREG):
         r = R0 + kk
         k = f'${HK}{r}'
@@ -325,7 +338,7 @@ def build(wb, ctx=None):
                           f'IF(AND({k}>{n2}+4,{k}<={n2}+4+{n3}),"D3",IF({k}={n2}+5+{n3},"N3",""))))))')
         cd = f'${HC}{r}'
         ix = f'${HI}{r}'
-        ws[f'{HI}{r}'] = (f'=IF({cd}="U",{kth(k, CNT, R0, NC)},'
+        ws[f'{HI}{r}'] = (f'=IF({cd}="U",IFERROR(MATCH({k},{crng("排名")},0),0),'
                           f'IF({cd}="D3",IF({k}-{n2}-4>{S("逾期笔数")},0,MOD(SMALL({OK_RNG},{k}-{n2}-4),10000)),0))')
         cv = lambda key: f'INDEX({crng(key)},{ix})'
         w = lambda key: f'INDEX(往_{key},{ix})'
@@ -349,7 +362,7 @@ def build(wb, ctx=None):
                   'S3': '"逾期最久的在前"', 'N3': f'IF({S("逾期笔数")}>{NL3},"⚠ 只列了前 {NL3} 笔","")'},
             'F': {'U': f'IF({wR}=1,{cv("收发生")},"")', 'H3': '"金额"', 'D3': w('金额')},
             'G': {'U': f'IF({wR}=1,{cv("收回")},"")', 'H3': '"还没结的"', 'D3': w('未结')},
-            'H': {'U': f'IF({wR}=1,{cv("收余额")},"")', 'H3': '"约定日期"', 'D3': f'TEXT({w("约定日期")},"yyyy-mm-dd")'},
+            'H': {'U': f'IF({wR}=1,{cv("收余额")},"")', 'H3': '"约定日期"', 'D3': f'TEXT({w("约定日期")},"yyyy/mm/dd")'},
             'I': {'U': f'IF({wR}=1,{cv("收逾期")},"")', 'H3': '"逾期天数"', 'D3': f'{w("逾期天数")}&" 天"'},
             'J': {'U': date_or_blank('收约定', wR), 'H3': '"板块"', 'D3': w('板块')},
             'K': {'U': f'IF(AND({wR}=1,{cv("收天数")}>0),{cv("收天数")},"")', 'H3': '"经手人"', 'D3': w('经手人')},
@@ -366,6 +379,7 @@ def build(wb, ctx=None):
                   'N2': (f'IF({S("要列的单位数")}>{NL2},"⚠ 超过 {NL2} 个，只列了前 {NL2} 个",'
                          f'IF(AND({S("只看没结清")}=1,{S("有往来的单位数")}>{S("要列的单位数")}),'
                          f'"另有 "&({S("有往来的单位数")}-{S("要列的单位数")})&" 个已结清的没列出",""))')},
+            'V': {'U': f'IF({inl},INDEX(单位_备注,{ui}),"")'},
         }
         for col, m in disp.items():
             cell = ws[f'{col}{r}']
@@ -398,10 +412,9 @@ def build(wb, ctx=None):
             kw['border'] = bd
         ws.conditional_formatting.add(rg, FormulaRule(formula=[cond], stopIfTrue=True, **kw))
 
-    hide(ws, *[CL(i) for i in range(CI('V'), CI(OKS[-1]) + 1)])
-    ws.column_dimensions['V'].hidden = False
-    ws.column_dimensions['V'].width = 2
+    hide(ws, *[CL(i) for i in range(CI(HK), CI(OKS[-1]) + 1)])
     ws.freeze_panes = 'C5'
-    print_setup(ws, None, landscape=True)
+    print_setup(ws, f'{R_G2}:{R_H2}', landscape=True)          # 每页重复 ② 的表头
+    ws.oddFooter.center.text = '第 &P 页 共 &N 页'
     q = f"'{ws.title}'"
     ws.defined_names['Print_Area'] = DefinedName('Print_Area', attr_text=f'{q}!$A$1:INDEX({q}!${LAST}$1:${LAST}${R1},{q}!{S("最后一行")})')

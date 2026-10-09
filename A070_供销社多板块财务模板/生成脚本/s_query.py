@@ -17,8 +17,10 @@ from common import *
 LAST = 'N'
 GREEN_H = 'FF70AD47'
 MONEY_B = '#,##0.00;[Red]-#,##0.00;""'          # 零不显示（明细用）
-KG = '#,##0.##;[Red]-#,##0.##;"-"'
-KG_B = '#,##0.##;[Red]-#,##0.##;""'
+KG = '#,##0;[Red]-#,##0;"-"'                       # 数量（KG）：整数，不出「2,000.」那种小数点
+KG_B = '#,##0;[Red]-#,##0;""'
+KG_SUF = '#,##0" KG";[Red]-#,##0" KG";"-"'
+YUAN = '"¥"#,##0.00;[Red]"¥"-#,##0.00;"-"'
 PRICE_B = '#,##0.00##;[Red]-#,##0.00##;""'
 MONTH_FMT = 'yyyy"年"m"月"'
 F_GRAY_I = Font(name=YH, sz=10, italic=True, color='FF808080')
@@ -53,7 +55,8 @@ SEGCNT = 'AC'
 I_OTH, I_TOT = N_SEG + 1, N_SEG + 2
 
 IDX, KIND, JX = 'P', 'Q', 'R'                   # 清单行：源表第几条、行类型、清单里第几条
-KEY3, KEY4 = 'S', 'T'                           # ③④ 排序键
+KEY3, KEY4 = 'BA', 'BK'                         # ③④ 排序键：折成 500 行一列的方块（③ BA:BJ，④ BK:BN），都在活动区行数以内
+BLK = 500
 MF, MA, MB = 'U', 'V', 'W'                      # ②：月初、这个月实际起、实际止
 SHOW_M, SHOW3, SHOW4 = 24, 800, 300
 
@@ -95,6 +98,21 @@ def bals(base, sS, sW, op, d):
     )
 
 
+def key_block(ws, c0, r0, n, cond, datef):
+    """排序键折成 BLK 行一列的方块：第 i 条（0 起）在 c0 右边第 i//BLK 列、第 r0+i%BLK 行；放「日期×10000＋n」，不满足放空。
+       返回（个数格, 方块区域）；SMALL 对整块取第 k 小，MOD(…,10000) 还原 n。"""
+    i0 = CI(c0)
+    ncol = -(-n // BLK)
+    for i in range(n):
+        c = f'{CL(i0 + i // BLK)}{r0 + i % BLK}'
+        ws[c] = f'=IF({cond(i)},{datef(i)}*10000+{i + 1},"")'
+        ws[c].font = F_HELP
+    blk = f'${c0}${r0}:${CL(i0 + ncol - 1)}${r0 + BLK - 1}'
+    ws[f'{c0}{r0 - 1}'] = f'=COUNT({blk})'
+    ws[f'{c0}{r0 - 1}'].font = F_HELP
+    return f'${c0}${r0 - 1}', blk
+
+
 def _sc(ws, cell, f, label):
     ws[cell.replace('$', '')] = f
     ws[cell.replace('$', '')].font = F_HELP
@@ -122,8 +140,8 @@ def build(wb, ctx):
     nseg = sum(1 for s in ctx.get('segments', []) if str(s.get('名称', '') or '').strip())
     M1 = min(N_SEG, nseg + 2)
 
-    widths(ws, {'A': 14, 'B': 13, 'C': 13, 'D': 22, 'E': 14, 'F': 14, 'G': 14, 'H': 13, 'I': 13, 'J': 14, 'K': 14,
-                'L': 13, 'M': 13, 'N': 26})
+    widths(ws, {'A': 14, 'B': 13, 'C': 13, 'D': 22, 'E': 19, 'F': 19, 'G': 19, 'H': 19, 'I': 19, 'J': 19, 'K': 19,
+                'L': 19, 'M': 19, 'N': 26})
     title(ws, '查  询（按日期、业务板块、经手人）', 'M', C_VIEW)
     home_link(ws, 'N1')
 
@@ -146,7 +164,7 @@ def build(wb, ctx):
     _sc(ws, PER, '=TRIM(N3&"")', '选的经手人')
     _sc(ws, NM, f'=IF({S0}>{S1},0,(YEAR({S1})-YEAR({S0}))*12+MONTH({S1})-MONTH({S0})+1)', '起止跨几个月')
     _sc(ws, NMS, f'=MIN({NM},{SHOW_M})', '按月显示几个月')
-    _sc(ws, SEG_OK, f'=IF({SEG}="",1,IF(ISNUMBER(MATCH({SEG},板块_名称,0)),1,0))', '板块在基础资料里')
+    _sc(ws, SEG_OK, f'=IF({SEG}="",1,IF(ISNUMBER(MATCH({esc(SEG)},板块_名称,0)),1,0))', '板块在基础资料里')
 
     segS, segW = seg_crit('收_板块', SEG), seg_crit('往_板块', SEG)
     perS, perW = seg_crit('收_经手人', PER), seg_crit('往_经手人', PER)
@@ -158,15 +176,15 @@ def build(wb, ctx):
     for c, f in row3.items():
         fm = KG if c in 'EFG' else MONEY
         _cell(ws, f'{c}3', f'={R2(f)}', fm, AR, F_KPI_V, FILL_AUTO)
-    ws['E3'].number_format = ws['F3'].number_format = ws['G3'].number_format = '#,##0.##" KG";[Red]-#,##0.##" KG";"-"'
+    ws['E3'].number_format = ws['F3'].number_format = ws['G3'].number_format = KG_SUF
 
     # 第 4 行：实际用的、金额、说明
     put(ws, 'A4', '实际用的 / 金额', F_NOTE, fill('FFF2F2F2'), align=AC)
     _cell(ws, 'B4', '=IF(ISNUMBER(B3),INT(B3),P_建账日)', DATE, AC, F_AUTOB, FILL_AUTO)
     _cell(ws, 'C4', '=IF(ISNUMBER(C3),INT(C3),P_截止)', DATE, AC, F_AUTOB, FILL_AUTO)
     _cell(ws, 'D4', f'=IF({SEG}="","全部板块",{SEG}&IF({SEG_OK}=0,"（⚠ 不在基础资料里）",""))', None, AC, F_AUTOB, FILL_AUTO)
-    _cell(ws, 'E4', f'={R2(fl["购额"])}', '"金额 "#,##0.00;[Red]"金额 "-#,##0.00;"金额 -"', AR, F_AUTOB, FILL_AUTO)
-    _cell(ws, 'F4', f'={R2(fl["销额"])}', '"金额 "#,##0.00;[Red]"金额 "-#,##0.00;"金额 -"', AR, F_AUTOB, FILL_AUTO)
+    _cell(ws, 'E4', f'={R2(fl["购额"])}', YUAN, AR, F_AUTOB, FILL_AUTO)
+    _cell(ws, 'F4', f'={R2(fl["销额"])}', YUAN, AR, F_AUTOB, FILL_AUTO)
     ws.merge_cells('G4:M4')
     _cell(ws, 'G4', (f'="↑ 购进、销售、收入、支出＝"&TEXT({S0},"yyyy/m/d")&"～"&TEXT({S1},"yyyy/m/d")&" 这段时间的；'
                      f'存量、结余、固定资产、应收、应付＝到 "&TEXT({S1},"yyyy/m/d")&" 的余额"'
@@ -345,8 +363,8 @@ def build(wb, ctx):
         g = lambda k: f'INDEX(往_{k},{n})'
         return (f'AND({g("有效")}=1,{g("日期")}>={S0},{g("日期")}<={S1},'
                 f'OR({SEG}="",{g("板块")}={SEG}),OR({PER}="",{g("经手人")}={PER}))')
-    n3 = skey(ws, KEY3, d0, N_CASH, cond3, lambda i: f'INDEX(收_日期,{i + 1})')
-    n4 = skey(ws, KEY4, d0, N_WL, cond4, lambda i: f'INDEX(往_日期,{i + 1})')
+    n3, blk3 = key_block(ws, KEY3, d0, N_CASH, cond3, lambda i: f'INDEX(收_日期,{i + 1})')
+    n4, blk4 = key_block(ws, KEY4, d0, N_WL, cond4, lambda i: f'INDEX(往_日期,{i + 1})')
     _sc(ws, NN3, f'=MIN({n3},{SHOW3})', '③显示几条')
     _sc(ws, NN4, f'=MIN({n4},{SHOW4})', '④显示几条')
     pS3, pW4 = dr('收_日期', S0, S1), dr('往_日期', S0, S1)
@@ -365,8 +383,8 @@ def build(wb, ctx):
                             f'IF({k}<={NN3}+5+{NN4},6,IF({k}={NN3}+6+{NN4},7,IF({k}={NN3}+7+{NN4},8,'
                             f'IF({k}={NN3}+8+{NN4},9,0))))))))))')
         ws[f'{JX}{r}'] = f'=IF({q}=1,{k},IF({q}=6,{k}-{NN3}-5,0))'
-        ws[f'{IDX}{r}'] = (f'=IF({q}=1,{ksorted(j, KEY3, d0, N_CASH, n3)},'
-                           f'IF({q}=6,{ksorted(j, KEY4, d0, N_WL, n4)},0))')
+        ws[f'{IDX}{r}'] = (f'=IF({q}=1,IF({j}>{n3},0,MOD(SMALL({blk3},{j}),10000)),'
+                           f'IF({q}=6,IF({j}>{n4},0,MOD(SMALL({blk4},{j}),10000)),0))')
         for c in (IDX, KIND, JX):
             ws[f'{c}{r}'].font = F_HELP
         g = lambda f_: f'INDEX(收_{f_},{y})'
@@ -381,7 +399,7 @@ def build(wb, ctx):
                   6: w('类型')},
             'E': {1: g('往来单位'), 5: '"业务内容"', 6: w('收支项目')},
             'F': {1: nz(g('数量')), 5: '"摘要"', 6: w('摘要')},
-            'G': {1: nz(g('单价')), 5: '"数量 KG"', 6: nz(w('数量'))},
+            'G': {1: nz(g('单价')), 5: '"数量 KG"', 6: f'IF({w("数量")}=0,"",TEXT({w("数量")},"#,##0"))'},
             'H': {1: g('收入'), 2: tin, 5: '"单价"', 6: nz(w('单价'))},
             'I': {1: g('支出'), 2: tout, 5: '"金额"', 6: w('金额'), 7: tsum('往_金额', '应收'), 8: tsum('往_金额', '应付')},
             'J': {1: g('账户'), 5: '"约定日期"', 6: w('约定日期')},
@@ -398,9 +416,9 @@ def build(wb, ctx):
         r += 1
     d1 = r - 1
     GEN = Alignment(horizontal='general', vertical='center')
-    fm3 = {'A': DATE, 'F': KG_B, 'G': '#,##0.####;[Red]-#,##0.####;""', 'H': PRICE_B, 'I': MONEY_B, 'J': DATE, 'K': MONEY_B, 'L': '0', 'M': '0'}
+    fm3 = {'A': DATE, 'F': KG_B, 'G': PRICE_B, 'H': PRICE_B, 'I': MONEY_B, 'J': DATE, 'K': MONEY_B, 'L': '0', 'M': '0'}
     _style_list(ws, d0, d1, list('ABCDEFGHIJKLMN'), fm3,
-                {'A': AC, 'J': AC, 'L': AC, 'M': AC, **{c: GEN for c in 'BCDEFGHIKN'}})
+                {'A': AC, 'J': AC, 'L': AC, 'M': AC, 'G': AR, **{c: GEN for c in 'BCDEFHIKN'}})
     for rr in range(d0, d1 + 1):
         ws[f'N{rr}'].font = F_NOTE
     cq = f'${KIND}{d0}'
@@ -435,7 +453,8 @@ def build(wb, ctx):
     for i in range(CI('P'), CI('CD') + 1):
         ws.column_dimensions[CL(i)].hidden = True
     ws.freeze_panes = 'A5'
-    print_setup(ws, '1:4', landscape=True)
+    print_setup(ws, f'{hdr3}:{hdr3}', landscape=True)
+    ws.oddFooter.center.text = '第 &P 页 共 &N 页'
     q_ = f"'{ws.title}'"
     ws.defined_names['Print_Area'] = DefinedName('Print_Area', attr_text=f'{q_}!$A$1:INDEX({q_}!${LAST}$1:${LAST}${d1},{q_}!{LASTR})')
     ws._a070 = dict(sec1=sec1, sec2=sec2, sec3=sec3)

@@ -96,15 +96,16 @@ def build(wb, ctx=None):
                    f'"在往来单位名单里",INDEX(单位_类型,{S("名单序号")})),"⚠ 不在【往来单位】名单里（照样能出）"))'),
         F_AUTOB, FILL_AUTO, align=AC)
     ws.merge_cells('E4:F4')
-    put(ws, 'E4', f'=IF({S("板块")}="","全部板块",IF(ISNA(MATCH({S("板块")},板块_名称,0)),"⚠ 不在基础资料里",{S("板块")}))',
+    put(ws, 'E4', f'=IF({S("板块")}="","全部板块",IF(ISNA(MATCH({esc(S("板块"))},板块_名称,0)),"⚠ 不在基础资料里",{S("板块")}))',
         F_AUTOB, FILL_AUTO, align=AC)
     put(ws, 'H4', f'={S("起")}', F_AUTOB, FILL_AUTO, DATE, AC)
     put(ws, 'J4', f'={S("止")}', F_AUTOB, FILL_AUTO, DATE, AC)
-    ws.merge_cells('K4:L4')
+    ws.merge_cells('K4:M4')
     put(ws, 'K4', (f'=IF({S("起")}>{S("止")},"✗ 起 晚于 止，请改日期",IF({S("笔数")}>{NL},"⚠ 超过 {NL} 笔，只列了前 {NL} 笔，请缩短日期",'
-                   f'IF(AND({S("单位")}<>"",{S("核对")}=0),"✗ 明细跟汇总对不上","")))'), F_WARN, align=AL, border=False)
+                   f'IF(AND({S("单位")}<>"",{S("核对")}=0),"✗ 明细跟汇总对不上",'
+                   f'IF(P_单位名称="","⚠【基础资料】还没填单位名称，对账单抬头会空",""))))'), F_WARN, align=ALW, border=False)
     ws.row_dimensions[3].height = 22
-    ws.row_dimensions[4].height = 20
+    ws.row_dimensions[4].height = 30
     ws.row_dimensions[5].height = 8
 
     # ── 标量 ──
@@ -142,7 +143,7 @@ def build(wb, ctx=None):
     ws.merge_cells(f'A{R_TO}:F{R_TO}')
     put(ws, f'A{R_TO}', f'="往来单位："&IF({U}="","（还没选）",{U})', F_HEADB, align=AL, border=False)
     ws.merge_cells(f'G{R_TO}:{LAST}{R_TO}')
-    put(ws, f'G{R_TO}', f'="对账期间："&TEXT({S0},"yyyy-mm-dd")&" 至 "&TEXT({S1},"yyyy-mm-dd")', F_HEADB, align=AR, border=False)
+    put(ws, f'G{R_TO}', f'="对账期间："&TEXT({S0},"yyyy/mm/dd")&" 至 "&TEXT({S1},"yyyy/mm/dd")', F_HEADB, align=AR, border=False)
     ws.merge_cells(f'A{R_CT}:F{R_CT}')
     ix = S('名单序号')
     put(ws, f'A{R_CT}', (f'="联系人："&IF({ix}=0,"",INDEX(单位_联系人,{ix}))&"　　　电话："&IF({ix}=0,"",INDEX(单位_电话,{ix}))'),
@@ -200,8 +201,8 @@ def build(wb, ctx=None):
     put(ws, f'H{r}', None, F_AUTO, FILL_AUTO)
     put(ws, f'I{r}', f'=ROUND(I{R_SAR}-I{R_SAP},2)', F_SUM_V, None, MONEY, AR)
     ws.merge_cells(f'J{r}:{LAST}{r}')
-    put(ws, f'J{r}', (f'=IF({U}="","",IF(I{r}>0,"截至 "&TEXT({S1},"yyyy-mm-dd")&" 对方欠我们 "&TEXT(I{r},"#,##0.00")&" 元",'
-                      f'IF(I{r}<0,"截至 "&TEXT({S1},"yyyy-mm-dd")&" 我们欠对方 "&TEXT(-I{r},"#,##0.00")&" 元","截至 "&TEXT({S1},"yyyy-mm-dd")&" 两清")))'),
+    put(ws, f'J{r}', (f'=IF({U}="","",IF(I{r}>0,"截至 "&TEXT({S1},"yyyy/mm/dd")&" 对方欠我们 "&TEXT(I{r},"#,##0.00")&" 元",'
+                      f'IF(I{r}<0,"截至 "&TEXT({S1},"yyyy/mm/dd")&" 我们欠对方 "&TEXT(-I{r},"#,##0.00")&" 元","截至 "&TEXT({S1},"yyyy/mm/dd")&" 两清")))'),
         F_SUM_B, None, align=AL)
     for col in 'KL':
         ws[f'{col}{r}'].border = BD
@@ -237,7 +238,7 @@ def build(wb, ctx=None):
 
     # ── 活动区：期初 → 明细 → 合计 → 共几笔 → 告知 → 签章 ──
     n = S('n')
-    fm = {'A': DATE, 'D': '#,##0.##', 'E': '0.00##', 'F': MONEY, 'G': MONEY, 'H': MONEY, 'I': MONEY, 'J': MONEY, 'K': MONEY}
+    fm = {'A': DATE, 'D': '#,##0;[Red]-#,##0;""', 'E': '0.00##', 'F': MONEY, 'G': MONEY, 'H': MONEY, 'I': MONEY, 'J': MONEY, 'K': MONEY}
     al = {'A': AC, 'B': AC, 'C': AL, 'D': AR, 'E': AR, 'F': AR, 'G': AR, 'H': Alignment(horizontal='right', vertical='center', shrink_to_fit=True),
           'I': AR, 'J': AR, 'K': AR, 'L': AL}
     for kk in range(NREG):
@@ -260,7 +261,7 @@ def build(wb, ctx=None):
         disp = {
             'A': {'D': g('日期')},
             'B': {'D': g('板块')},
-            'C': {'O': f'IF({U}="","← 先在上面黄格选往来单位","期初余额（"&TEXT({S0},"yyyy-mm-dd")&" 以前）")',
+            'C': {'O': f'IF({U}="","← 先在上面黄格选往来单位","期初余额（"&TEXT({S0},"yyyy/mm/dd")&" 以前）")',
                   'D': g('显示摘要'), 'T': '"本期合计"',
                   'C': f'IF({S("笔数")}>{NL},"⚠ 共 "&{S("笔数")}&" 笔，只列了前 {NL} 笔","共 "&{S("笔数")}&" 笔")',
                   'F1': '"以上往来如有不符，"', 'F2': '"请于收到之日起 7 日内告知。"',
@@ -314,6 +315,7 @@ def build(wb, ctx=None):
     hide(ws, *[CL(i) for i in range(CI('N'), CI(YKW[-1]) + 1)])
     ws.freeze_panes = 'A5'
     print_setup(ws, f'{R_HDR}:{R_HDR}', landscape=True)
+    ws.oddFooter.center.text = '第 &P 页 共 &N 页'
     ws.print_options.horizontalCentered = True
     q = f"'{ws.title}'"
     ws.defined_names['Print_Area'] = DefinedName('Print_Area', attr_text=f'{q}!$A${R_HEAD}:INDEX({q}!${LAST}$1:${LAST}${R1},{q}!{S("最后一行")})')

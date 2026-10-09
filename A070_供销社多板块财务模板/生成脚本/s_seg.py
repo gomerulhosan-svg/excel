@@ -16,6 +16,8 @@
 """
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font
+from openpyxl.comments import Comment
+from openpyxl.workbook.defined_name import DefinedName
 from layout import *
 from common import *
 
@@ -23,14 +25,15 @@ from common import *
 GREEN_H = 'FF70AD47'                                  # 补充列表头（比用户原表的列浅一点）
 F_SUMV = Font(name=YH, sz=11, bold=True, color='FFC00000')
 MONEY_B = '#,##0.00;[Red]-#,##0.00;""'                # 零不显示（清单用）
-QTY = '#,##0.##'
-QTY_B = '#,##0.##;-#,##0.##;""'
+QTY = '#,##0;[Red]-#,##0;"-"'                       # 数量（KG）：整数显示（'#,##0.##' 在 Excel/WPS 整数会显示成「2,000.」）
+QTY_B = '#,##0;[Red]-#,##0;""'
 PRICE_B = '#,##0.00##;-#,##0.00##;""'
 FILL_SHE = 'FFFDE9D9'                                 # 赊账（应收应付登记）的行：淡橙
 
 # ───────────── 行（5 张表一样） ─────────────
-SEL = dict(板块='B3', 起='E3', 止='G3', 经手人='I3')   # 黄格
-R_SUM_L, R_SUM_V, R_NOTE, HDR, R_TOT, R_OPEN, R0 = 5, 6, 7, 8, 9, 10, 11
+SEL = dict(板块='B3', 起='D3', 止='F3', 经手人='B4')   # 黄格（都在用户原表的列里，打印也看得到）
+STATUS = 'C4'                                          # 实际用的起止、经手人＋条数/提示（合并到用户原表最后一列）
+R_SUM_L, R_SUM_V, HDR, R_TOT, R_OPEN, R0 = 5, 6, 7, 8, 9, 10      # 冻结到表头（1～7 行）
 SHOW = 1000                                           # 清单最多显示几条
 R_END = R0 + SHOW - 1
 
@@ -47,6 +50,7 @@ _EXTRA = {
 }
 COLS = {k: {f: CL(i + 1) for i, f in enumerate(_USER[k] + _EXTRA[k])} for k in _USER}   # COLS[kind]['结余'] → 列字母
 LAST = {k: CL(len(_USER[k]) + len(_EXTRA[k])) for k in _USER}
+ULAST = {k: CL(len(_USER[k])) for k in _USER}         # 用户原表最后一列（打印只打到这列：通用 F、烘干 I、购销 L）
 HEAD = {'日期': '日期', '摘要': '摘要', '收入': '收入', '支出': '支出', '结余': '结余', '经手人': '经手人',
         '烘干重量': '烘干重量KG', '烘干单价': '烘干单价', '购进数量': '购进数量KG', '购进单价': '购进单价',
         '销售数量': '销售数量', '销售单价': '销售单价', '存量': '粮食存量', '收支项目': '收支项目',
@@ -68,7 +72,7 @@ PER_W = N_PER + 1
 # 标量（隐藏 AA 列第几行）——首页、查询要链过来可以用 key_cell(名)
 SC = dict(板块=1, 板块条件=2, 板块号=3, 起=4, 止=5, 经手人=6, 经手人条件=7, 经手人号=8, 下限=9, 上限=10, 起点=11, 条数=12,
           期初结余=13, 本期收入=14, 本期支出=15, 期末结余=16, 应收余额=17, 应付余额=18, 本期应收增减=19, 本期应付增减=20,
-          期初存量=21, 本期购进=22, 本期销售=23, 期末存量=24, 烘干重量=25, 烘干收入=26)
+          期初存量=21, 本期购进=22, 本期销售=23, 期末存量=24, 烘干重量=25, 烘干收入=26, 最后一行=27)
 
 
 def key_cell(name):
@@ -77,17 +81,20 @@ def key_cell(name):
 
 S = key_cell
 
-# 顶部汇总（第 5 行标签、第 6 行数）：(标量名, 标签, 格式)
-_SUM_BASE = [('期初结余', '期初结余\n（起日前一天）', MONEY), ('本期收入', '本期收入', MONEY), ('本期支出', '本期支出', MONEY),
-             ('期末结余', '期末结余\n（到止）', MONEY), ('应收余额', '应收余额（到止）\n人家欠的', MONEY),
-             ('应付余额', '应付余额（到止）\n欠人家的', MONEY)]
+# 顶部汇总（第 5 行标签、第 6 行数；从 A 列起，都在用户原表的列里）：(标量名, 标签, 格式)
+_SUM_BASE = [('期初结余', '期初结余', MONEY), ('本期收入', '本期收入', MONEY), ('本期支出', '本期支出', MONEY),
+             ('期末结余', '期末结余', MONEY), ('应收余额', '应收余额', MONEY), ('应付余额', '应付余额', MONEY)]
 SUM_ITEMS = {
     '通用': _SUM_BASE,
-    '烘干': _SUM_BASE + [('烘干重量', '本期烘干重量KG\n（收入行的数量）', QTY), ('烘干收入', '烘干收入\n（含赊账）', MONEY)],
-    '购销': _SUM_BASE + [('期初存量', '期初存量KG\n（起日前一天）', QTY), ('本期购进', '本期购进KG\n（含赊购）', QTY),
-                       ('本期销售', '本期销售KG\n（含赊销）', QTY), ('期末存量', '期末存量KG\n（到止）', QTY)],
+    '烘干': _SUM_BASE + [('烘干重量', '烘干重量KG', QTY), ('烘干收入', '烘干收入', MONEY)],
+    '购销': _SUM_BASE + [('期初存量', '期初存量KG', QTY), ('本期购进', '本期购进KG', QTY), ('本期销售', '本期销售KG', QTY),
+                       ('期末存量', '期末存量KG', QTY)],
 }
-SUMMARY = {k: {nm: f'{CL(2 + i)}{R_SUM_V}' for i, (nm, _l, _f) in enumerate(v)} for k, v in SUM_ITEMS.items()}
+SUM_NOTE = {'期初结余': '起日前一天的结余', '期末结余': '到止日的结余', '应收余额': '到止日人家还欠的（全部经手人）',
+            '应付余额': '到止日还欠人家的（全部经手人）', '烘干重量': '收入类的行和赊出去的应收，数量合计',
+            '烘干收入': '收入类的行（不含收回欠款）＋赊出去的应收', '期初存量': '起日前一天的粮食存量',
+            '本期购进': '含赊购', '本期销售': '含赊销', '期末存量': '到止日的粮食存量'}
+SUMMARY = {k: {nm: f'{CL(1 + i)}{R_SUM_V}' for i, (nm, _l, _f) in enumerate(v)} for k, v in SUM_ITEMS.items()}
 
 
 def g(f, z, wf=None):
@@ -113,10 +120,11 @@ def build_keys(ws):
         ws[f'{HN}{r}'] = i + 1 if i < N_CASH else i - N_CASH + 1
         n = f'${HN}{r}'
         skip = f'INDEX(收_内部转账,{n})=1,' if t == '收' else ''
+        seg_e, per_e = esc(f'INDEX({t}_板块,{n})'), esc(f'INDEX({t}_经手人,{n})')
         ws[f'{HK1C}{r}'] = (f'=IF(INDEX({t}_排序键,{n})="","",IF(OR({skip}INDEX({t}_板块,{n})=""),"",'
-                            f'IFERROR(MATCH(INDEX({t}_板块,{n}),板块_名称,0)*1E9+INDEX({t}_排序键,{n}),"")))')
+                            f'IFERROR(MATCH({seg_e},板块_名称,0)*1E9+INDEX({t}_排序键,{n}),"")))')
         ws[f'{HK2C}{r}'] = (f'=IF(${HK1C}{r}="","",(INT(${HK1C}{r}/1E9)*{PER_W}+IF(INDEX({t}_经手人,{n})="",0,'
-                            f'IFERROR(MATCH(INDEX({t}_经手人,{n}),经手人_姓名,0),0)))*1E9+MOD(${HK1C}{r},1E9))')
+                            f'IFERROR(MATCH({per_e},经手人_姓名,0),0)))*1E9+MOD(${HK1C}{r},1E9))')
         for c in (HN, HK1C, HK2C):
             ws[f'{c}{r}'].font = F_HELP
 
@@ -149,12 +157,12 @@ def _scalars(ws, seg):
     f = {
         '板块': f'=IF(TRIM({SEL["板块"]}&"")="","{seg}",TRIM({SEL["板块"]}&""))',
         '板块条件': f'={esc(S("板块"))}',
-        '板块号': f'=IFERROR(MATCH({S("板块")},板块_名称,0),0)',
+        '板块号': f'=IFERROR(MATCH({S("板块条件")},板块_名称,0),0)',
         '起': f'=IF(ISNUMBER({SEL["起"]}),INT({SEL["起"]}),P_建账日)',
         '止': f'=IF(ISNUMBER({SEL["止"]}),INT({SEL["止"]}),P_截止)',
         '经手人': f'=TRIM({SEL["经手人"]}&"")',
         '经手人条件': f'=IF({S("经手人")}="","<>@@全部@@",{esc(S("经手人"))})',
-        '经手人号': f'=IF({S("经手人")}="",0,IFERROR(MATCH({S("经手人")},经手人_姓名,0),-1))',
+        '经手人号': f'=IF({S("经手人")}="",0,IFERROR(MATCH({S("经手人条件")},经手人_姓名,0),-1))',
         '下限': f'={code}*1E9+{a}*10000',
         '上限': f'={code}*1E9+{b}*10000+9999',
         '起点': '=' + cnt_hk(f'COUNTIF({{HK}},"<"&TEXT({S("下限")},"0"))'),
@@ -176,6 +184,7 @@ def _scalars(ws, seg):
                  f'+SUMIFS(往_数量,往_类型,"应收",往_有效,1,{pp("往")}),3)'),
         '烘干收入': (f'=ROUND(SUMIFS(收_板块收入,{inc_s},{pp("收")})'
                  f'+SUMIFS(往_应收额,往_类型,"应收",{pp("往")}),2)'),
+        '最后一行': f'=IF({S("条数")}>={SHOW},{R_END},{R0}+{S("条数")})',
     }
     for k, r in SC.items():
         ws[f'{SC_COL}{r}'] = f[k]
@@ -184,83 +193,75 @@ def _scalars(ws, seg):
 
 
 def _tip(kind):
-    t = ('💡 这张表不用填：【收支登记】【应收应付登记】里业务板块选了这个板块的每一笔，自动按日期列在这里（同一天先列收支、再列赊账）。'
-         '黄格可以改：板块（默认就是本表；基础资料里改了板块名，在这里重选）、起止日期（空＝建账日～首页截止日）、经手人（空＝全部）。'
-         '结余只按收支登记的钱滚动（内部转账不算）；淡橙色的行是赊账（应收应付登记），只记在「应收（赊）」「应付（赊）」，不动结余；'
-         '收回欠款、支付欠款在这两列显示负数。选了经手人：只列他经手的，本期数只算他的，结余、余额还是整个板块的。'
-         '要改哪一笔，按最后一列「来源」去登记表改。')
+    t = ('💡 不用填：两张登记表里这个板块的每一笔自动按日期列在这里。黄格可改板块、起止（空＝建账日～首页截止日）、经手人；'
+         '期初＝起日前一天，余额到止日；淡橙色是赊账，不动结余。')
     if kind == '购销':
-        t += '粮食存量＝期初存量＋购进−销售（赊购、赊销的也算）；不是购进、销售的行有数量的，写在摘要后面（数量×单价）。'
-    elif kind == '烘干':
-        t += ('烘干重量、烘干单价就是登记表里的数量、单价；只填了数量、单价的，收入按数量×单价算。'
-              '上面的「烘干重量」「烘干收入」＝收入类的行（不含收回欠款）＋赊出去的应收，不管收支项目叫什么。')
-    else:
-        t += '登记表里填了数量的，写在摘要后面（数量×单价）。'
-    return t
+        t += '存量含赊购赊销。'
+    return t + '细节看【首页】。'
 
 
 def build_seg(ws, seg, kind):
     C = COLS[kind]
-    last = LAST[kind]
+    last, ulast = LAST[kind], ULAST[kind]
     widths(ws, {c: WIDTH.get(f, 12) for f, c in C.items()})
-    title(ws, f'={S("板块")}&" · 收支台账（从两张登记表自动拆分）"', last, C_SEG, _tip(kind))
+    # 标题、提示只合并到用户原表最后一列（打印只打这几列），右边补充列接着涂同样的底色
+    title(ws, f'={S("板块")}&" · 收支台账"', ulast, C_SEG, _tip(kind), h1=28, h2=30)
+    for i in range(CI(ulast) + 1, CI(last) + 1):
+        ws.cell(row=1, column=i).fill = fill(C_SEG)
+        ws.cell(row=2, column=i).fill = FILL_TIP
 
-    # ── 选择格 ──
+    # ── 选择格（第 3、4 行，都在 A～F 里） ──
     selector(ws, 'A3', '板块', SEL['板块'], seg, '=板块列表',
              prompt='默认＝本表；从下拉选别的板块也行（基础资料里改了板块名，就在这里重选）')
-    selector(ws, 'D3', '起', SEL['起'], None, fmt=DATE, prompt='空＝建账日')
-    selector(ws, 'F3', '止', SEL['止'], None, fmt=DATE, prompt='空＝首页截止日')
-    selector(ws, 'H3', '经手人', SEL['经手人'], None, '=经手人列表', prompt='空＝全部经手人')
+    selector(ws, 'C3', '起', SEL['起'], None, fmt=DATE, prompt='空＝建账日')
+    selector(ws, 'E3', '止', SEL['止'], None, fmt=DATE, prompt='空＝首页截止日')
+    selector(ws, 'A4', '经手人', SEL['经手人'], None, '=经手人列表', prompt='空＝全部经手人')
     dv_date(ws, SEL['起'])
     dv_date(ws, SEL['止'])
     home_link(ws, f'{last}3')
-    put(ws, 'A4', '实际用的', F_NOTE, align=AC)
-    put(ws, 'B4', f'={S("板块")}&IF({S("板块号")}=0,"（⚠ 不在【基础资料】②里）","")', F_AUTOB, FILL_AUTO, align=AC)
-    put(ws, 'D4', '空＝建账日→', F_NOTE, align=AR)
-    put(ws, 'E4', f'={S("起")}', F_AUTOB, FILL_AUTO, DATE, AC)
-    put(ws, 'F4', '空＝截止日→', F_NOTE, align=AR)
-    put(ws, 'G4', f'={S("止")}', F_AUTOB, FILL_AUTO, DATE, AC)
-    put(ws, 'H4', '空＝全部→', F_NOTE, align=AR)
-    put(ws, 'I4', f'=IF({S("经手人")}="","全部",{S("经手人")})', F_AUTOB, FILL_AUTO, align=AC)
     ws.row_dimensions[3].height = 22
 
     _scalars(ws, seg)
 
-    # ── 顶部汇总 ──
-    ws.merge_cells(f'A{R_SUM_L}:A{R_SUM_V}')
-    put(ws, f'A{R_SUM_L}', '本期汇总', F_KPI_L, fill('FFD9E1F2'), align=ACW)
-    for i, (nm, lbl, fmt) in enumerate(SUM_ITEMS[kind]):
-        col = CL(2 + i)
-        put(ws, f'{col}{R_SUM_L}', lbl, F_KPI_L, fill('FFD9E1F2'), align=ACW)
-        put(ws, f'{col}{R_SUM_V}', f'={S(nm)}', F_SUMV, FILL_AUTO, fmt, AR)
-    ws.row_dimensions[R_SUM_L].height = 32
-    ws.row_dimensions[R_SUM_V].height = 22
-
-    # ── 清单 ──
+    # 第 4 行右边：实际用的起止、经手人 ＋ 条数 / 提示
     n = S('条数')
     z_rng = lambda col: f'${col}${R0}:${col}${R_END}'
     has_stock = '存量' in C
-    lastbal = f'INDEX({z_rng(C["结余"])},{n})'
-    ok_tail = (f'IF(ROUND({lastbal}-{S("期末结余")},2)=0,"；最后一行结余＝期末结余 ✓","；⚠ 最后一行结余跟期末结余对不上")')
+    ymd = lambda x: f'YEAR({x})&"/"&MONTH({x})&"/"&DAY({x})'
+    ok_tail = (f'IF(ROUND(INDEX({z_rng(C["结余"])},{n})-{S("期末结余")},2)=0,"；结余＝期末 ✓","；⚠ 最后一行结余跟期末对不上")')
     if has_stock:
-        ok_tail += (f'&IF(ROUND(INDEX({z_rng(C["存量"])},{n})-{S("期末存量")},3)=0,"，存量＝期末存量 ✓",'
-                    f'"；⚠ 最后一行存量跟期末存量对不上")')
-    ws.merge_cells(f'A{R_NOTE}:{last}{R_NOTE}')
-    put(ws, f'A{R_NOTE}', (
-        f'=IF({S("起")}>{S("止")},"⚠ 起晚于止，请改黄格里的日期",'
-        f'IF({S("板块号")}=0,"⚠ 板块「"&{S("板块")}&"」不在【基础资料】②业务板块里，请在黄格重选",'
-        f'IF({S("经手人号")}<0,"⚠ 经手人「"&{S("经手人")}&"」不在【基础资料】⑤里，清单列不出来（上面的本期数照算）",'
+        ok_tail += (f'&IF(ROUND(INDEX({z_rng(C["存量"])},{n})-{S("期末存量")},3)=0,"，存量＝期末 ✓",'
+                    f'"；⚠ 最后一行存量跟期末对不上")')
+    st_rng = f'{STATUS}:{ulast}{STATUS[1:]}'
+    ws.merge_cells(st_rng)
+    put(ws, STATUS, (
+        f'={ymd(S("起"))}&"～"&{ymd(S("止"))}&"，"&IF({S("经手人")}="","全部经手人","经手人："&{S("经手人")})&"。"&'
+        f'IF({S("起")}>{S("止")},"⚠ 起晚于止，请改黄格里的日期",'
+        f'IF({S("板块号")}=0,"⚠ 板块「"&{S("板块")}&"」不在【基础资料】②里，请在黄格重选",'
+        f'IF({S("经手人号")}<0,"⚠ 经手人「"&{S("经手人")}&"」不在【基础资料】⑤里，清单列不出来",'
         f'IF({n}=0,"这段时间没有流水",'
-        f'IF({n}>{SHOW},"⚠ 共 "&{n}&" 条，只显示前 {SHOW} 条，请把「起」改晚一点（上面的汇总是全部的）",'
-        f'"共 "&{n}&" 条，按日期排（同一天先列收支、再列赊账）"&IF({S("经手人")}="",{ok_tail},'
-        f'"；只列「"&{S("经手人")}&"」经手的，结余、存量是整个板块的"))))))'), F_NOTE, align=AL, border=False)
-    ws.conditional_formatting.add(f'A{R_NOTE}', FormulaRule(formula=[f'LEFT($A${R_NOTE},1)="⚠"'], font=F_RED))
-    ws.row_dimensions[R_NOTE].height = 20
+        f'IF({n}>{SHOW},"⚠ 共 "&{n}&" 条，只显示前 {SHOW} 条，请把「起」改晚一点",'
+        f'"共 "&{n}&" 条（同一天先收支、后赊账）"&IF({S("经手人")}="",{ok_tail},'
+        f'"；结余、存量是整个板块的"))))))'), F_AUTOB, FILL_AUTO, align=ALW)
+    for i in range(CI(STATUS[0]) + 1, CI(ulast) + 1):
+        ws.cell(row=4, column=i).border = BD
+    ws.conditional_formatting.add(STATUS, FormulaRule(formula=[f'ISNUMBER(FIND("⚠",{STATUS}))'], font=F_RED))
+    ws.row_dimensions[4].height = 30
+
+    # ── 顶部汇总（从 A 列起） ──
+    for i, (nm, lbl, fmt) in enumerate(SUM_ITEMS[kind]):
+        col = CL(1 + i)
+        c = put(ws, f'{col}{R_SUM_L}', lbl, F_KPI_L, fill('FFD9E1F2'), align=ACW)
+        if nm in SUM_NOTE:
+            c.comment = Comment(SUM_NOTE[nm], '说明', width=180, height=50)
+        put(ws, f'{col}{R_SUM_V}', f'={S(nm)}', F_SUMV, FILL_AUTO, fmt, AR)
+    ws.row_dimensions[R_SUM_L].height = 20
+    ws.row_dimensions[R_SUM_V].height = 22
 
     header(ws, HDR, [(c, HEAD[f] if f != '往来单位' else ('往来单位' if kind == '通用' else '客户名称'))
                      for f, c in C.items() if f in _USER[kind]], C_SEG)
     header(ws, HDR, [(c, HEAD.get(f, f)) for f, c in C.items() if f not in _USER[kind]], GREEN_H)
-    ws.row_dimensions[HDR].height = 34
+    ws.row_dimensions[HDR].height = 30
 
     fmts = {'日期': DATE, '收入': MONEY_B, '支出': MONEY_B, '结余': MONEY, '应收': MONEY_B, '应付': MONEY_B,
             '烘干重量': QTY_B, '烘干单价': PRICE_B, '购进数量': QTY_B, '购进单价': PRICE_B, '销售数量': QTY_B,
@@ -276,8 +277,10 @@ def build_seg(ws, seg, kind):
            f'ROUND({C["应收"]}{R_TOT}-{S("本期应收增减")},2)=0', f'ROUND({C["应付"]}{R_TOT}-{S("本期应付增减")},2)=0']
     if has_stock:
         chk += [f'ROUND({C["购进数量"]}{R_TOT}-{S("本期购进")},3)=0', f'ROUND({C["销售数量"]}{R_TOT}-{S("本期销售")},3)=0']
-    tot['来源'] = (f'=IF({n}>{SHOW},"⚠ 清单没列全，合计只算了显示的",IF(AND({",".join(chk)}),"✓ 合计＝顶部汇总",'
-                 f'"⚠ 合计跟顶部汇总对不上"))')
+    # 板块不在基础资料、经手人不在⑤、起晚于止：清单本来就空，第 4 行已经说了原因，核对格空着
+    tot['来源'] = (f'=IF(OR({S("板块号")}=0,{S("经手人号")}<0,{S("起")}>{S("止")}),"",'
+                 f'IF({n}>{SHOW},"⚠ 清单没列全，合计只算了显示的",IF(AND({",".join(chk)}),"✓ 合计＝顶部汇总",'
+                 f'"⚠ 合计跟顶部汇总对不上")))')
     # 期初行
     opn = {'日期': f'=IF({S("起")}>0,{S("起")},"")', '摘要': '期初', '结余': f'={S("期初结余")}'}
     if has_stock:
@@ -364,8 +367,12 @@ def build_seg(ws, seg, kind):
 
     hide(ws, KC, ZC, SC_COL, SC_LBL)
     ws.freeze_panes = f'C{R_TOT}'
+    # 打印：只打用户原表的列，一页宽；打到清单最后一行（「共 N 条」那行），每页重复表头，页脚页码
     print_setup(ws, f'{HDR}:{HDR}', landscape=True)
-    ws.print_area = f'A1:{last}{R_END}'
+    q = f"'{ws.title}'"
+    ws.defined_names['Print_Area'] = DefinedName(
+        'Print_Area', attr_text=f'{q}!$A$1:INDEX({q}!${ulast}$1:${ulast}${R_END},{q}!{S("最后一行")})')
+    ws.oddFooter.center.text = '第 &P 页 共 &N 页'
 
 
 def build(wb, ctx=None):
