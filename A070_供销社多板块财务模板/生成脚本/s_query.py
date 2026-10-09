@@ -9,7 +9,8 @@
    起始日期空＝P_建账日；截止日期空＝P_截止。
    清单都是「活动行」：隐藏列先算出这一行显示第几条 / 合计 / 共 N 条，合计紧跟在最后一条下面。"""
 from openpyxl.formatting.rule import FormulaRule
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.workbook.defined_name import DefinedName
 from layout import *
 from common import *
 
@@ -40,6 +41,7 @@ OTH, NSV, P_OTH, P_TOT = '$AA$5', '$AA$6', '$AA$7', '$AA$8'   # ①：「其他�
 SEG_OK = '$AA$9'
 XN, XIN, XOUT = '$AA$10', '$AA$11', '$AA$12'    # ③：内部转账条数、收、支
 NN3, NN4 = '$AA$13', '$AA$14'                   # ③④：实际显示几条（≤显示上限）
+LASTR = '$AA$15'                                # 活动区最后一行的行号（打印区域到这里）
 
 # ── ① 隐藏计算块：第 i 个板块在 HR0+i-1 行；之后一行「其他」、一行「合计（全部）」 ──
 HR0 = 5
@@ -50,7 +52,7 @@ V1 = dict(名称='A', 期初结余='B', 收入='C', 支出='D', 期末结余='E'
 SEGCNT = 'AC'
 I_OTH, I_TOT = N_SEG + 1, N_SEG + 2
 
-IDX, KIND = 'P', 'Q'                            # 清单行：第几条（源表 n）、行类型（1 数据 2 合计 3… ）
+IDX, KIND, JX = 'P', 'Q', 'R'                   # 清单行：源表第几条、行类型、清单里第几条
 KEY3, KEY4 = 'S', 'T'                           # ③④ 排序键
 MF, MA, MB = 'U', 'V', 'W'                      # ②：月初、这个月实际起、实际止
 SHOW_M, SHOW3, SHOW4 = 24, 800, 300
@@ -120,7 +122,7 @@ def build(wb, ctx):
     nseg = sum(1 for s in ctx.get('segments', []) if str(s.get('名称', '') or '').strip())
     M1 = min(N_SEG, nseg + 2)
 
-    widths(ws, {'A': 14, 'B': 13, 'C': 13, 'D': 20, 'E': 14, 'F': 14, 'G': 14, 'H': 13, 'I': 13, 'J': 14, 'K': 14,
+    widths(ws, {'A': 14, 'B': 13, 'C': 13, 'D': 22, 'E': 14, 'F': 14, 'G': 14, 'H': 13, 'I': 13, 'J': 14, 'K': 14,
                 'L': 13, 'M': 13, 'N': 26})
     title(ws, '查  询（按日期、业务板块、经手人）', 'M', C_VIEW)
     home_link(ws, 'N1')
@@ -319,8 +321,9 @@ def build(wb, ctx):
     sec2 = (m0, m1)
     r += 1
 
-    # ═════ ③ 收支明细 ═════
-    section(ws, r, 'A', LAST, '③ 收支明细（收支登记里符合上面起止、板块、经手人的，按日期排；账户之间倒钱只在「全部板块」时列出，蓝底）', C_VIEW)
+    # ═════ ③ 收支明细 ＋ ④ 应收应付明细：一个「活动区」，④ 紧接在 ③ 的合计下面 ═════
+    section(ws, r, 'A', LAST, '③ 收支明细（收支登记里符合上面起止、板块、经手人的，按日期排；账户之间倒钱只在「全部板块」时列出，蓝底）'
+                              '　④ 应收应付明细接在 ③ 下面', C_VIEW)
     r += 1
     note3 = r
     r += 1
@@ -336,43 +339,85 @@ def build(wb, ctx):
         g = lambda k: f'INDEX(收_{k},{n})'
         return (f'AND({g("有效")}=1,{g("日期")}>={S0},{g("日期")}<={S1},'
                 f'OR({SEG}="",AND({g("板块")}={SEG},{g("内部转账")}=0)),OR({PER}="",{g("经手人")}={PER}))')
+
+    def cond4(i):
+        n = i + 1
+        g = lambda k: f'INDEX(往_{k},{n})'
+        return (f'AND({g("有效")}=1,{g("日期")}>={S0},{g("日期")}<={S1},'
+                f'OR({SEG}="",{g("板块")}={SEG}),OR({PER}="",{g("经手人")}={PER}))')
     n3 = skey(ws, KEY3, d0, N_CASH, cond3, lambda i: f'INDEX(收_日期,{i + 1})')
+    n4 = skey(ws, KEY4, d0, N_WL, cond4, lambda i: f'INDEX(往_日期,{i + 1})')
     _sc(ws, NN3, f'=MIN({n3},{SHOW3})', '③显示几条')
-    pS3 = dr('收_日期', S0, S1)
+    _sc(ws, NN4, f'=MIN({n4},{SHOW4})', '④显示几条')
+    pS3, pW4 = dr('收_日期', S0, S1), dr('往_日期', S0, S1)
     _sc(ws, XN, f'=COUNTIFS(收_内部转账,1,{perS},{pS3})', '③内部转账条数')
     _sc(ws, XIN, f'=SUMIFS(收_收入,收_内部转账,1,{perS},{pS3})', '③内部转账收')
     _sc(ws, XOUT, f'=SUMIFS(收_支出,收_内部转账,1,{perS},{pS3})', '③内部转账支')
-    tin = f'IF({SEG}="",SUMIFS(收_收入,{perS},{pS3}),SUMIFS(收_板块收入,收_板块,{esc(SEG)},{perS},{pS3}))'
-    tout = f'IF({SEG}="",SUMIFS(收_支出,{perS},{pS3}),SUMIFS(收_板块支出,收_板块,{esc(SEG)},{perS},{pS3}))'
-    for k in range(1, SHOW3 + 3):
-        y, q = f'${IDX}{r}', f'${KIND}{r}'
-        ws[f'{IDX}{r}'] = '=' + ksorted(k, KEY3, d0, N_CASH, n3) if k <= SHOW3 else 0
-        ws[f'{KIND}{r}'] = f'=IF({y}>0,1,IF({k}={NN3}+1,2,IF({k}={NN3}+2,3,0)))'
-        ws[f'{IDX}{r}'].font = ws[f'{KIND}{r}'].font = F_HELP
+    _sc(ws, LASTR, f'={d0 - 1}+{NN3}+8+{NN4}', '活动区最后一行（打印到这里）')
+    tin = f'ROUND(IF({SEG}="",SUMIFS(收_收入,{perS},{pS3}),SUMIFS(收_板块收入,收_板块,{esc(SEG)},{perS},{pS3})),2)'
+    tout = f'ROUND(IF({SEG}="",SUMIFS(收_支出,{perS},{pS3}),SUMIFS(收_板块支出,收_板块,{esc(SEG)},{perS},{pS3})),2)'
+    tsum = lambda rng, t: f'ROUND(SUMIFS({rng},往_类型,"{t}",往_有效,1,{segW},{perW},{pW4}),2)'
+    # 行类型：1 ③明细 2 ③合计 3 ③共N条 4 ④标题 5 ④表头 6 ④明细 7 应收合计 8 应付合计 9 ④共N条 0 空
+    NREG = SHOW3 + 3 + 2 + SHOW4 + 3
+    for k in range(1, NREG + 1):
+        y, q, j = f'${IDX}{r}', f'${KIND}{r}', f'${JX}{r}'
+        ws[f'{KIND}{r}'] = (f'=IF({k}<={NN3},1,IF({k}={NN3}+1,2,IF({k}={NN3}+2,3,IF({k}={NN3}+3,0,IF({k}={NN3}+4,4,IF({k}={NN3}+5,5,'
+                            f'IF({k}<={NN3}+5+{NN4},6,IF({k}={NN3}+6+{NN4},7,IF({k}={NN3}+7+{NN4},8,'
+                            f'IF({k}={NN3}+8+{NN4},9,0))))))))))')
+        ws[f'{JX}{r}'] = f'=IF({q}=1,{k},IF({q}=6,{k}-{NN3}-5,0))'
+        ws[f'{IDX}{r}'] = (f'=IF({q}=1,{ksorted(j, KEY3, d0, N_CASH, n3)},'
+                           f'IF({q}=6,{ksorted(j, KEY4, d0, N_WL, n4)},0))')
+        for c in (IDX, KIND, JX):
+            ws[f'{c}{r}'].font = F_HELP
         g = lambda f_: f'INDEX(收_{f_},{y})'
-        ws[f'A{r}'] = f'=IF({q}=1,{g("日期")},IF({q}=2,"合计",IF({q}=3,"共 "&{n3}&" 条","")))'
-        ws[f'B{r}'] = f'=IF({q}=1,IF({g("内部转账")}=1,"（内部转账）",{g("板块")}),"")'
-        ws[f'C{r}'] = f'=IF({q}=1,{g("收支项目")},"")'
-        ws[f'D{r}'] = f'=IF({q}=1,{g("摘要")},"")'
-        ws[f'E{r}'] = f'=IF({q}=1,{g("往来单位")},"")'
-        ws[f'F{r}'] = f'=IF({q}=1,IF({g("数量")}=0,"",{g("数量")}),"")'
-        ws[f'G{r}'] = f'=IF({q}=1,IF({g("单价")}=0,"",{g("单价")}),"")'
-        ws[f'H{r}'] = f'=IF({q}=1,{g("收入")},IF({q}=2,ROUND({tin},2),""))'
-        ws[f'I{r}'] = f'=IF({q}=1,{g("支出")},IF({q}=2,ROUND({tout},2),""))'
-        ws[f'J{r}'] = f'=IF({q}=1,{g("账户")},"")'
-        ws[f'K{r}'] = f'=IF({q}=1,{g("经手人")},"")'
-        ws[f'L{r}'] = f'=IF({q}=1,{g("录入行")},"")'
+        w = lambda f_: f'INDEX(往_{f_},{y})'
+        nz = lambda x: f'IF({x}=0,"",{x})'
+        disp = {
+            'A': {1: g('日期'), 2: '"合计"', 3: f'"共 "&{n3}&" 条"', 4: '"④ 应收应付明细"', 5: '"日期"', 6: w('日期'),
+                  7: '"应收合计"', 8: '"应付合计"', 9: f'"共 "&{n4}&" 条"'},
+            'B': {1: f'IF({g("内部转账")}=1,"（内部转账）",{g("板块")})', 4: f'"共 "&{n4}&" 条"', 5: '"业务板块"', 6: w('板块')},
+            'C': {1: g('收支项目'), 5: '"往来单位"', 6: w('往来单位')},
+            'D': {1: g('摘要'), 4: f'IF({n4}>{SHOW4},"⚠ 只列了前 {SHOW4} 条","按日期排，负数＝折让")', 5: '"应收/应付"',
+                  6: w('类型')},
+            'E': {1: g('往来单位'), 5: '"业务内容"', 6: w('收支项目')},
+            'F': {1: nz(g('数量')), 5: '"摘要"', 6: w('摘要')},
+            'G': {1: nz(g('单价')), 5: '"数量 KG"', 6: nz(w('数量'))},
+            'H': {1: g('收入'), 2: tin, 5: '"单价"', 6: nz(w('单价'))},
+            'I': {1: g('支出'), 2: tout, 5: '"金额"', 6: w('金额'), 7: tsum('往_金额', '应收'), 8: tsum('往_金额', '应付')},
+            'J': {1: g('账户'), 5: '"约定日期"', 6: w('约定日期')},
+            'K': {1: g('经手人'), 5: '"还没结的"', 6: w('未结'), 7: tsum('往_未结', '应收'), 8: tsum('往_未结', '应付')},
+            'L': {1: g('录入行'), 5: '"经手人"', 6: w('经手人')},
+            'M': {5: '"行号"', 6: w('录入行')},
+            'N': {4: '"还没结的：算到首页截止日 "&TEXT(P_截止,"yyyy/m/d")'},
+        }
+        for c, mp in disp.items():
+            f = '""'
+            for code in sorted(mp, reverse=True):
+                f = f'IF({q}={code},{mp[code]},{f})'
+            ws[f'{c}{r}'] = '=' + f
         r += 1
     d1 = r - 1
-    fm3 = {'A': DATE, 'F': KG_B, 'G': PRICE_B, 'H': MONEY_B, 'I': MONEY_B, 'L': '0'}
-    _style_list(ws, d0, d1, list('ABCDEFGHIJKL'), fm3,
-                {'A': AC, 'B': AL, 'C': AL, 'D': AL, 'E': AL, 'F': AR, 'G': AR, 'H': AR, 'I': AR, 'J': AC, 'K': AC, 'L': AC})
-    rng3 = f'A{d0}:L{d1}'
-    ws.conditional_formatting.add(rng3, FormulaRule(formula=[f'${KIND}{d0}=2'], fill=CF_TOT, font=Font(bold=True), border=BD))
-    ws.conditional_formatting.add(rng3, FormulaRule(formula=[f'${KIND}{d0}=3'], font=Font(color='FF808080')))
-    ws.conditional_formatting.add(rng3, FormulaRule(formula=[f'AND(${KIND}{d0}=1,$B{d0}="（内部转账）")'], fill=CF_XFER,
-                                                    font=Font(italic=True, color='FF595959'), border=BD))
-    ws.conditional_formatting.add(rng3, FormulaRule(formula=[f'${KIND}{d0}=1'], border=BD))
+    GEN = Alignment(horizontal='general', vertical='center')
+    fm3 = {'A': DATE, 'F': KG_B, 'G': '#,##0.####;[Red]-#,##0.####;""', 'H': PRICE_B, 'I': MONEY_B, 'J': DATE, 'K': MONEY_B, 'L': '0', 'M': '0'}
+    _style_list(ws, d0, d1, list('ABCDEFGHIJKLMN'), fm3,
+                {'A': AC, 'J': AC, 'L': AC, 'M': AC, **{c: GEN for c in 'BCDEFGHIKN'}})
+    for rr in range(d0, d1 + 1):
+        ws[f'N{rr}'].font = F_NOTE
+    cq = f'${KIND}{d0}'
+    ws.conditional_formatting.add(f'A{d0}:N{d1}', FormulaRule(formula=[f'{cq}=4'], fill=cf_fill(C_VIEW),
+                                                              font=Font(bold=True, color='FFFFFFFF')))
+    ws.conditional_formatting.add(f'A{d0}:M{d1}', FormulaRule(formula=[f'{cq}=5'], fill=cf_fill(GREEN_H),
+                                                              font=Font(bold=True, color='FFFFFFFF'), border=BD))
+    ws.conditional_formatting.add(f'A{d0}:L{d1}', FormulaRule(formula=[f'{cq}=2'], fill=CF_TOT, font=Font(bold=True), border=BD))
+    ws.conditional_formatting.add(f'A{d0}:M{d1}', FormulaRule(formula=[f'OR({cq}=7,{cq}=8)'], fill=CF_TOT, font=Font(bold=True),
+                                                              border=BD))
+    ws.conditional_formatting.add(f'A{d0}:N{d1}', FormulaRule(formula=[f'OR({cq}=3,{cq}=9)'], font=Font(color='FF808080')))
+    ws.conditional_formatting.add(f'A{d0}:L{d1}', FormulaRule(formula=[f'AND({cq}=1,$B{d0}="（内部转账）")'], fill=CF_XFER,
+                                                              font=Font(italic=True, color='FF595959'), border=BD))
+    ws.conditional_formatting.add(f'A{d0}:L{d1}', FormulaRule(formula=[f'{cq}=1'], border=BD))
+    ws.conditional_formatting.add(f'A{d0}:M{d1}', FormulaRule(formula=[f'AND({cq}=6,$I{d0}<0)'], font=Font(color='FFC00000'),
+                                                              border=BD))
+    ws.conditional_formatting.add(f'A{d0}:M{d1}', FormulaRule(formula=[f'{cq}=6'], border=BD))
     tot3 = f'INDEX($H${d0}:$H${d1},{NN3}+1)'
     tot3o = f'INDEX($I${d0}:$I${d1},{NN3}+1)'
     ws.merge_cells(f'A{note3}:{LAST}{note3}')
@@ -383,77 +428,15 @@ def build(wb, ctx):
                           f'&IF(AND(ROUND({tot3}-{XIN}-$H$3,2)=0,ROUND({tot3o}-{XOUT}-$I$3,2)=0)," ✓"," ⚠ 对不上"),'
                           f'IF(AND(ROUND({tot3}-$H$3,2)=0,ROUND({tot3o}-$I$3,2)=0),"；合计＝第 3 行收入、支出 ✓",'
                           f'"；⚠ 合计跟第 3 行收入、支出对不上")))'), F_NOTE, align=AL, border=False)
-    ws.conditional_formatting.add(f'A{note3}', FormulaRule(formula=[f'ISNUMBER(FIND("⚠",A{note3}))'], font=Font(color='FFC00000', bold=True)))
+    ws.conditional_formatting.add(f'A{note3}', FormulaRule(formula=[f'ISNUMBER(FIND("⚠",A{note3}))'],
+                                                          font=Font(color='FFC00000', bold=True)))
     sec3 = (note3, hdr3, d0, d1)
-    r += 1
-
-    # ═════ ④ 应收应付明细 ═════
-    section(ws, r, 'A', LAST, '④ 应收应付明细（应收应付登记里符合上面起止、板块、经手人的赊销、赊购，按日期排）', C_VIEW)
-    r += 1
-    note4 = r
-    r += 1
-    hdr4 = r
-    header(ws, r, [('A', '日期'), ('B', '业务板块'), ('C', '往来单位'), ('D', '应收 / 应付'), ('E', '业务内容'), ('F', '摘要'),
-                   ('G', '数量\nKG'), ('H', '单价'), ('I', '金额'), ('J', '约定收/付款\n日期'), ('K', '还没结的\n（到首页截止日）'),
-                   ('L', '经手人'), ('M', '应收应付登记\n行号')], GREEN_H, height=36)
-    r += 1
-    w0 = r
-
-    def cond4(i):
-        n = i + 1
-        g = lambda k: f'INDEX(往_{k},{n})'
-        return (f'AND({g("有效")}=1,{g("日期")}>={S0},{g("日期")}<={S1},'
-                f'OR({SEG}="",{g("板块")}={SEG}),OR({PER}="",{g("经手人")}={PER}))')
-    n4 = skey(ws, KEY4, w0, N_WL, cond4, lambda i: f'INDEX(往_日期,{i + 1})')
-    _sc(ws, NN4, f'=MIN({n4},{SHOW4})', '④显示几条')
-    pW4 = dr('往_日期', S0, S1)
-    for k in range(1, SHOW4 + 4):
-        y, q = f'${IDX}{r}', f'${KIND}{r}'
-        ws[f'{IDX}{r}'] = '=' + ksorted(k, KEY4, w0, N_WL, n4) if k <= SHOW4 else 0
-        ws[f'{KIND}{r}'] = f'=IF({y}>0,1,IF({k}={NN4}+1,2,IF({k}={NN4}+2,3,IF({k}={NN4}+3,4,0))))'
-        ws[f'{IDX}{r}'].font = ws[f'{KIND}{r}'].font = F_HELP
-        g = lambda f_: f'INDEX(往_{f_},{y})'
-        tsum = lambda rng, t: f'ROUND(SUMIFS({rng},往_类型,"{t}",往_有效,1,{segW},{perW},{pW4}),2)'
-        ws[f'A{r}'] = f'=IF({q}=1,{g("日期")},IF({q}=2,"应收合计",IF({q}=3,"应付合计",IF({q}=4,"共 "&{n4}&" 条",""))))'
-        ws[f'B{r}'] = f'=IF({q}=1,{g("板块")},"")'
-        ws[f'C{r}'] = f'=IF({q}=1,{g("往来单位")},"")'
-        ws[f'D{r}'] = f'=IF({q}=1,{g("类型")},"")'
-        ws[f'E{r}'] = f'=IF({q}=1,{g("收支项目")},"")'
-        ws[f'F{r}'] = f'=IF({q}=1,{g("摘要")},"")'
-        ws[f'G{r}'] = f'=IF({q}=1,IF({g("数量")}=0,"",{g("数量")}),"")'
-        ws[f'H{r}'] = f'=IF({q}=1,IF({g("单价")}=0,"",{g("单价")}),"")'
-        ws[f'I{r}'] = (f'=IF({q}=1,{g("金额")},IF({q}=2,{tsum("往_金额", "应收")},'
-                       f'IF({q}=3,{tsum("往_金额", "应付")},"")))')
-        ws[f'J{r}'] = f'=IF({q}=1,{g("约定日期")},"")'
-        ws[f'K{r}'] = (f'=IF({q}=1,{g("未结")},IF({q}=2,{tsum("往_未结", "应收")},'
-                       f'IF({q}=3,{tsum("往_未结", "应付")},"")))')
-        ws[f'L{r}'] = f'=IF({q}=1,{g("经手人")},"")'
-        ws[f'M{r}'] = f'=IF({q}=1,{g("录入行")},"")'
-        r += 1
-    e1 = r - 1
-    fm4 = {'A': DATE, 'G': KG_B, 'H': PRICE_B, 'I': MONEY_B, 'J': DATE, 'K': MONEY_B, 'M': '0'}
-    _style_list(ws, w0, e1, list('ABCDEFGHIJKLM'), fm4,
-                {'A': AC, 'B': AL, 'C': AL, 'D': AC, 'E': AL, 'F': AL, 'G': AR, 'H': AR, 'I': AR, 'J': AC, 'K': AR, 'L': AC,
-                 'M': AC})
-    rng4 = f'A{w0}:M{e1}'
-    ws.conditional_formatting.add(rng4, FormulaRule(formula=[f'OR(${KIND}{w0}=2,${KIND}{w0}=3)'], fill=CF_TOT,
-                                                    font=Font(bold=True), border=BD))
-    ws.conditional_formatting.add(rng4, FormulaRule(formula=[f'${KIND}{w0}=4'], font=Font(color='FF808080')))
-    ws.conditional_formatting.add(rng4, FormulaRule(formula=[f'AND(${KIND}{w0}=1,$I{w0}<0)'], font=Font(color='FFC00000'),
-                                                    border=BD))
-    ws.conditional_formatting.add(rng4, FormulaRule(formula=[f'${KIND}{w0}=1'], border=BD))
-    ws.merge_cells(f'A{note4}:{LAST}{note4}')
-    put(ws, f'A{note4}', (f'=IF({n4}=0,"这段时间没有符合条件的赊销、赊购",'
-                          f'"共 "&{n4}&" 条，按日期排；金额是负数的是折让、冲减（红字）；「还没结的」按先欠先还算到首页截止日 "'
-                          f'&TEXT(P_截止,"yyyy/m/d")&IF({n4}>{SHOW4},"　⚠ 只列了前 {SHOW4} 条（合计是全部的），请缩短日期范围",""))'),
-        F_NOTE, align=AL, border=False)
-    ws.conditional_formatting.add(f'A{note4}', FormulaRule(formula=[f'ISNUMBER(FIND("⚠",A{note4}))'], font=Font(color='FFC00000', bold=True)))
-    sec4 = (note4, hdr4, w0, e1)
 
     for i in range(CI('P'), CI('CD') + 1):
         ws.column_dimensions[CL(i)].hidden = True
     ws.freeze_panes = 'A5'
     print_setup(ws, '1:4', landscape=True)
-    ws.print_area = f'A1:{LAST}{e1}'
-    ws._a070 = dict(sec1=sec1, sec2=sec2, sec3=sec3, sec4=sec4)
+    q_ = f"'{ws.title}'"
+    ws.defined_names['Print_Area'] = DefinedName('Print_Area', attr_text=f'{q_}!$A$1:INDEX({q_}!${LAST}$1:${LAST}${d1},{q_}!{LASTR})')
+    ws._a070 = dict(sec1=sec1, sec2=sec2, sec3=sec3)
     return ws._a070

@@ -7,6 +7,7 @@
    口径（设计.md §3）：账户余额（到 d）＝账户_期初余额＋Σ收_净额（收_账户＝它，日期≤d；含内部转账）。"""
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font, PatternFill
+from openpyxl.workbook.defined_name import DefinedName
 from layout import *
 from common import *
 
@@ -29,6 +30,7 @@ S0, S1 = '$D$4', '$F$4'
 OTH1, NSV1, P_OTH1, P_TOT1 = '$AA$5', '$AA$6', '$AA$7', '$AA$8'
 OTH2, NSV2, P_OTH2, P_TOT2 = '$AA$9', '$AA$10', '$AA$11', '$AA$12'
 NN3 = '$AA$13'
+LASTR = '$AA$14'                                 # 明细最后一行（「共 N 笔」）的行号：打印区域到这里
 
 HR0 = 5
 HA = dict(名称='AD', 期初='AE', 收入='AF', 支出='AG', 期末='AH', 笔数='AI')        # ① 每个账户（第 i 个在 HR0+i-1 行）
@@ -310,6 +312,7 @@ def build(wb, ctx):
                 f'OR({ACC}="",{g("账户")}={ACC}),OR({SEG}="",{g("板块")}={SEG}))')
     n3 = skey(ws, KEY, d0, N_CASH, cond, lambda i: f'INDEX(收_日期,{i + 1})')
     _sc(ws, NN3, f'=MIN({n3},{SHOW})', '③显示几条')
+    _sc(ws, LASTR, f'={d0}+{NN3}+1', '明细最后一行（打印到这里）')
     base_acc = S('账户_期初余额', accN)
     for k in range(1, SHOW + 3):
         y, q = f'${IDX}{r}', f'${KIND}{r}'
@@ -359,6 +362,7 @@ def build(wb, ctx):
         ws.column_dimensions[CL(i)].hidden = True
     ws.freeze_panes = 'A5'
     print_setup(ws, '3:4', landscape=True)
-    ws.print_area = f'A1:{LAST}{d1}'
+    q_ = f"'{ws.title}'"
+    ws.defined_names['Print_Area'] = DefinedName('Print_Area', attr_text=f'{q_}!$A$1:INDEX({q_}!${LAST}$1:${LAST}${d1},{q_}!{LASTR})')
     ws._a070 = dict(sec1=sec1, sec2=sec2, sec3=sec3)
     return ws._a070
