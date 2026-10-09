@@ -118,6 +118,9 @@ def build(wb, ctx=None):
         ('工资、提成发给了不在人员表里的人（金额）', '=ROUND(SUMIFS(收_支出净额,收_校验,"✗ 工资、提成的往来对象*"),2)',
          'ABS(C{r})>=0.01', '✗', '往来对象要从人员下拉里选，【工资提成】才对得上人'),
         ('账户余额是负数的账户个数', f'=SUM($AE$1:$AE${N_ACC})', 'C{r}>0', '⚠', '钱不够付还付出去了？多半是漏记了收款，或者期初余额没填'),
+        ('最后一笔日期比别的都晚好多（截止日期被带过去了）',
+         f'=IF(AND(NOT(ISNUMBER({SH_HOME}!{HOME_END})),P_最后日期-P_第二晚>60),P_最后日期-P_第二晚,0)', 'C{r}>0', '⚠',
+         '截止日期空着时按最后一笔算；最后一笔比第二晚的一笔晚了 60 天以上，多半年份填错了（订单登记、收支登记按日期从大到小筛一下就找到）'),
         ('首页截止日期比最后一笔早', f'=IF(AND(ISNUMBER({SH_HOME}!{HOME_END}),P_截止<P_最后日期),P_最后日期-P_截止,0)', 'C{r}>0', '⚠',
          '首页黄格填了截止日期，以后录的就不算进来；看完了记得清空'),
         ('日期晚于截止日期的定金、收支（暂不计入）', f'=COUNTIFS({OK},单_定金,"<>0",单_定金日期,">"&{D})+COUNTIFS(收_有效,1,收_日期,">"&{D})',
@@ -147,7 +150,7 @@ def build(wb, ctx=None):
         else:
             put(ws, f'B{rr}', lab, F_TXT, align=ALW)
         put(ws, f'A{rr}', i + 1, F_TXT, align=AC)
-        isn = any(w in lab for w in ('个数', '单数', '超', '没填', '比最后', '晚于'))
+        isn = any(w in lab for w in ('个数', '单数', '超', '没填', '比最后', '晚于', '晚好多'))
         put(ws, f'C{rr}', f, F_AUTOB, fmt='0' if isn else MONEY, align=AR)
         put(ws, f'D{rr}', f'=IF({bad.format(r=rr)},"{kind}","✓")', F_TXTB, align=AC)
         put(ws, f'G{rr}', how, F_NOTE, align=ALW)

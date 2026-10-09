@@ -37,6 +37,21 @@ def inject(target, valsrc, names=None):
     """names：{成品里的表名: 算数副本里的表名}，不给就同名对同名"""
     names = names or {}
     vals = openpyxl.load_workbook(valsrc, data_only=True)
+    zv = zipfile.ZipFile(valsrc)
+    vparts = sheet_parts(zv)
+
+    def empty_str_cells(sheet):
+        """副本里公式结果是空串的格子（t="str"、<v> 空）：openpyxl 读成 None，要按空串写回，不然预览当成 0"""
+        out = set()
+        if sheet not in vparts:
+            return out
+        for _, c in etree.iterparse(zv.open(vparts[sheet]), tag=f'{{{NS}}}c'):
+            if c.get('t') == 'str':
+                v = c.find(f'{{{NS}}}v')
+                if v is None or not v.text:
+                    out.add(c.get('r'))
+            c.clear()
+        return out
     tmp = target + '.tmp'
     zin = zipfile.ZipFile(target)
     parts = sheet_parts(zin)
@@ -49,6 +64,7 @@ def inject(target, valsrc, names=None):
         src = names.get(sh, sh)
         if sh and src in vals.sheetnames:
             wsv = vals[src]
+            empties = empty_str_cells(src)
             root = etree.fromstring(data)
             for c in root.iter(f'{{{NS}}}c'):
                 f = c.find(f'{{{NS}}}f')
@@ -59,8 +75,13 @@ def inject(target, valsrc, names=None):
                     c.remove(v)
                 val = wsv[c.get('r')].value
                 if val is None:
-                    c.attrib.pop('t', None)
-                    n_skip += 1
+                    if c.get('r') in empties:
+                        c.set('t', 'str')
+                        etree.SubElement(c, f'{{{NS}}}v')
+                        n_set += 1
+                    else:
+                        c.attrib.pop('t', None)
+                        n_skip += 1
                     continue
                 v = etree.SubElement(c, f'{{{NS}}}v')
                 if isinstance(val, bool):
@@ -80,6 +101,7 @@ def inject(target, valsrc, names=None):
         zout.writestr(item, data)
     zout.close()
     zin.close()
+    zv.close()
     shutil.move(tmp, target)
     return n_set, n_skip
 

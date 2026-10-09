@@ -46,9 +46,9 @@ def _example_grey(ws, rows, r0, last_in):
                 ws.cell(row=r0 + i, column=c).fill = FILL_EX
 
 
-def _frame(ws, last_col, hdr, heads, color, tip, W, r0, nstyle, fm, al, freeze, auto=()):
+def _frame(ws, last_col, hdr, heads, color, tip, W, r0, nstyle, fm, al, freeze, auto=(), title_col=None):
     widths(ws, W)
-    title(ws, ws.title, last_col, color, tip)
+    title(ws, ws.title, title_col or last_col, color, tip)
     header(ws, hdr, heads, color)
     style_rows(ws, r0, r0 + nstyle - 1, [c for c, _ in heads], auto=auto, fmts=fm, aligns=al)
     ws.freeze_panes = freeze
@@ -65,6 +65,14 @@ def _write_rows(ws, rows, cols, r0, date_keys=('日期',)):
             if k in date_keys:
                 v = _d(v)
             ws[f'{col}{r}'] = v
+
+
+def _print_to_last(ws, last_col, last_row, par_cell):
+    """打印区域只到最后一行有内容的（_参 里算的行号），不打几千行空表格线"""
+    from openpyxl.workbook.defined_name import DefinedName
+    q = f"'{ws.title}'"
+    ws.defined_names['Print_Area'] = DefinedName(
+        'Print_Area', attr_text=f'{q}!$A$1:INDEX({q}!${last_col}$1:${last_col}${last_row},{H_PAR}!${par_cell[0]}${par_cell[1:]})')
 
 
 def _kpi(ws, row, cells):
@@ -100,10 +108,9 @@ def build_ord(ws, ctx):
              (S['预计利润'], '预计利润\n（自动）'), (S['实际利润'], '实际利润\n（自动）'), (S['尾款收否'], '尾款收否\n（自动）'),
              (S['订单提成'], '订单提成\n（自动，没结算的是预估）'), (S['已收'], '已收\n（自动）'), (S['还没收'], '还没收\n（自动）'),
              (S['实际成本'], '实际成本\n（自动）'), (S['出行状态'], '出行状态\n（自动）'), (S['校验'], '这一行的问题\n（自动）')]
-    tip = ('💡 接单时在这里登记一行，收了定金就填定金金额。之后这一单的每一笔钱——尾款、分期、退款、地接机票酒店等成本、开票税费、手续费——'
-           '都到【收支登记】记一行并选订单号，这里的已收、尾款收否、实际成本、实际利润自动算。客户加项目、减项目、部分退团、给折让：直接改「订单总金额」，备注写原价和原因。'
-           '客户取消：填取消日期。结团、成本都对完账、尾款收齐：填结算日期，实际利润和提成就定下来了（提成算在结算那个月）。'
-           '订单号自己编（建议数字，第 3 行有「下一个订单号」），不能重复。灰底的是示例行，正式用时整行删掉。可以插行、删行、排序（整行一起动）。')
+    tip = ('💡 接单登记一行，收了定金填定金。之后这单的每一笔钱（尾款、退款、成本）都到【收支登记】记一行、选订单号。'
+           '加减项目、部分退团：改订单总金额。取消填取消日期；结团对完账填结算日期（实际利润、提成就定了）。'
+           '订单号不能重复（第 3 行有下一个号）。灰底是示例行。详细看【首页】「常见情况怎么记」。')
     W = {C['订单号']: 9, C['客户名字']: 10, C['预订日期']: 11, C['出行日期']: 11, C['销售']: 8, C['订单总金额']: 12,
          C['预计成本']: 12, C['定金金额']: 11, C['联系电话']: 12, C['线路']: 20, C['人数']: 5, C['备注']: 18,
          C['定金日期']: 13, C['收款账户']: 12, C['取消日期']: 11, C['结算日期']: 12, C['提成比例']: 10,
@@ -116,7 +123,7 @@ def build_ord(ws, ctx):
         al[C[k]] = AR
     rows = ctx.get('orders', [])
     nshow = N_ORD                                               # 自动列铺满容量（用户不用往下拉公式）
-    _frame(ws, ORD_LAST, ORD_HDR, heads, C_IN, tip, W, ORD_R0, nshow, fm, al, f'C{ORD_R0}', auto=tuple(S.values()))
+    _frame(ws, ORD_LAST, ORD_HDR, heads, C_IN, tip, W, ORD_R0, nshow, fm, al, f'C{ORD_R0}', auto=tuple(S.values()), title_col='L')
     ws.row_dimensions[ORD_HDR].height = 44
     for k in ORD_RARE:                                          # 可不填的列：表头浅色
         ws[f'{C[k]}{ORD_HDR}'].fill = fill('FF9BC2E6')
@@ -126,7 +133,7 @@ def build_ord(ws, ctx):
         ws[f'{C["订单号"]}{r}'].number_format = '@'
     _kpi(ws, 3, [('A', '下一个订单号', '=P_下一单号', '0'),
                  ('D', '订单数（不含取消）', '=COUNTIFS(单_有效,1,单_取消,0)', '0'),
-                 ('G', '订单总金额', '=SUMIFS(单_订单总金额,单_有效,1,单_取消,0)', MONEY),
+                 ('G', '订单总金额（不含取消）', '=SUMIFS(单_订单总金额,单_有效,1,单_取消,0)', MONEY),
                  ('J', '已收合计', '=SUMIFS(单_已收,单_有效,1)', MONEY),
                  ('M', '还没收合计', '=SUMIFS(单_还没收,单_有效,1)', MONEY)])
     put(ws, 'P3', '="已收、出行状态按截止日 "&TEXT(P_截止,"yyyy-mm-dd")&" 算（首页可改）"', F_NOTE, align=AL, border=False)
@@ -147,7 +154,9 @@ def build_ord(ws, ctx):
     ws.conditional_formatting.add(f'{S["校验"]}{ORD_R0}:{S["校验"]}{last}',
                                   FormulaRule(formula=[f'LEFT({S["校验"]}{ORD_R0},1)="✗"'], font=F_RED))
     ws.conditional_formatting.add(f'{S["尾款收否"]}{ORD_R0}:{S["尾款收否"]}{last}',
-                                  FormulaRule(formula=[f'OR({S["尾款收否"]}{ORD_R0}="未收",{S["尾款收否"]}{ORD_R0}="部分")'],
+                                  FormulaRule(formula=[f'AND(OR({S["尾款收否"]}{ORD_R0}="未收",{S["尾款收否"]}{ORD_R0}="部分"),'
+                                                       f'OR(${S["出行状态"]}{ORD_R0}="已出行",${S["出行状态"]}{ORD_R0}="已结算",'
+                                                       f'AND(ISNUMBER(${C["出行日期"]}{ORD_R0}),${C["出行日期"]}{ORD_R0}-P_截止<=P_尾款天数)))'],
                                               font=Font(name=YH, sz=10, bold=True, color='FFC65911')))
     ws.conditional_formatting.add(f'{S["出行状态"]}{ORD_R0}:{S["出行状态"]}{last}',
                                   FormulaRule(formula=[f'{S["出行状态"]}{ORD_R0}="未出行"'],
@@ -174,27 +183,25 @@ def build_ord(ws, ctx):
     _example_grey(ws, rows, ORD_R0, C['备注'])
     home_link(ws, f'{CL(CI(ORD_LAST) + 1)}1')
     print_setup(ws, f'{ORD_HDR}:{ORD_HDR}')
+    _print_to_last(ws, ORD_LAST, ORD_R0 + N_ORD - 1, PAR['订单末行'])
 
 
 # ───────────────────────── 收支登记 ─────────────────────────
 def build_cash(ws, ctx):
     C, S = CASH_COLS, CASH_SHOW
-    heads = [(C['日期'], '日期'), (C['类别'], '收支类别'), (C['订单号'], '订单号\n（订单的成本、退款要选）'),
+    heads = [(C['日期'], '日期'), (C['类别'], '收支类别'), (C['订单号'], '订单号\n（收尾款、退款、成本都要选）'),
              (C['往来对象'], '往来对象\n（供应商 / 员工）'), (C['摘要'], '摘要'), (C['收入'], '收入金额'), (C['支出'], '支出金额'),
              (C['账户'], '账户\n（空＝默认）'), (C['付款情况'], '付款情况\n（空＝已付）'), (C['备注'], '备注'),
              (S['归类'], '归类\n（自动）'), (S['订单客户'], '订单客户\n（自动）'), (S['校验'], '这一行的问题\n（自动）')]
-    tip = ('💡 定金以外的钱都记这里，一笔一行。订单的钱——收尾款/分期款、退客户款、地接机票酒店等成本、开票税费、收款手续费、渠道返佣——'
-           '「订单号」一定要选（下拉只列没结算的单，新的在上面，显示「订单号｜客户｜出行日」；也可以直接打订单号）。'
-           '工资、销售提成「往来对象」选人员（工资和提成一起转的也拆成两行）。成本先欠着没付的（比如地接回来再结），付款情况选「未付」：'
-           '算进订单成本，不算钱出去；付了以后把「未付」清掉、日期改成付款那天（只付了一部分：原行改成还欠的数，另起一行记付了的）。'
-           '现金存银行、微信提现：记两行「内部转账」（转出账户记支出、转入账户记收入）。灰底的是示例行，正式用时整行删掉。可以插行、删行、排序。')
+    tip = ('💡 定金以外的钱都记这里，一笔一行。订单的钱（收尾款、退客户款、地接机票酒店等成本、税费手续费）一定要选订单号（下拉只列没结算的单，也可以直接打号）。'
+           '工资、提成的往来对象选人员。成本先欠着的，付款情况选「未付」，付了清掉「未付」、日期改成付款那天。内部转账记两行。灰底是示例行。')
     W = {C['日期']: 11, C['类别']: 12, C['订单号']: 22, C['往来对象']: 13, C['摘要']: 22, C['收入']: 12, C['支出']: 12,
-         C['账户']: 10, C['付款情况']: 9, C['备注']: 16, S['归类']: 9, S['订单客户']: 10, S['校验']: 34}
+         C['账户']: 10, C['付款情况']: 9, C['备注']: 16, S['归类']: 9, S['订单客户']: 30, S['校验']: 34}
     fm = {C['日期']: DATE, C['收入']: MONEY, C['支出']: MONEY, C['订单号']: '@'}
-    al = {C['订单号']: AL, C['往来对象']: AL, C['摘要']: AL, C['备注']: AL, C['收入']: AR, C['支出']: AR, S['校验']: AL}
+    al = {C['订单号']: AL, C['往来对象']: AL, C['摘要']: AL, C['备注']: AL, C['收入']: AR, C['支出']: AR, S['校验']: AL, S['订单客户']: AL}
     rows = ctx.get('cash', [])
     nshow = N_CASH
-    _frame(ws, CASH_LAST, CASH_HDR, heads, C_IN, tip, W, CASH_R0, nshow, fm, al, f'C{CASH_R0}', auto=tuple(S.values()))
+    _frame(ws, CASH_LAST, CASH_HDR, heads, C_IN, tip, W, CASH_R0, nshow, fm, al, f'C{CASH_R0}', auto=tuple(S.values()), title_col='J')
     ws.row_dimensions[CASH_HDR].height = 42
     for col in S.values():
         ws[f'{col}{CASH_HDR}'].fill = fill('FF8EA9DB')
@@ -232,6 +239,7 @@ def build_cash(ws, ctx):
     _example_grey(ws, rows, CASH_R0, C['备注'])
     home_link(ws, f'{CL(CI(CASH_LAST) + 1)}1')
     print_setup(ws, f'{CASH_HDR}:{CASH_HDR}')
+    _print_to_last(ws, CASH_LAST, CASH_R0 + N_CASH - 1, PAR['收支末行'])
 
 
 # ───────────────────────── 基础资料 ─────────────────────────

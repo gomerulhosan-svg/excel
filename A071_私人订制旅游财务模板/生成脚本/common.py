@@ -156,13 +156,13 @@ def style_rows(ws, r0, r1, cols, auto=(), fmts=None, aligns=None, fills=None, bo
 
 
 def dv_list(ws, sqref, formula, prompt=None, stop=True, blank=True):
-    dv = DataValidation(type='list', formula1=formula, allow_blank=blank, showErrorMessage=stop,
+    dv = DataValidation(type='list', formula1=str(formula).lstrip('='), allow_blank=blank, showErrorMessage=stop,
                         errorStyle='stop' if stop else 'warning')
     if prompt:
         dv.promptTitle, dv.prompt = '提示', prompt
         dv.showInputMessage = True
     dv.errorTitle = '不在清单里'
-    dv.error = '请从下拉里选；清单里没有的，先到【基础资料】或【往来单位】里加一行'
+    dv.error = '请从下拉里选；清单里没有的，先到【基础资料】里加一行'
     ws.add_data_validation(dv)
     dv.add(sqref)
     return dv
@@ -181,7 +181,7 @@ def selector(ws, cell_lbl, lbl, cell_in, value, dv_formula=None, fmt=None, promp
     put(ws, cell_lbl, lbl, F_KPI_L, fill('FFD9E1F2'), align=AC)
     put(ws, cell_in, value, F_SEL, FILL_SEL, fmt=fmt, align=AC)
     if dv_formula:
-        dv = DataValidation(type='list', formula1=dv_formula, allow_blank=True, showErrorMessage=False)
+        dv = DataValidation(type='list', formula1=str(dv_formula).lstrip('='), allow_blank=True, showErrorMessage=False)
         if prompt:
             dv.promptTitle, dv.prompt, dv.showInputMessage = '提示', prompt, True
         ws.add_data_validation(dv)
@@ -268,4 +268,6 @@ def print_setup(ws, rows=None, landscape=True, fit_width=True):
     if rows:
         ws.print_title_rows = rows
     ws.page_margins.left = ws.page_margins.right = 0.3
-    ws.page_margins.top = ws.page_margins.bottom = 0.5
+    ws.page_margins.top = 0.5
+    ws.page_margins.bottom = 0.75                 # 页脚（第几页）印在下边距里，别压到最后一行
+    ws.page_margins.header = ws.page_margins.footer = 0.3

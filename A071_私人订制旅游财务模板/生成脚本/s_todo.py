@@ -42,7 +42,7 @@ F_WHITE_B = Font(name=YH, sz=10, bold=True, color='FFFFFFFF')
 F_GREY = Font(name=YH, sz=9, color='FF808080')
 F_GREY_I = Font(name=YH, sz=10, italic=True, color='FF9E9E9E')
 F_OVER = Font(name=YH, sz=10, bold=True, color='FF9C0006')
-F_BIG = Font(name=YH, sz=20, bold=True, color='FFC00000')
+F_BIG = Font(name=YH, sz=20, bold=True, color='FF1F3864')
 
 
 def S(k):
@@ -100,7 +100,7 @@ TIP = ('💡 全自动不用填，截止日期＝【首页】的截止日期。�
        '（订单总金额－预计成本）合计；没填预计成本的不算，另外列出来。下面三块一块接一块往下排：'
        '① 未出行订单，按出行日期排（没填出行日期的在最后），红色＝出发前 N 天内（【基础资料】里设，默认 15 天）还没收齐；'
        '② 已经出行还没结算的、已经结算但钱还没收齐的，红色＝出行超过 N 天（默认 30 天）——该收尾款、对成本、填结算日期了；'
-       '暂算实际利润（灰色斜体）＝已收进来的订单金额－已记的成本，结算后才定下来；'
+       '暂算实际利润（灰色斜体）＝订单总金额－这单已记的成本（含未付的），结算后才定下来；'
        '③ 欠人家的钱：【收支登记】里付款情况选了「未付」的每一笔（欠地接、机票等供应商的，答应退客户还没退的，别的没付的），'
        '红色＝出行超过 N 天还欠供应商；右边按往来对象合计。付了以后去【收支登记】把「未付」清掉、日期改成付款那天，这里就没了。')
 
@@ -214,7 +214,7 @@ def build(wb, ctx=None):
           ('M', '还没收', S('未出行还没收'), MONEY), ('N', '预计提成', S('未出行预计提成'), MONEY)]
     for col, lbl, f, fmt in kp:
         put(ws, f'{col}4', lbl, F_KPI_L, lbl_fill, align=ACW)
-        put(ws, f'{col}5', f'={f}', F_KPI_V, FILL_AUTO, fmt, AC)
+        put(ws, f'{col}5', f'={f}', Font(name=YH, sz=13, bold=True, color='FF1F3864'), FILL_AUTO, fmt, AC)
     ws.merge_cells('O4:P5')
     put(ws, 'O4', '预估总利润＝未出行（没取消）订单的「订单总金额－预计成本」合计', F_NOTE, align=ALW)
     for rr in (4, 5):

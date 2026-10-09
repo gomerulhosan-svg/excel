@@ -100,7 +100,7 @@ def build(wb, ctx=None):
     link(put(ws, f'B{r + 1}', '全部预计订单未出行预估总利润', Font(name=YH, sz=11, bold=True, color='FF0563C1', underline='single'),
              fill('FFD9E1F2'), align=ACW), SH_TODO)
     ws.merge_cells(f'B{r + 1}:C{r + 2}')
-    put(ws, f'D{r + 1}', big, Font(name=YH, sz=18, bold=True, color='FFC00000'), fill('FFFFFFFF'), MONEY, AC)
+    put(ws, f'D{r + 1}', big, Font(name=YH, sz=18, bold=True, color='FF1F3864'), fill('FFFFFFFF'), MONEY, AC)
     ws.merge_cells(f'D{r + 1}:D{r + 2}')
     ws.row_dimensions[r + 1].height = 22
     ws.row_dimensions[r + 2].height = 22
@@ -124,15 +124,17 @@ def build(wb, ctx=None):
     late = '单_有效,1,单_出行码,1,单_出行日期,"<"&(P_截止-P_结算天数)'
     fol = [('="快出发（"&P_尾款天数&" 天内）没收齐"', f'=COUNTIFS({soon})&" 单"', f'=SUMIFS(单_还没收,{soon})', SH_TODO),
            ('已出行还没收齐', f'=COUNTIFS({went})&" 单"', f'=SUMIFS(单_还没收,{went})', SH_TODO),
-           ('已出行还没结算', '=COUNTIFS(单_有效,1,单_出行码,1)&" 单"', '=SUMIFS(单_预计利润,单_有效,1,单_出行码,1)', SH_TODO),
-           ('="出行超过 "&P_结算天数&" 天没结算"', f'=COUNTIFS({late})&" 单"', f'=SUMIFS(单_预计利润,{late})', SH_TODO),
+           ('已出行还没结算（金额＝预计利润）', '=COUNTIFS(单_有效,1,单_出行码,1)&" 单"', '=SUMIFS(单_预计利润,单_有效,1,单_出行码,1)', SH_TODO),
+           ('="出行超过 "&P_结算天数&" 天没结算（预计利润）"', f'=COUNTIFS({late})&" 单"', f'=SUMIFS(单_预计利润,{late})', SH_TODO),
            ('欠供应商（成本未付）', '=COUNTIFS(收_有效,1,收_未付,1,收_归类,"订单成本")&" 笔"', '=SUMIFS(收_未付额,收_有效,1,收_归类,"订单成本")', SH_TODO),
            ('应退客户还没退', '=COUNTIFS(收_有效,1,收_未付,1,收_归类,"订单退款")&" 笔"', '=SUMIFS(收_未付额,收_有效,1,收_归类,"订单退款")', SH_TODO)]
     header(ws, r + 1, [('B', '事项'), ('C', '几单/几笔'), ('D', '金额'), ('F', '事项'), ('G', '几单/几笔'), ('H', '金额')], C_VIEW, height=22)
     for i, (lab, n, amt, sh) in enumerate(fol):
         c0, cn, ca = (('B', 'C', 'D'), ('F', 'G', 'H'))[i // 3]
         rr = r + 2 + i % 3
-        link(put(ws, f'{c0}{rr}', lab, Font(name=YH, sz=10, bold=True, color='FF0563C1', underline='single'), fill('FFD9E1F2'), align=AL), sh)
+        c = put(ws, f'{c0}{rr}', lab, Font(name=YH, sz=10, bold=True, color='FF0563C1', underline='single'), fill('FFD9E1F2'), align=ALW)
+        if not str(lab).startswith('='):                 # 公式格不挂超链接（预览里会把链接地址当成值）
+            link(c, sh)
         put(ws, f'{cn}{rr}', n, F_AUTOB, align=AC)
         put(ws, f'{ca}{rr}', f'=ROUND({amt[1:]},2)', F_AUTOB, fmt=MONEY, align=AR)
     put(ws, f'J{r + 2}', '金额说明', F_KPI_L, fill('FFD9E1F2'), align=AC)
@@ -150,8 +152,7 @@ def build(wb, ctx=None):
         c0, cv = (('B', 'C'), ('F', 'G'), ('J', 'K'))[i % 3] if i < 6 else (('B', 'C'), ('F', 'G'))[i - 6]
         rr = r + 1 + (i // 3 if i < 6 else 2)
         a = f'{H_TAB}!${COMPACT["账户"][0]}${i + 2}'
-        link(put(ws, f'{c0}{rr}', f'=IF({a}="","",{a})', Font(name=YH, sz=10, bold=True, color='FF0563C1', underline='single'),
-                 fill('FFD9E1F2'), align=AL), SH_FLOW)
+        put(ws, f'{c0}{rr}', f'=IF({a}="","",{a})', F_TXTB, fill('FFD9E1F2'), align=AL)
         put(ws, f'{cv}{rr}', f'=IF({a}="","",ROUND({acc(a)},2))', F_AUTOB, fill('FFFFFFFF'), MONEY, AR)
     rr = r + 3
     total = (f'SUM(账户_期初余额)+SUMIFS(单_定金,单_有效,1,单_定金日期,">="&P_建账日,单_定金日期,"<="&P_截止)+SUMIFS(收_净额,收_有效,1)')
@@ -159,7 +160,12 @@ def build(wb, ctx=None):
     put(ws, f'K{rr}', f'=ROUND({total},2)', F_TXTB, FILL_TOT, MONEY, AR)
     put(ws, f'L{rr}', f'=IF({H_TAB}!${COMPACT["账户"][0]}$1>{NA},"（还有 "&({H_TAB}!${COMPACT["账户"][0]}$1-{NA})&" 个账户没列，看资金流水）","")',
         F_NOTE, align=AL, border=False)
-    ws.conditional_formatting.add(f'B{r + 1}:K{r + 3}', FormulaRule(formula=[f'AND(ISNUMBER(B{r + 1}),B{r + 1}<-0.005)'], font=F_RED))
+    ws.conditional_formatting.add(f'B{r + 1}:K{r + 3}', FormulaRule(formula=[f'AND(ISNUMBER(B{r + 1}),B{r + 1}<-0.005)'], font=F_RED,
+                                                                     stopIfTrue=True))
+    for c0, cv in (('B', 'C'), ('F', 'G'), ('J', 'K')):        # 没用到的账户位：不填色、不画框
+        ws.conditional_formatting.add(f'{c0}{r + 1}:{cv}{r + 3}', FormulaRule(formula=[f'${c0}{r + 1}=""'], fill=fill('FFFFFFFF'),
+                                                                             border=Border(), stopIfTrue=True))
+    link(ws[f'B{r}'], SH_FLOW)
 
     # ⑤ 提醒
     r = r + 5
@@ -172,6 +178,8 @@ def build(wb, ctx=None):
            f'=IF({cc("内部转账没配对（转出、转入合计不为 0）")}<>0,"内部转账有一笔只记了一边（差 "&TEXT({cc("内部转账没配对（转出、转入合计不为 0）")},"#,##0.00")&"）","")',
            f'=IF({cc("没填预计成本的单数（预估利润没算进去）")}>0,{cc("没填预计成本的单数（预估利润没算进去）")}&" 单没填预计成本（预估利润没算进去）","")',
            f'=IF({cc("账户余额是负数的账户个数")}>0,"有 "&{cc("账户余额是负数的账户个数")}&" 个账户余额是负数：多半漏记了收款，或者期初余额没填","")',
+           f'=IF({cc("最后一笔日期比别的都晚好多（截止日期被带过去了）")}>0,"⚠ 最后一笔的日期 "&TEXT(P_最后日期,"yyyy-mm-dd")&" 比别的都晚 "'
+           f'&{cc("最后一笔日期比别的都晚好多（截止日期被带过去了）")}&" 天，截止日期被带过去了：是不是年份填错了？","")',
            '=IF(P_公司名称="","【基础资料】还没填公司名称（首页、结算单抬头要用）","")',
            (f'=IF({cc(f"订单登记超过 {N_ORD} 单（多出来的不算）")}+{cc(f"收支登记超过 {N_CASH} 笔（多出来的不算）")}'
             f'+{cc("基础资料某一块超了（多出来的不算）")}>0,"有表超过容量了，多出来的没算进去 → 看【数据校验】","")')]
@@ -181,8 +189,9 @@ def build(wb, ctx=None):
         ws.merge_cells(f'B{rr}:L{rr}')
     link(ws[f'B{r + 1}'], SH_CHK)
     ws.conditional_formatting.add(f'B{r + 1}:B{r + len(rem)}', FormulaRule(
-        formula=[f'OR(ISNUMBER(SEARCH("要改 ",B{r + 1})),ISNUMBER(SEARCH("只记了一边",B{r + 1})),ISNUMBER(SEARCH("超过容量",B{r + 1})),'
-                 f'ISNUMBER(SEARCH("负数",B{r + 1})),ISNUMBER(SEARCH("还没填",B{r + 1})),ISNUMBER(SEARCH("没填预计",B{r + 1})))'],
+        formula=[f'OR(AND(ISNUMBER(SEARCH("要改 ",B{r + 1})),ISERROR(SEARCH("要改 0 项",B{r + 1}))),ISNUMBER(SEARCH("只记了一边",B{r + 1})),ISNUMBER(SEARCH("超过容量",B{r + 1})),'
+                 f'ISNUMBER(SEARCH("负数",B{r + 1})),ISNUMBER(SEARCH("还没填",B{r + 1})),ISNUMBER(SEARCH("没填预计",B{r + 1})),'
+                 f'ISNUMBER(SEARCH("带过去",B{r + 1})))'],
         font=Font(name=YH, sz=10, bold=True, color='FFC00000')))
 
     # 导航

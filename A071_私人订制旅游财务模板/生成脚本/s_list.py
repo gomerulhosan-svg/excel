@@ -12,6 +12,7 @@ from openpyxl.styles import Font, PatternFill, Border, Side
 from openpyxl.workbook.defined_name import DefinedName
 from layout import *
 from common import *
+F_KPI_B = Font(name=YH, sz=13, bold=True, color='FF1F3864')   # 正数关键数用深蓝，红色只留给负数（格式里的 [Red]）
 
 LAST = 'S'
 HDR, R0 = 8, 9
@@ -63,11 +64,8 @@ def cf_blocks(ws, r0, r1, rules):
                                           FormulaRule(formula=[cond(CL(i0))], stopIfTrue=True, **kw))
 
 
-TIP = ('💡 每个订单一行（用户要的「每个订单详细清单」），全自动不用填，要改订单去【订单登记】改。黄格可以筛：按哪个日期（预订日期 / 出行日期）、'
-       '起止（空着＝不限）、销售、状态（未出行 / 已出行 / 已结算 / 已取消 / 没收齐＝没取消、还有钱没收）、客户（填名字里的几个字）；黄格都空着＝全部订单。'
-       '按选的日期从早到晚排（同一天按登记顺序，没填这个日期的排最后）。上面合计是筛出来的全部订单（不受「只列前 1500 单」限制）。'
-       '预计利润「没填」＝订单登记没填预计成本（合计不算）；实际利润：未出行的空着，已出行没结算的是暂算（灰色斜体），结算后才定下来；'
-       '订单提成：没结算的是预估（灰色斜体），结算了才算应发。已取消的整行灰色；尾款没收齐的橙色。已收、出行状态都按【首页】的截止日期算。')
+TIP = ('💡 每个订单一行，全自动（要改去【订单登记】）。黄格筛选：按预订/出行日期、起止、销售、状态（没收齐＝还有钱没收）、客户（名字里的几个字），空着＝全部。'
+       '实际利润未出行不显示；灰色斜体＝还没结算（实际利润暂算、提成预估）。已取消整行灰色。')
 
 
 def build(wb, ctx=None):
@@ -140,7 +138,7 @@ def build(wb, ctx=None):
     lbl_fill = fill('FFD9E1F2')
     crit = f'单_有效,1,{KEY_RNG},">0"'
     kpis = [('A', 'B', '单数', f'={S("单数")}', '0'),
-            ('C', 'D', '订单总金额', f'=ROUND(SUMIFS(单_订单总金额,{crit}),2)', MONEY),
+            ('C', 'D', '订单总金额（含已取消）', f'=ROUND(SUMIFS(单_订单总金额,{crit}),2)', MONEY),
             ('E', 'F', '定金金额', f'=ROUND(SUMIFS(单_定金,{crit}),2)', MONEY),
             ('G', 'H', '已收', f'=ROUND(SUMIFS(单_已收,{crit}),2)', MONEY),
             ('I', 'J', '还没收', f'=ROUND(SUMIFS(单_还没收,{crit}),2)', MONEY),
@@ -153,8 +151,8 @@ def build(wb, ctx=None):
         ws.merge_cells(f'{c1}6:{c2}6')
         put(ws, f'{c1}5', lbl, F_KPI_L, lbl_fill, align=ACW)
         put(ws, f'{c2}5', None, F_KPI_L, lbl_fill)
-        put(ws, f'{c1}6', f, F_KPI_V, FILL_TOT, fmt, AC)
-        put(ws, f'{c2}6', None, F_KPI_V, FILL_TOT)
+        put(ws, f'{c1}6', f, F_KPI_B, FILL_TOT, fmt, AC)
+        put(ws, f'{c2}6', None, F_KPI_B, FILL_TOT)
     put(ws, 'S5', '合计', F_KPI_L, lbl_fill, align=AC)
     put(ws, 'S6', '（筛出来的全部）', F_NOTE, FILL_TOT, align=ACW)
     ws.row_dimensions[5].height = 32
