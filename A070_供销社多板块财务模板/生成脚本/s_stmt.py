@@ -24,8 +24,13 @@ SL, SV = 'O', 'P'
 SC = ['单位', '单位条件', '板块', '板块条件', '起', '止', '名单序号', '笔数', 'n', '最后一行', '核对', '现结收', '现结付']
 SR = {k: 3 + i for i, k in enumerate(SC)}
 HK, HC, HKEY, HN, HSRC, HUSE = 'R', 'S', 'T', 'U', 'V', 'W'
-YN, YK = 'Y', 'Z'                           # 排序键：第 R0 行起先放 _收 5000 条，再放 _往 2000 条
-NK = N_CASH + N_WL
+# 排序键折成 500 行一列的方块（SMALL 可以对整块取第 k 小），隐藏列都在活动区的行数以内，打印、滚动都不会拖出几千行
+BLK = 500
+assert N_WL % BLK == 0 and N_CASH % BLK == 0 and BLK <= NREG
+YN = 'Y'                                                        # 方块的行号 1～500（第 n 条＝行号＋列偏移）
+YKS = [CL(CI('Z') + j) for j in range(N_CASH // BLK)]           # _收 的排序键（Z..AI）
+YKW = [CL(CI(YKS[-1]) + 1 + j) for j in range(N_WL // BLK)]     # _往 的排序键（AJ..AM）
+KEYS = f'${YKS[0]}${R0}:${YKW[-1]}${R0 + BLK - 1}'
 
 _thin = Side(style='thin', color='FFBFBFBF')
 CF_BD = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
@@ -117,7 +122,7 @@ def build(wb, ctx=None):
         '起': '=IF(ISNUMBER(H3),INT(H3),P_建账日)',
         '止': '=IF(ISNUMBER(J3),INT(J3),P_截止)',
         '名单序号': f'=IF({U}="",0,IFERROR(MATCH({EU},单位_名称,0),0))',
-        '笔数': f'=COUNT(${YK}${R0}:${YK}${R0 + NK - 1})',
+        '笔数': f'=COUNT({KEYS})',
         'n': f'=MIN({S("笔数")},{NL})',
         '最后一行': f'={R0 - 1}+{S("n")}+12',
         '核对': (f'=IF(AND(ROUND({tot("F")}-G{R_SAR},2)=0,ROUND({tot("G")}-H{R_SAR},2)=0,ROUND({tot("H")}-I{R_SAR},2)=0,'
@@ -209,30 +214,29 @@ def build(wb, ctx=None):
     header(ws, R_HDR, heads, C_WL, height=32)
 
     # ── 隐藏：排序键（_收 5000 条 ＋ _往 2000 条，键＝_收/_往 的排序键） ──
-    for c, t in ((YN, '第几条'), (YK, '排序键'), (HK, 'k'), (HC, '类型'), (HKEY, '键'), (HN, '第几条'), (HSRC, '哪张表'), (HUSE, '用途/类型')):
+    for c, t in ((YN, '方块行号'), (YKS[0], '_收排序键'), (YKW[0], '_往排序键'), (HK, 'k'), (HC, '类型'), (HKEY, '键'), (HN, '第几条'), (HSRC, '哪张表'), (HUSE, '用途/类型')):
         ws[f'{c}{R0 - 1}'] = t
         ws[f'{c}{R0 - 1}'].font = F_HELP
     segok = lambda nm, n: f'OR({S("板块")}="",INDEX({nm},{n})={S("板块")})'
-    for i in range(N_CASH):
+    for i in range(BLK):
         r = R0 + i
         ws[f'{YN}{r}'] = i + 1
-        n = f'${YN}{r}'
-        x = lambda k: f'INDEX(收_{k},{n})'
-        ws[f'{YK}{r}'] = (f'=IF({U}="","",IF(AND({x("有效")}=1,{x("往来单位")}={U},{x("内部转账")}=0,{x("日期")}>={S0},'
-                          f'{x("日期")}<={S1},{segok("收_板块", n)}),{x("排序键")},""))')
-    for i in range(N_WL):
-        r = R0 + N_CASH + i
-        ws[f'{YN}{r}'] = i + 1
-        n = f'${YN}{r}'
-        x = lambda k: f'INDEX(往_{k},{n})'
-        ws[f'{YK}{r}'] = (f'=IF({U}="","",IF(AND({x("有效")}=1,{x("往来单位")}={U},{x("日期")}>={S0},'
-                          f'{x("日期")}<={S1},{segok("往_板块", n)}),{x("排序键")},""))')
-    for r in range(R0, R0 + NK):
-        ws[f'{YN}{r}'].font = ws[f'{YK}{r}'].font = F_HELP
+        ws[f'{YN}{r}'].font = F_HELP
+        for j, col in enumerate(YKS):
+            n = f'(${YN}{r}+{j * BLK})'
+            x = lambda k: f'INDEX(收_{k},{n})'
+            ws[f'{col}{r}'] = (f'=IF({U}="","",IF(AND({x("有效")}=1,{x("往来单位")}={U},{x("内部转账")}=0,{x("日期")}>={S0},'
+                               f'{x("日期")}<={S1},{segok("收_板块", n)}),{x("排序键")},""))')
+        for j, col in enumerate(YKW):
+            n = f'(${YN}{r}+{j * BLK})'
+            x = lambda k: f'INDEX(往_{k},{n})'
+            ws[f'{col}{r}'] = (f'=IF({U}="","",IF(AND({x("有效")}=1,{x("往来单位")}={U},{x("日期")}>={S0},'
+                               f'{x("日期")}<={S1},{segok("往_板块", n)}),{x("排序键")},""))')
+        for col in YKS + YKW:
+            ws[f'{col}{r}'].font = F_HELP
 
     # ── 活动区：期初 → 明细 → 合计 → 共几笔 → 告知 → 签章 ──
     n = S('n')
-    keys = f'${YK}${R0}:${YK}${R0 + NK - 1}'
     fm = {'A': DATE, 'D': '#,##0.##', 'E': '0.00##', 'F': MONEY, 'G': MONEY, 'H': MONEY, 'I': MONEY, 'J': MONEY, 'K': MONEY}
     al = {'A': AC, 'B': AC, 'C': AL, 'D': AR, 'E': AR, 'F': AR, 'G': AR, 'H': Alignment(horizontal='right', vertical='center', shrink_to_fit=True),
           'I': AR, 'J': AR, 'K': AR, 'L': AL}
@@ -243,7 +247,7 @@ def build(wb, ctx=None):
         ws[f'{HC}{r}'] = (f'=IF({k}=1,"O",IF({k}<={n}+1,"D",IF({k}={n}+2,"T",IF({k}={n}+3,"C",IF({k}={n}+5,"F1",'
                           f'IF({k}={n}+6,"F2",IF({k}={n}+8,"G1",IF({k}={n}+11,"G2",IF({k}={n}+12,"G3","")))))))))')
         cd, key, ix_, src, use = (f'${c}{r}' for c in (HC, HKEY, HN, HSRC, HUSE))
-        ws[f'{HKEY}{r}'] = f'=IF({cd}="D",SMALL({keys},{k}-1),0)'
+        ws[f'{HKEY}{r}'] = f'=IF({cd}="D",SMALL({KEYS},{k}-1),0)'
         ws[f'{HN}{r}'] = f'=IF({key}=0,0,IF(MOD({key},10000)>5000,MOD({key},10000)-5000,MOD({key},10000)))'
         ws[f'{HSRC}{r}'] = f'=IF({key}=0,"",IF(MOD({key},10000)>5000,"W","S"))'
         ws[f'{HUSE}{r}'] = f'=IF({src}="W",INDEX(往_类型,{ix_}),IF({src}="S",INDEX(收_用途,{ix_}),""))'
@@ -307,7 +311,7 @@ def build(wb, ctx=None):
             kw['border'] = bd
         ws.conditional_formatting.add(reg, FormulaRule(formula=[cond], stopIfTrue=True, **kw))
     ws.conditional_formatting.add(f'L{R0}:L{R1}', FormulaRule(formula=[f'AND({c0}="T",LEFT($L{R0},1)<>"✓")'], font=F_WARN))
-    hide(ws, *[CL(i) for i in range(CI('N'), CI(YK) + 1)])
+    hide(ws, *[CL(i) for i in range(CI('N'), CI(YKW[-1]) + 1)])
     ws.freeze_panes = 'A5'
     print_setup(ws, f'{R_HDR}:{R_HDR}', landscape=True)
     ws.print_options.horizontalCentered = True

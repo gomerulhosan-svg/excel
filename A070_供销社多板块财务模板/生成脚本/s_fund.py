@@ -343,8 +343,6 @@ def build(wb, ctx):
     ws.conditional_formatting.add(rng3, FormulaRule(formula=[f'${KIND}{d0}=3'], font=Font(color='FF808080')))
     ws.conditional_formatting.add(rng3, FormulaRule(formula=[f'AND(${KIND}{d0}=1,$C{d0}="（内部转账）")'], fill=CF_XFER,
                                                     border=BD))
-    ws.conditional_formatting.add(rng3, FormulaRule(formula=[f'AND(${KIND}{d0}=1,$I{d0}<0)'], font=Font(color='FFC00000'),
-                                                    border=BD))
     ws.conditional_formatting.add(rng3, FormulaRule(formula=[f'${KIND}{d0}=1'], border=BD))
     last_bal = f'INDEX($I${d0}:$I${d1},{NN3})'
     ws.merge_cells(f'A{note3}:{LAST}{note3}')

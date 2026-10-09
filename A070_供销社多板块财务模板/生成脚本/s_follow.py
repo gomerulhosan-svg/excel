@@ -32,8 +32,15 @@ CC = ['名称', '名单', '有效', 'i', '收发生', '收回', '收余额', '�
       '付发生', '已付', '付余额', '付逾期', '付约定', '付天数', '付最近', '最近赊账', '往来']
 CCOL = {k: CL(CI('AC') + j) for j, k in enumerate(CC)}          # AC..AV
 CNT = CL(CI('AC') + len(CC))                                    # AW：要列的单位（计数）
-DN, DK = 'AY', 'AZ'                                             # 名单外单位：第几条、键（_往 2000 条在前，_收 5000 条在后）
-ON, OK3 = 'BB', 'BC'                                            # ③：_往 第几条、排序键（约定日期×10000＋n）
+# 长的键列折成 500 行一列的方块（SMALL 可以对整块取第 k 小），隐藏列都在活动区的行数以内，打印、滚动都不会拖出几千行
+BLK = 500
+assert N_WL % BLK == 0 and N_CASH % BLK == 0 and BLK <= NREG
+BN = 'AY'                                                       # 方块的行号 1～500（第 n 条＝行号＋列偏移）
+DKW = [CL(CI('AZ') + j) for j in range(N_WL // BLK)]            # 名单外单位：_往 的键（AZ..BC），键＝n
+DKS = [CL(CI(DKW[-1]) + 1 + j) for j in range(N_CASH // BLK)]   # 名单外单位：_收 的键（BD..BM），键＝10000＋n
+OKS = [CL(CI(DKS[-1]) + 2 + j) for j in range(N_WL // BLK)]     # ③ 排序键（BO..BR）：约定日期×10000＋n
+DK_RNG = f'${DKW[0]}${R0}:${DKS[-1]}${R0 + BLK - 1}'
+OK_RNG = f'${OKS[0]}${R0}:${OKS[-1]}${R0 + BLK - 1}'
 
 _thin = Side(style='thin', color='FFBFBFBF')
 CF_BD = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
@@ -121,9 +128,9 @@ def build(wb, ctx=None):
         '只看没结清': '=IF(TRIM(L3&"")="否",0,1)',
         '要列的单位数': f'={cnt(CNT, R0, NC)}',
         'n2': f'=MIN({S("要列的单位数")},{NL2})',
-        '逾期笔数': f'=COUNT(${OK3}${R0}:${OK3}${R0 + N_WL - 1})',
+        '逾期笔数': f'=COUNT({OK_RNG})',
         'n3': f'=MIN({S("逾期笔数")},{NL3})',
-        '名单外单位数': f'=COUNT(${DK}${R0}:${DK}${R0 + N_WL + N_CASH - 1})',
+        '名单外单位数': f'=COUNT({DK_RNG})',
         '有往来的单位数': f'=COUNTIFS({crng("往来")},">0")',
         '最后一行': f'={R0 - 1}+{S("n2")}+5+{S("n3")}',
     }
@@ -233,11 +240,10 @@ def build(wb, ctx=None):
     for k, c in CCOL.items():
         ws[f'{c}{R0 - 1}'] = k
         ws[f'{c}{R0 - 1}'].font = F_HELP
-    for c, t in ((CNT, '要列计数'), (DN, '名单外:第几条'), (DK, '名单外:键'), (ON, '③:第几条'), (OK3, '③:键'),
+    for c, t in ((CNT, '要列计数'), (BN, '方块行号'), (DKW[0], '名单外:_往键'), (DKS[0], '名单外:_收键'), (OKS[0], '③:键'),
                  (HK, 'k'), (HC, '类型'), (HI, '第几个'), (HSR, '状态应收'), (HSP, '状态应付')):
         ws[f'{c}{R0 - 1}'] = t
         ws[f'{c}{R0 - 1}'].font = F_HELP
-    nx = R0 + N_WL + N_CASH - 1
     for j in range(NC):
         r = R0 + j
         lst = j < N_UNIT
@@ -251,7 +257,7 @@ def build(wb, ctx=None):
             f['名称'] = f'=INDEX(单位_名称,{i_})&""'
             f['有效'] = f'=IF({nm}="",0,IF(MATCH({e},单位_名称,0)={i_},1,0))'
         else:
-            kd = f'SMALL(${DK}${R0}:${DK}${nx},{i_})'
+            kd = f'SMALL({DK_RNG},{i_})'
             f['名称'] = (f'=IF({i_}>{S("名单外单位数")},"",IF({kd}<10000,INDEX(往_往来单位,{kd}),INDEX(收_往来单位,{kd}-10000))&"")')
             f['有效'] = f'=IF({nm}="",0,1)'
         for p, t, amt, chong, use in (('收', '应收', '往_应收额', '收_冲应收', '冲应收'), ('付', '应付', '往_应付额', '收_冲应付', '冲应付')):
@@ -276,37 +282,33 @@ def build(wb, ctx=None):
             lambda j: (f'AND(${CCOL["有效"]}{R0 + j}=1,${CCOL["往来"]}{R0 + j}>0,OR({S("只看没结清")}=0,'
                        f'AND({wR}=1,${CCOL["收余额"]}{R0 + j}<>0),AND({wP}=1,${CCOL["付余额"]}{R0 + j}<>0)))'))
 
-    # ── 隐藏：名单外的单位（_往 先、_收 后；只取第一次出现的；_收 只看收回/支付欠款的行） ──
-    for i in range(N_WL):
+    # ── 隐藏：名单外的单位（_往 的键＝n 在前、_收 的键＝10000＋n 在后；只取第一次出现的；_收 只看收回/支付欠款的行） ──
+    #    ③ 逾期明细的排序键（约定日期×10000＋n）。都是 500 行一列的方块：第 n 条＝方块行号＋列偏移
+    for i in range(BLK):
         r = R0 + i
-        ws[f'{DN}{r}'] = i + 1
-        n = f'${DN}{r}'
-        u = f'INDEX(往_往来单位,{n})'
-        ws[f'{DK}{r}'] = (f'=IF({u}="","",IF(ISNA(MATCH({esc(u)},单位_名称,0)),'
-                          f'IF(MATCH({esc(u)},往_往来单位,0)={n},{n},""),""))')
-    for i in range(N_CASH):
-        r = R0 + N_WL + i
-        ws[f'{DN}{r}'] = i + 1
-        n = f'${DN}{r}'
-        u = f'INDEX(收_往来单位,{n})'
-        q = f'INDEX(收_用途,{n})'
-        eu = esc(u)
-        ws[f'{DK}{r}'] = (f'=IF(OR({u}="",AND({q}<>"冲应收",{q}<>"冲应付")),"",'
-                          f'IF(AND(ISNA(MATCH({eu},单位_名称,0)),ISNA(MATCH({eu},往_往来单位,0))),'
-                          f'IF(COUNTIFS(收_往来单位,{eu},收_用途,"冲应收",收_n,"<"&{n})'
-                          f'+COUNTIFS(收_往来单位,{eu},收_用途,"冲应付",收_n,"<"&{n})=0,10000+{n},""),""))')
-    for r in range(R0, nx + 1):
-        ws[f'{DN}{r}'].font = ws[f'{DK}{r}'].font = F_HELP
-
-    # ── 隐藏：③ 逾期明细的排序键 ──
-    for i in range(N_WL):
-        r = R0 + i
-        ws[f'{ON}{r}'] = i + 1
-        n = f'${ON}{r}'
-        x = lambda k: f'INDEX(往_{k},{n})'
-        ws[f'{OK3}{r}'] = (f'=IF(AND({x("未结")}>0,{x("逾期天数")}>0,OR({S("看哪类")}="全部",{x("类型")}={S("看哪类")}),'
-                           f'OR({S("板块")}="",{x("板块")}={S("板块")})),{x("约定日期")}*10000+{n},"")')
-        ws[f'{ON}{r}'].font = ws[f'{OK3}{r}'].font = F_HELP
+        ws[f'{BN}{r}'] = i + 1
+        ws[f'{BN}{r}'].font = F_HELP
+        for j, col in enumerate(DKW):
+            n = f'(${BN}{r}+{j * BLK})'
+            u = f'INDEX(往_往来单位,{n})'
+            ws[f'{col}{r}'] = (f'=IF({u}="","",IF(ISNA(MATCH({esc(u)},单位_名称,0)),'
+                               f'IF(MATCH({esc(u)},往_往来单位,0)={n},{n},""),""))')
+        for j, col in enumerate(DKS):
+            n = f'(${BN}{r}+{j * BLK})'
+            u = f'INDEX(收_往来单位,{n})'
+            q = f'INDEX(收_用途,{n})'
+            eu = esc(u)
+            ws[f'{col}{r}'] = (f'=IF(OR({u}="",AND({q}<>"冲应收",{q}<>"冲应付")),"",'
+                               f'IF(AND(ISNA(MATCH({eu},单位_名称,0)),ISNA(MATCH({eu},往_往来单位,0))),'
+                               f'IF(COUNTIFS(收_往来单位,{eu},收_用途,"冲应收",收_n,"<"&{n})'
+                               f'+COUNTIFS(收_往来单位,{eu},收_用途,"冲应付",收_n,"<"&{n})=0,10000+{n},""),""))')
+        for j, col in enumerate(OKS):
+            n = f'(${BN}{r}+{j * BLK})'
+            x = lambda k: f'INDEX(往_{k},{n})'
+            ws[f'{col}{r}'] = (f'=IF(AND({x("未结")}>0,{x("逾期天数")}>0,OR({S("看哪类")}="全部",{x("类型")}={S("看哪类")}),'
+                               f'OR({S("板块")}="",{x("板块")}={S("板块")})),{x("约定日期")}*10000+{n},"")')
+        for col in DKW + DKS + OKS:
+            ws[f'{col}{r}'].font = F_HELP
 
     # ── 活动区：② 单位行 → 共几个 → 空行 → ③ 标题 → ③ 表头 → ③ 明细 → 共几笔 ──
     n2, n3 = S('n2'), S('n3')
@@ -324,7 +326,7 @@ def build(wb, ctx=None):
         cd = f'${HC}{r}'
         ix = f'${HI}{r}'
         ws[f'{HI}{r}'] = (f'=IF({cd}="U",{kth(k, CNT, R0, NC)},'
-                          f'IF({cd}="D3",{ksorted(f"({k}-{n2}-4)", OK3, R0, N_WL, S("逾期笔数"))},0))')
+                          f'IF({cd}="D3",IF({k}-{n2}-4>{S("逾期笔数")},0,MOD(SMALL({OK_RNG},{k}-{n2}-4),10000)),0))')
         cv = lambda key: f'INDEX({crng(key)},{ix})'
         w = lambda key: f'INDEX(往_{key},{ix})'
         inl = f'{cv("名单")}=1'
@@ -396,7 +398,7 @@ def build(wb, ctx=None):
             kw['border'] = bd
         ws.conditional_formatting.add(reg, FormulaRule(formula=[cond], stopIfTrue=True, **kw))
 
-    hide(ws, *[CL(i) for i in range(CI('V'), CI(OK3) + 1)])
+    hide(ws, *[CL(i) for i in range(CI('V'), CI(OKS[-1]) + 1)])
     ws.column_dimensions['V'].hidden = False
     ws.column_dimensions['V'].width = 2
     ws.freeze_panes = 'C5'
