@@ -74,20 +74,20 @@ def build(wb, ctx=None):
         put(ws, f'{c}{r0 + 1}', None, F_HDR, fill(C_VIEW))
     for i in range(N_SEG):
         r = r0 + 2 + i
-        s = f'INDEX(板块_名称,{i + 1})'
+        s = f'{H_LIST}!${COMPACT["板块"][0]}${i + 2}'          # 压紧的板块清单（中间插了空行也不留空）
         e = esc(s)
         g = lambda f: f'=IF({s}="","",{f})'
         put(ws, f'B{r}', f'=IF({s}="","",{s})', F_TXTB, align=AL)
-        put(ws, f'C{r}', g(f'INDEX(板块_期初结余,{i + 1})+SUMIFS(收_板块收入,收_板块,{e},收_日期,"<="&{d})-SUMIFS(收_板块支出,收_板块,{e},收_日期,"<="&{d})'),
+        put(ws, f'C{r}', g(f'SUMIFS(板块_期初结余,板块_名称,{e})+SUMIFS(收_板块收入,收_板块,{e},收_日期,"<="&{d})-SUMIFS(收_板块支出,收_板块,{e},收_日期,"<="&{d})'),
             F_AUTOB, fmt=MONEY, align=AR)
         put(ws, f'E{r}', g(f'SUMIFS(收_板块收入,收_板块,{e},{dr("收_日期", y0, d)})'), F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'F{r}', g(f'SUMIFS(收_板块支出,收_板块,{e},{dr("收_日期", y0, d)})'), F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'H{r}', g(f'SUMIFS(往_应收额,往_板块,{e},往_日期,"<="&{d})-SUMIFS(收_冲应收,收_板块,{e},收_日期,"<="&{d})'), F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'I{r}', g(f'SUMIFS(往_应付额,往_板块,{e},往_日期,"<="&{d})-SUMIFS(收_冲应付,收_板块,{e},收_日期,"<="&{d})'), F_AUTO, fmt=MONEY, align=AR)
-        put(ws, f'K{r}', g(f'INDEX(板块_期初存量,{i + 1})+SUMIFS(收_入库量,收_板块,{e},收_日期,"<="&{d})-SUMIFS(收_出库量,收_板块,{e},收_日期,"<="&{d})'
+        put(ws, f'K{r}', g(f'SUMIFS(板块_期初存量,板块_名称,{e})+SUMIFS(收_入库量,收_板块,{e},收_日期,"<="&{d})-SUMIFS(收_出库量,收_板块,{e},收_日期,"<="&{d})'
                            f'+SUMIFS(往_入库量,往_板块,{e},往_日期,"<="&{d})-SUMIFS(往_出库量,往_板块,{e},往_日期,"<="&{d})'),
             F_AUTO, fmt='#,##0.##;[Red]-#,##0.##;"-"', align=AR)
-        put(ws, f'L{r}', g(f'INDEX(板块_期初固定资产,{i + 1})+SUMIFS(收_固定资产,收_板块,{e},收_日期,"<="&{d})'
+        put(ws, f'L{r}', g(f'SUMIFS(板块_期初固定资产,板块_名称,{e})+SUMIFS(收_固定资产,收_板块,{e},收_日期,"<="&{d})'
                            f'+SUMIFS(往_固定资产,往_板块,{e},往_日期,"<="&{d})'), F_AUTO, fmt=MONEY, align=AR)
         for c in ('D', 'G', 'J'):
             put(ws, f'{c}{r}', None)
