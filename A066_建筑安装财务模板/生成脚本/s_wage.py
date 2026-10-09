@@ -666,7 +666,7 @@ def build_arrear(ws, ctx):
     for c in A_MC:
         W[c] = 10
     widths(ws, W)
-    tip = ('💡 你那张「未发清工资表」就记在这里：淡黄格填姓名、未发清金额、截至哪天（2025 年底没发清的填 2025/12/31）。'
+    tip = ('💡 你那张「未发清工资表」就记在这里：淡黄格填姓名、未发清金额、截至哪天（这个金额算到哪天为止，比如 2025/12/31）。'
            '以后补发欠薪不用在这张表记——照常在【收支登记】记一笔工资发放（收支项目用「项目-劳务费」，想单独看也可以在【基本信息】④ 加一个「补发欠薪」、归类选「工资发放」），'
            '人员选他。这张表自动按月算：每月补发＝这个月发给他的－这个月考勤应发（负数＝这个月没发够，又欠多了），剩余＝未发清－补发合计。'
            '右边「系统算的」是按考勤和发放倒算的截至日欠薪，跟你填的对不上就核对一下（看差额）。黄格「补发年度」选看哪一年。')
@@ -675,14 +675,14 @@ def build_arrear(ws, ctx):
     ws.column_dimensions['W'].width = 10
 
     YR, YS = '$AH$3', '$AH$4'
-    hp(ws, 'AH3', f'=IF(ISNUMBER(C3),IF(C3>3000,YEAR(C3),INT(C3)),IF(COUNT(D{R0}:D{last})>0,YEAR(MAX(D{R0}:D{last}))+1,P_年度))')
+    hp(ws, 'AH3', f'=IF(ISNUMBER(C3),IF(C3>3000,YEAR(C3),INT(C3)),IF(COUNT(D{R0}:D{last})>0,YEAR(DATE(YEAR(MAX(D{R0}:D{last})),MONTH(MAX(D{R0}:D{last}))+1,1)),P_年度))')
     hp(ws, 'AH4', f'=DATE({YR},1,1)')
     selector(ws, 'B3', '补发年度', 'C3', None)
     dvy = DataValidation(type='whole', operator='between', formula1='2020', formula2='2040', allow_blank=True,
                          showErrorMessage=True, errorStyle='warning', errorTitle='年度', error='填年份，比如 2026')
     ws.add_data_validation(dvy)
     dvy.add('C3')
-    note(ws, 'D3:K3', f'="实际："&{YR}&" 年"&IF(ISNUMBER(C3),"","（空着＝截至日期的下一年）")&"；"&{YR}&" 年以后的月份要看就把年度改大"', font=F_AUTOB)
+    note(ws, 'D3:K3', f'="实际："&{YR}&" 年"&IF(ISNUMBER(C3),"","（空着＝截至日期下个月所在的年）")&"；"&{YR}&" 年以后的月份要看就把年度改大"', font=F_AUTOB)
     note(ws, 'A4:V4', '以后补发欠薪：在【收支登记】记工资发放、人员选他，这里自动按月显示；每月补发＝当月已发－当月应发；剩余＝未发清－补发合计；'
                       '首页截止日以后的月份不显示。', align=ALW)
     ws.row_dimensions[4].height = 30

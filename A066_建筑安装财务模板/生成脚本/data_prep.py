@@ -696,11 +696,12 @@ def build_ctx(verbose=False):
     ap = build_ap(k, mat, fb, jx_day, jx_sum, zq_inv)
     att = build_att(k, u, per_idx, pj_names)
     rates = build_rates(k, u, per_idx)
-    arrears = [dict(姓名=a['姓名'], 未发清金额=r2(a['未发清金额']), 截至=dt.date(2025, 12, 31),
-                    备注=joinn('2025未发清工资.xlsx', '已补发 ' + '、'.join(f'{m} {money(v)}' for m, v in a['补发']) if a['补发'] else ''))
+    # 截至 2026-02-28：用户表的补发从「2026年3月」起，1、2 月发的是当时的工资和补以前的欠薪，已经算在未发清里
+    arrears = [dict(姓名=a['姓名'], 未发清金额=r2(a['未发清金额']), 截至=dt.date(2026, 2, 28),
+                    备注=joinn('2025未发清工资.xlsx（补发从 2026 年 3 月起）', '已补发 ' + '、'.join(f'{m} {money(v)}' for m, v in a['补发']) if a['补发'] else ''))
                for a in arrears_src]
     for a in arrears_src:
-        k.L(f'欠薪补发：{a["姓名"]} 未发清 {money(a["未发清金额"])}（截至 2025-12-31），表上已补发 ' +
+        k.L(f'欠薪补发：{a["姓名"]} 未发清 {money(a["未发清金额"])}（截至 2026-02-28：原表补发从 2026 年 3 月起），表上已补发 ' +
             ('、'.join(f'{m} {money(v)}' for m, v in a['补发']) or '无'))
 
     # 名称一致性：录入表用到的名字都要在基本信息里
