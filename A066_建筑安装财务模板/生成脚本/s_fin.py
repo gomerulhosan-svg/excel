@@ -15,6 +15,7 @@ from layout import *
 from common import *
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font, PatternFill
+from layout import C_RPT          # common 里也有个 C_RPT（旧的绿色），报表组颜色以 layout 为准（深红）
 
 COSTS = ['材料', '分包', '机械', '人工', '其他直接费']                      # 营业成本各行
 CASH8 = ['材料', '分包', '机械', '人工', '其他直接费', '管理费用', '财务费用', '营业外支出']   # 收_成本类（未分类单列）
@@ -151,12 +152,12 @@ def build_pl(ws):
         ('管理费用', '　　管理费用（办公、招待、车辆、管理人员工资…）', 'line'),
         ('财务费用', '　　财务费用（利息、手续费）', 'line'),
         ('营业外支出', '　　营业外支出（罚款、滞纳金）', 'line'),
-        ('未分类', '五、未分类收支（收入为正、支出为负，去收支登记改归类）', 'sec1'),
+        ('未分类', '五、未分类收支（没认出归类的，＋收 −支）', 'sec1'),
         ('净利润', '六、净利润（毛利 − 税金 − 期间费用 ＋ 未分类）', 'grand'),
         ('净利率', '　　净利率（净利润 ÷ 收入）', 'pct'),
         (None, None, None),
-        ('总额', '核对：所有成本费用逐笔加总（应付登记＋考勤应发＋收支登记成本费用）', 'chk'),
-        ('差额', '核对：逐笔加总 − 上面二、四两项各行之和（应为 0）', 'chk'),
+        ('总额', '核对：成本费用逐笔加总', 'chk'),
+        ('差额', '核对：逐笔加总 − 二、四各行之和（应为 0）', 'chk'),
     ]
     r = H + 1
     for k, _l, _t in rows:
@@ -240,6 +241,7 @@ def build_pl(ws):
             _note(ws, r, 'A', C_ALL, text, F_NOTE, h=30)
     ws.freeze_panes = f'B{H + 1}'
     print_setup(ws, f'{H}:{H}', landscape=True)
+    ws.print_area = f'A1:{C_ALL}{r}'
 
 
 # ═══════════════════════════ 资产负债表 ═══════════════════════════
@@ -413,7 +415,7 @@ def build_bs(ws):
     ws.conditional_formatting.add(f'D{rc}', FormulaRule(formula=[f'OR(B{rc}<>0,C{rc}<>0)'], font=F_RED_NOTE))
     rr = rc + 1
     put(ws, f'A{rr}', '本期利润（未分配利润 期末 − 年初）', F_NOTE, align=AL)
-    _cell(ws, f'C{rr}', f'=C{R["R_未分配"]}-B{R["R_未分配"]}', F_NOTE)
+    _cell(ws, f'C{rr}', f'=F{R["R_未分配"]}-E{R["R_未分配"]}', F_NOTE)
     ws.merge_cells(f'D{rr}:F{rr}')
     put(ws, f'D{rr}', '← 资产负债表日＝截止日时，这个数等于【利润表】的本年累计净利润', F_NOTE, align=AL, border=False)
     BS_R['本期利润'] = rr
@@ -424,7 +426,8 @@ def build_bs(ws):
         '货币资金＝银行、现金、专户（农民工专户等）的余额；老板/员工自己的微信、银行卡（个人账户）不算，按人算：结余是正的＝他手上有公司的钱（左边「个人手上的公司钱」），'
         '是负的＝他替公司垫了钱还没报销（右边「个人垫付还没报销的」）。公司还他垫付的钱记「报销还款」。',
         '应收账款＝按收入口径确认的收入 − 已收工程款（逐个项目算，收多了的项目放右边「预收账款」）；应付账款＝应付登记 − 已付（逐个供应商算，付多了的放左边「预付账款」）。',
-        '应付工资＝建账前欠薪 ＋ 考勤应发（考勤起算月以后）− 已发工资（发给有考勤的人的）。过账人员（工资社保只是在公司账上过一下的）的钱在「代收代付」。',
+        '应付工资＝建账前欠薪 ＋ 考勤应发（考勤起算月以后）− 已发工资（发给有考勤的人的）；是负数＝发的比考勤算的多（考勤漏记或预支了）。'
+        '过账人员（工资社保只是在公司账上过一下的）的钱在「代收代付」。',
         '应交税费＝按发票估算的税金（同利润表）− 已交的税费 ＋ 期初；是负数（交多了、进项多）放左边「留抵」。往来款按全部单位/个人的净额，正的放左边、负的放右边。',
         '未分配利润＝建账前攒下的（期初余额自动倒推：期初各账户余额＋期初余额表里的资产 − 负债 − 建账前欠薪 − 期初实收资本）＋ 建账以来每年的利润（跟利润表一个算法）。',
         '固定资产按买价记，不提折旧（管理用）。金额都含税。这是给老板看家底的管理报表，报税用的报表以代账会计的为准。',
@@ -433,6 +436,7 @@ def build_bs(ws):
         _note(ws, r, 'A', last, text, F_NOTE, h=30)
     ws.freeze_panes = f'A{H + 1}'
     print_setup(ws, f'{H}:{H}', landscape=True)
+    ws.print_area = f'A1:{last}{r}'
 
 
 # ═══════════════════════════ 盈亏平衡表 ═══════════════════════════
@@ -579,6 +583,7 @@ def build_be(ws):
         _note(ws, r, 'A', last, text, F_NOTE, h=30)
     ws.freeze_panes = f'B{H + 1}'
     print_setup(ws, f'{H}:{H}', landscape=True)
+    ws.print_area = f'A1:{last}{r}'
 
 
 def build(wb, ctx=None):

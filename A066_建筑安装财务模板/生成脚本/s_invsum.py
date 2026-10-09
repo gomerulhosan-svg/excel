@@ -10,10 +10,10 @@ from layout import *          # 放在 common 后面：颜色常量以 layout �
 LASTC = 'N'
 IN_START, IN_END = 'B3', 'B4'             # 黄格：起、止
 S, E = '$C$3', '$C$4'                     # 实际用的起、止
-CAP_PJ, CAP_SUP, CAP_MON, CAP_CP = 30, 60, 24, 200
+CAP_PJ, CAP_SUP, CAP_MON, CAP_CP = 25, 50, 24, 200
 H0 = 5                                    # 隐藏辅助列从第 5 行起
 HC_PJ, HC_SUP, HC_XS, HC_JX, HC_KEY = 'BA', 'BB', 'BC', 'BD', 'BE'
-IDX, AUX, AUX2 = 'P', 'Q', 'R'            # 显示行的隐藏列：第几条 / 月初 / 月末 / 名称
+IDX, AUX, AUX2 = 'P', 'Q', 'R'            # 显示行的隐藏列：P 第几条（③④＝这行的起）、Q（③④＝这行的止；⑤＝方向|对方）、R（⑤＝对方）
 C_SEC = 'FF375623'                        # 区块标题条（深绿）
 RATES_OUT = [('9%', 0.09), ('13%', 0.13), ('6%', 0.06), ('3%', 0.03), ('1%', 0.01)]
 RATES_IN = [('13%', 0.13), ('9%', 0.09), ('6%', 0.06), ('3%', 0.03), ('1%', 0.01)]
@@ -75,12 +75,13 @@ def _total_row(ws, r, c1, c2):
     ws.row_dimensions[r].height = 30
 
 
-def _list_style(ws, r0, n, c2, fmts, key='A'):
+def _list_style(ws, r0, n, c2, fmts, left='A', center='', key='A'):
     """清单行：平时不画框，有内容的行用条件格式画框（不显示一大片空格子）"""
     for r in range(r0, r0 + n):
         for i in range(1, CI(c2) + 1):
             col = CL(i)
-            put(ws, f'{col}{r}', None, F_TXT, None, fmts.get(col, MONEY), AL if i <= 2 else AR, border=False)
+            al = AL if col in left else (AC if col in center else AR)
+            put(ws, f'{col}{r}', None, F_TXT, None, fmts.get(col, MONEY), al, border=False)
     ws.conditional_formatting.add(f'A{r0}:{c2}{r0 + n - 1}', FormulaRule(formula=[f'${key}{r0}<>""'], border=BD))
 
 
@@ -114,7 +115,7 @@ def blk_out(ws):
     ws.merge_cells(f'A{r}:B{r}')
     ws[f'K{r}'].number_format = INT
     fm = {'K': INT}
-    _list_style(ws, R_PJ_0, CAP_PJ, 'K', fm)
+    _list_style(ws, R_PJ_0, CAP_PJ, 'K', fm, left='AB')
     for k in range(1, CAP_PJ + 1):
         r = R_PJ_0 + k - 1
         ws[f'{IDX}{r}'] = f'={kth(k, HC_PJ, H0, N_PJ)}'
@@ -175,13 +176,12 @@ def blk_in(ws):
         put(ws, f'{c}{rc}', None, F_TXTB if c in 'AC' else F_TXT, FILL_SUB, MONEY, ALW if c == 'A' else AR)
     ws.merge_cells(f'A{rc}:B{rc}')
     ws.row_dimensions[rc].height = 30
-    _list_style(ws, l0, CAP_SUP, LASTC, {})
+    _list_style(ws, l0, CAP_SUP, LASTC, {}, left='A', center='B')
     for k in range(1, CAP_SUP + 1):
         r = l0 + k - 1
         ws[f'{IDX}{r}'] = f'={kth(k, HC_SUP, H0, N_SUP)}'
         ws[f'A{r}'] = f'=IF(${IDX}{r}=0,"",INDEX(供应商_名称,${IDX}{r}))'
         ws[f'B{r}'] = f'=IF($A{r}="","",INDEX(供应商_类型,${IDX}{r}))'
-        ws[f'B{r}'].alignment = AC
         row(r, f'$A{r}')
 
 
@@ -222,12 +222,11 @@ def blk_month(ws):
     ws[f'A{r}'] = f'=IF({NMON}>{CAP_MON},"合计（"&{NMON}&" 个月，下面只列前 {CAP_MON} 个月）","合计")'
     row(r, S, E, None)
     _total_row(ws, r, 'A', 'I')
-    _list_style(ws, R_MON_0, CAP_MON, 'I', {'A': FMT_MON})
+    _list_style(ws, R_MON_0, CAP_MON, 'I', {'A': FMT_MON}, left='', center='A')
     for k in range(1, CAP_MON + 1):
         r = R_MON_0 + k - 1
         lo, hi = _month_cols(ws, r, k)
         row(r, lo, hi, lo)
-        ws[f'A{r}'].alignment = AC
 
 
 # ───────────────────────── ④ 跟税局导出核对 ─────────────────────────
@@ -270,13 +269,11 @@ def blk_check(ws):
     row(r, S, E, None, total=True)
     _total_row(ws, r, 'A', LASTC)
     ws[f'I{r}'].alignment = ALW
-    _list_style(ws, R_CHK_0, CAP_MON, LASTC, {'A': FMT_MON})
+    _list_style(ws, R_CHK_0, CAP_MON, LASTC, {'A': FMT_MON}, left='I', center='A')
     for k in range(1, CAP_MON + 1):
         r = R_CHK_0 + k - 1
         lo, hi = _month_cols(ws, r, k)
         row(r, lo, hi, lo)
-        ws[f'A{r}'].alignment = AC
-        ws[f'I{r}'].alignment = AL
     # 差额不为 0 的格子标红
     ws.conditional_formatting.add(f'D{R_CHK_T}:D{R_CHK_0 + CAP_MON - 1}',
                                   FormulaRule(formula=[f'AND(ISNUMBER(D{R_CHK_T}),ABS(N(D{R_CHK_T}))>=0.01)'], fill=FILL_WARN))
@@ -290,7 +287,8 @@ def blk_cp(ws):
     rn = R_CP_N
     ws.merge_cells(f'A{rn}:{LASTC}{rn}')
     put(ws, f'A{rn}', (f'=IF({PIAO_N}=0,"还没粘贴税局导出的发票。",'
-                       f'"对方＝开出去的票看购方、收到的票看销方（税局写的全称，可能跟【供应商信息】里的简称不一样）。")'),
+                       f'"对方＝开出去的票看购方、收到的票看销方（税局写的全称，可能跟【供应商信息】里的简称不一样）。'
+                       f'税局导出的「发票基础信息」是按整张票汇总的、没有税率列，这里的税率＝税额÷金额（一张票几种税率时是平均数）。")'),
         F_NOTE, None, None, ALW, border=False)
     heads = [('A', '对方（税局写的名称）'), ('B', '方向'), ('C', '张数'), ('D', '金额\n（不含税）'), ('E', '税额'), ('F', '价税合计'),
              ('G', '税率\n（税额÷金额）')]
@@ -335,7 +333,7 @@ def blk_cp(ws):
         ws[f'B{r}'].alignment = AC
         ws[f'C{r}'].number_format = INT
         ws[f'G{r}'].number_format = PCT
-    _list_style(ws, R_CP_0, CAP_CP, 'G', {'C': INT, 'G': PCT})
+    _list_style(ws, R_CP_0, CAP_CP, 'G', {'C': INT, 'G': PCT}, left='A', center='B')
     for k in range(1, CAP_CP + 1):
         r = R_CP_0 + k - 1
         ws[f'{IDX}{r}'] = (f'=IF({k}<={ns},{kth(k, HC_XS, H0, n1)},{kth(f"({k}-{ns})", HC_JX, H0, n1)})')
@@ -343,7 +341,6 @@ def blk_cp(ws):
         ws[f'{AUX2}{r}'] = f'=IF(${AUX}{r}="","",MID(${AUX}{r},4,200))'
         ws[f'A{r}'] = f'=IF(${AUX}{r}="","",IF(${AUX2}{r}="","（没有名称）",${AUX2}{r}))'
         ws[f'B{r}'] = f'=IF(${AUX}{r}="","",LEFT(${AUX}{r},2))'
-        ws[f'B{r}'].alignment = AC
         row(r, f'${AUX2}{r}', f'$B{r}')
 
 
