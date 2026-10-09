@@ -162,7 +162,7 @@ def dv_list(ws, sqref, formula, prompt=None, stop=True, blank=True):
         dv.promptTitle, dv.prompt = '提示', prompt
         dv.showInputMessage = True
     dv.errorTitle = '不在清单里'
-    dv.error = '请从下拉里选；清单里没有的，先到【基本信息】各表里登记'
+    dv.error = '请从下拉里选；清单里没有的，先到【基础资料】/【往来单位】里登记'
     ws.add_data_validation(dv)
     dv.add(sqref)
     return dv
