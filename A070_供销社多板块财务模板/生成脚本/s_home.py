@@ -5,6 +5,8 @@ from layout import *
 from common import *
 import s_check
 
+QTY = '#,##0;[Red]-#,##0;"-"'
+
 NAV = [
     ('平时录（蓝）', C_IN, [(SH_CASH, '登记汇总表：所有板块的每一笔钱'), (SH_WL, '赊销、赊购（钱没当场收/付）')]),
     ('查看（绿，自动）', C_VIEW, [(SH_QRY, '按日期、板块、经手人查'), (SH_FUND, '现金、银行日记账')] +
@@ -32,8 +34,8 @@ def build(wb, ctx=None):
     ws = wb[SH_HOME]
     widths(ws, {'A': 2, 'B': 16, 'C': 15, 'D': 3, 'E': 16, 'F': 15, 'G': 3, 'H': 16, 'I': 15, 'J': 3, 'K': 16, 'L': 15})
     title(ws, '供 销 社 多 板 块 财 务 模 板', 'L', C_HOME,
-          '💡 平时只录两张蓝色的表：【收支登记】（所有板块的收支都记这一张）和【应收应付登记】（赊销赊购）；'
-          '各板块表、查询、资金台账、应收应付跟进、对账单都是自动的。所有表都可以插行、删行。')
+          '💡 平时只录两张蓝色的表：【收支登记】（登记汇总表，所有板块的收支都记这一张）和【应收应付登记】（赊销赊购）；'
+          '各板块表、查询、资金台账、应收应付跟进、对账单都是自动的。两张登记表、基础资料、往来单位都可以插行、删行。')
     ws['A1'].value = '=IF(P_单位名称="","",P_单位名称&" · ")&"多板块收支与往来台账"'
     put(ws, 'B4', '截止日期', F_KPI_L, fill('FFD9E1F2'), align=AC)
     put(ws, HOME_END, None, F_SEL, FILL_SEL, DATE, AC)
@@ -61,9 +63,22 @@ def build(wb, ctx=None):
         c2 = CL(CI(c1) + 1)
         link(put(ws, f'{c1}{r}', lab, Font(name=YH, sz=10, bold=True, color='FF0563C1', underline='single'), fill('FFD9E1F2'), align=AC), sh)
         ws.merge_cells(f'{c1}{r}:{c2}{r}')
-        put(ws, f'{c1}{r + 1}', f, F_KPI_V, fill('FFFFFFFF'), '#,##0.##' if 'KG' in lab else MONEY, AC)
+        f = f'=ROUND({f[1:]},2)'
+        put(ws, f'{c1}{r + 1}', f, F_KPI_V, fill('FFFFFFFF'), QTY if 'KG' in lab else MONEY, AC)
         ws.merge_cells(f'{c1}{r + 1}:{c2}{r + 1}')
         ws.row_dimensions[r + 1].height = 26
+
+    # 本年收支里不是经营的部分
+    yy = dr('收_日期', y0, d)
+    put(ws, 'B11', (f'="本年收入里有：收回欠款 "&TEXT(SUMIFS(收_板块收入,收_用途,"冲应收",{yy}),"#,##0.00")'
+                    f'&"、借款 "&TEXT(SUMIFS(收_板块收入,收_用途,"借款",{yy}),"#,##0.00")'
+                    f'&"、板块调拨 "&TEXT(SUMIFS(收_板块收入,收_用途,"调拨",{yy}),"#,##0.00")'
+                    f'&"；本年支出里有：支付欠款 "&TEXT(SUMIFS(收_板块支出,收_用途,"冲应付",{yy}),"#,##0.00")'
+                    f'&"、还借款 "&TEXT(SUMIFS(收_板块支出,收_用途,"借款",{yy}),"#,##0.00")'
+                    f'&"、板块调拨 "&TEXT(SUMIFS(收_板块支出,收_用途,"调拨",{yy}),"#,##0.00")'
+                    f'&"、买固定资产 "&TEXT(SUMIFS(收_板块支出,收_用途,"固定资产",{yy}),"#,##0.00")&"（这些不是经营收支）"'),
+        F_NOTE, align=AL, border=False)
+    ws.merge_cells('B11:L11')
 
     # 各板块一览
     r0 = 12
@@ -86,15 +101,29 @@ def build(wb, ctx=None):
         put(ws, f'I{r}', g(f'SUMIFS(往_应付额,往_板块,{e},往_日期,"<="&{d})-SUMIFS(收_冲应付,收_板块,{e},收_日期,"<="&{d})'), F_AUTO, fmt=MONEY, align=AR)
         put(ws, f'K{r}', g(f'SUMIFS(板块_期初存量,板块_名称,{e})+SUMIFS(收_入库量,收_板块,{e},收_日期,"<="&{d})-SUMIFS(收_出库量,收_板块,{e},收_日期,"<="&{d})'
                            f'+SUMIFS(往_入库量,往_板块,{e},往_日期,"<="&{d})-SUMIFS(往_出库量,往_板块,{e},往_日期,"<="&{d})'),
-            F_AUTO, fmt='#,##0.##;[Red]-#,##0.##;"-"', align=AR)
+            F_AUTO, fmt=QTY, align=AR)
         put(ws, f'L{r}', g(f'SUMIFS(板块_期初固定资产,板块_名称,{e})+SUMIFS(收_固定资产,收_板块,{e},收_日期,"<="&{d})'
                            f'+SUMIFS(往_固定资产,往_板块,{e},往_日期,"<="&{d})'), F_AUTO, fmt=MONEY, align=AR)
         for c in ('D', 'G', 'J'):
             put(ws, f'{c}{r}', None)
-    rt = r0 + 2 + N_SEG
+    ro = r0 + 2 + N_SEG                              # 其他：没选板块 / 板块名不对的（＝全部 − 上面各板块）
+    rs = f'{r0 + 2}:{{c}}{ro - 1}'
+    allv = {'C': f'SUM(板块_期初结余)+SUMIFS(收_板块收入,收_日期,"<="&{d})-SUMIFS(收_板块支出,收_日期,"<="&{d})',
+            'E': f'SUMIFS(收_板块收入,{dr("收_日期", y0, d)})', 'F': f'SUMIFS(收_板块支出,{dr("收_日期", y0, d)})',
+            'H': f'SUMIFS(往_应收额,往_日期,"<="&{d})-SUMIFS(收_冲应收,收_日期,"<="&{d})',
+            'I': f'SUMIFS(往_应付额,往_日期,"<="&{d})-SUMIFS(收_冲应付,收_日期,"<="&{d})',
+            'K': (f'SUM(板块_期初存量)+SUMIFS(收_入库量,收_日期,"<="&{d})-SUMIFS(收_出库量,收_日期,"<="&{d})'
+                  f'+SUMIFS(往_入库量,往_日期,"<="&{d})-SUMIFS(往_出库量,往_日期,"<="&{d})'),
+            'L': f'SUM(板块_期初固定资产)+SUMIFS(收_固定资产,收_日期,"<="&{d})+SUMIFS(往_固定资产,往_日期,"<="&{d})'}
+    put(ws, f'B{ro}', '其他（没选板块 / 板块名不对）', F_NOTE, align=AL)
+    for c, f in allv.items():
+        put(ws, f'{c}{ro}', f'=ROUND({f}-SUM({c}{r0 + 2}:{c}{ro - 1}),2)', F_AUTO, fmt=QTY if c == 'K' else MONEY, align=AR)
+    for c in ('D', 'G', 'J'):
+        put(ws, f'{c}{ro}', None)
+    rt = ro + 1
     put(ws, f'B{rt}', '合计', F_TXTB, FILL_TOT, align=AC)
     for c in ('C', 'E', 'F', 'H', 'I', 'K', 'L'):
-        put(ws, f'{c}{rt}', f'=SUM({c}{r0 + 2}:{c}{rt - 1})', F_TXTB, FILL_TOT, '#,##0.##' if c == 'K' else MONEY, AR)
+        put(ws, f'{c}{rt}', f'=SUM({c}{r0 + 2}:{c}{rt - 1})', F_TXTB, FILL_TOT, QTY if c == 'K' else MONEY, AR)
     for c in ('D', 'G', 'J'):
         put(ws, f'{c}{rt}', None, fill_=FILL_TOT)
     # 没有名字的板块行不画框
@@ -109,14 +138,21 @@ def build(wb, ctx=None):
            f'=IF(N({SH_CHK}!$C${CR[SH_CASH]})+N({SH_CHK}!$C${CR[SH_WL]})>0,"登记表有 "&({SH_CHK}!$C${CR[SH_CASH]}+{SH_CHK}!$C${CR[SH_WL]})&" 行要改（看那一行最右边的「这一行的问题」）","两张登记表都没有错 √")',
            '=IF(COUNTIFS(往_未结,">0",往_逾期天数,">0",往_类型,"应收")>0,COUNTIFS(往_未结,">0",往_逾期天数,">0",往_类型,"应收")&" 笔应收已经过了约定日期还没收回，共 "&TEXT(SUMIFS(往_未结,往_逾期天数,">0",往_类型,"应收"),"#,##0.00")&" → 看【应收应付跟进】","没有逾期的应收 √")',
            '=IF(COUNTIFS(往_未结,">0",往_逾期天数,">0",往_类型,"应付")>0,COUNTIFS(往_未结,">0",往_逾期天数,">0",往_类型,"应付")&" 笔应付已经过了约定日期还没付，共 "&TEXT(SUMIFS(往_未结,往_逾期天数,">0",往_类型,"应付"),"#,##0.00"),"")',
-           f'=IF(ABS(N({SH_CHK}!$C${CR["内部转账没配对（一出一进合计不为 0）"]}))>=0.01,"内部转账有一笔只记了一边（差 "&TEXT({SH_CHK}!$C${CR["内部转账没配对（一出一进合计不为 0）"]},"#,##0.00")&"）","")']
+           f'=IF(ABS(N({SH_CHK}!$C${CR["内部转账没配对（一出一进合计不为 0）"]}))>=0.01,"内部转账有一笔只记了一边（差 "&TEXT({SH_CHK}!$C${CR["内部转账没配对（一出一进合计不为 0）"]},"#,##0.00")&"）","")',
+           ('=IF(SUMIFS(往_未结,往_约定日期,">="&P_截止,往_约定日期,"<="&(P_截止+7))>0,"7 天内到期（还没结）："'
+            '&"应收 "&TEXT(SUMIFS(往_未结,往_类型,"应收",往_约定日期,">="&P_截止,往_约定日期,"<="&(P_截止+7)),"#,##0.00")'
+            '&"、应付 "&TEXT(SUMIFS(往_未结,往_类型,"应付",往_约定日期,">="&P_截止,往_约定日期,"<="&(P_截止+7)),"#,##0.00"),"")'),
+           f'=IF(P_单位名称="","【基础资料】还没填单位名称（对账单抬头要用）","")',
+           (f'=IF(N({SH_CHK}!$C${CR[f"收支登记超过 {N_CASH} 笔（多出来的不算）"]})+N({SH_CHK}!$C${CR[f"应收应付登记超过 {N_WL} 笔（多出来的不算）"]})'
+            f'+N({SH_CHK}!$C${CR[f"往来单位超过 {N_UNIT} 个（多出来的不算）"]})+N({SH_CHK}!$C${CR["基础资料某一块超了（多出来的不算）"]})>0,'
+            '"有表超过容量了，多出来的没算进去 → 看【数据校验】","")')]
     for i, f in enumerate(rem):
         rr = r + 1 + i
         put(ws, f'B{rr}', f, F_TXTB if i == 0 else F_TXT, align=AL, border=False)
         ws.merge_cells(f'B{rr}:L{rr}')
     link(ws[f'B{r + 1}'], SH_CHK)
     ws.conditional_formatting.add(f'B{r + 1}:B{r + len(rem)}', FormulaRule(
-        formula=[f'OR(ISNUMBER(SEARCH("要改",B{r + 1})),ISNUMBER(SEARCH("逾期",B{r + 1})),ISNUMBER(SEARCH("只记了一边",B{r + 1})))'],
+        formula=[f'OR(ISNUMBER(SEARCH("要改",B{r + 1})),ISNUMBER(SEARCH("逾期",B{r + 1})),ISNUMBER(SEARCH("只记了一边",B{r + 1})),ISNUMBER(SEARCH("超过容量",B{r + 1})),ISNUMBER(SEARCH("还没填",B{r + 1})))'],
         font=Font(name=YH, sz=10, bold=True, color='FFC00000')))
 
     # 导航
@@ -149,9 +185,10 @@ def build(wb, ctx=None):
     r = r + len(HOWTO) + 2
     section(ws, r, 'B', 'L', '注意', C_HOME)
     notes = ['① 业务板块、收支项目、账户、经手人、往来单位都从下拉选；新的先到【基础资料】【往来单位】加一行。',
-             '② 两张登记表哪里都可以插行、删行、排序（整行一起动）；绿色、橙色的表是自动的，有保护（没有密码），只有黄格子能选。',
+             '② 两张登记表、基础资料、往来单位哪里都可以插行、删行、排序（整行一起动）；绿色、橙色的表是自动的，有保护（没有密码），只有黄格子能改。',
              '③ 收回欠款、支付欠款一定要选往来单位，应收应付和对账单才会冲掉；业务板块选当初赊账的那个板块。',
-             '④ 示例行（备注里写着「示例」）是照你原表的样子放的，正式用时整行删掉就行。']
+             '④ 示例行（灰底，备注里写着「示例」）是照你原表的样子放的，正式用时整行删掉就行。',
+             f'⑤ 收支登记最多 {N_CASH} 笔、应收应付登记最多 {N_WL} 笔：建议一年一本，年底另起一本（期初余额填上一年的期末）。']
     for i, t in enumerate(notes):
         rr = r + 1 + i
         put(ws, f'B{rr}', t, F_TXT, align=ALW, border=False)

@@ -18,8 +18,8 @@ def chain(pairs, default='""'):
     return out
 
 
-def _ix(sh, col, n_ref):
-    return f'INDEX({inref(sh, col)},{n_ref}+1)'
+def _ix(sh, col, n_ref, block=None):
+    return f'INDEX({inref(sh, col, block=block)},{n_ref}+1)'
 
 
 # ───────────────────────── _参 ─────────────────────────
@@ -30,13 +30,14 @@ def build_par(ws):
              'IF(COUNTIF(往_日期,">0")=0,99999,SMALL(往_日期,COUNTIF(往_日期,0)+1))))')
     rows = {
         '单位名称': f'=TRIM({P("单位名称")}&"")',
-        '建账日': f'=IF(ISNUMBER({P("建账日")}),INT({P("建账日")}),{first})',
+        '建账日': f'=IF(ISNUMBER({P("建账日")}),INT({P("建账日")}),IF({first}>0,{first},DATE(2026,1,1)))',
         '账期': f'=IF(N({P("账期")})>0,N({P("账期")}),30)',
         '最后日期': '=IF(MAX(MAX(收_日期),MAX(往_日期))>0,MAX(MAX(收_日期),MAX(往_日期)),IF(B3>0,B3,DATE(2026,1,1)))',
         '截止': f'=IF(ISNUMBER({SH_HOME}!${HOME_END[0]}${HOME_END[1:]}),INT({SH_HOME}!${HOME_END[0]}${HOME_END[1:]}),B5)',
         '年度': '=YEAR(B6)',
         '年初': '=DATE(B7,1,1)',
-        '默认账户': f'=IF({H_LIST}!${COMPACT["账户"][0]}$2="","现金",{H_LIST}!${COMPACT["账户"][0]}$2)',
+        '默认账户': (f'=IF(ISNUMBER(MATCH("现金",账户_名称,0)),"现金",IF({H_LIST}!${COMPACT["账户"][0]}$2="","现金",'
+                 f'{H_LIST}!${COMPACT["账户"][0]}$2))'),
         '截止年月': '=YEAR(B6)*100+MONTH(B6)',
     }
     ws['A1'] = '全书共用的参数（自动，别改）'
@@ -56,25 +57,25 @@ def build_list(ws):
     for i in range(LIST_N):
         r, n = i + 2, i + 1
         if n <= N_SEG:
-            g = lambda k: _ix(SH_BASE, SEG_COLS[k], n)
+            g = lambda k: _ix(SH_BASE, SEG_COLS[k], n, '板块')
             a = f'{LIST_SEG["名称"]}{r}'
             ws[a] = f'=TRIM({g("名称")}&"")'
             for k in ('期初结余', '期初存量', '期初固定资产'):
                 ws[f'{LIST_SEG[k]}{r}'] = f'=IF({a}="",0,N({g(k)}))'
         if n <= N_ACC:
-            g = lambda k: _ix(SH_BASE, ACC_COLS[k], n)
+            g = lambda k: _ix(SH_BASE, ACC_COLS[k], n, '账户')
             a = f'{LIST_ACC["名称"]}{r}'
             ws[a] = f'=TRIM({g("名称")}&"")'
             ws[f'{LIST_ACC["期初余额"]}{r}'] = f'=IF({a}="",0,N({g("期初余额")}))'
         if n <= N_ITEM:
-            g = lambda k: _ix(SH_BASE, ITEM_COLS[k], n)
+            g = lambda k: _ix(SH_BASE, ITEM_COLS[k], n, '项目')
             a = f'{LIST_ITEM["名称"]}{r}'
             ws[a] = f'=TRIM({g("名称")}&"")'
             ws[f'{LIST_ITEM["方向"]}{r}'] = f'=IF({a}="","",IF(TRIM({g("方向")}&"")="","双向",TRIM({g("方向")}&"")))'
             ws[f'{LIST_ITEM["用途"]}{r}'] = f'=IF({a}="","",IF(TRIM({g("用途")}&"")="","普通",TRIM({g("用途")}&"")))'
             ws[f'{LIST_ITEM["库存"]}{r}'] = f'=IF({a}="","",TRIM({g("库存")}&""))'
         if n <= N_PER:
-            ws[f'{LIST_PER["姓名"]}{r}'] = f'=TRIM({_ix(SH_BASE, PER_COLS["姓名"], n)}&"")'
+            ws[f'{LIST_PER["姓名"]}{r}'] = f'=TRIM({_ix(SH_BASE, PER_COLS["姓名"], n, "经手人")}&"")'
         if n <= N_UNIT:
             g = lambda k: _ix(SH_UNIT, UNIT_COLS[k], n)
             a = f'{LIST_UNIT["名称"]}{r}'
@@ -83,6 +84,7 @@ def build_list(ws):
             ws[f'{LIST_UNIT["账期"]}{r}'] = f'=IF({a}="",0,IF(N({g("账期")})>0,N({g("账期")}),P_账期))'
             ws[f'{LIST_UNIT["联系人"]}{r}'] = f'=IF({a}="","",TRIM({g("联系人")}&""))'
             ws[f'{LIST_UNIT["电话"]}{r}'] = f'=IF({a}="","",TRIM({g("电话")}&""))'
+            ws[f'{LIST_UNIT["备注"]}{r}'] = f'=IF({a}="","",TRIM({g("备注")}&""))'
     # 压紧的清单（下拉用）：计数列逐行累加，清单第 k 个＝计数第一次到 k 的那行
     for key, (out, src, cap) in COMPACT.items():
         cnt = COMPACT_CNT[key]
@@ -115,9 +117,9 @@ def build_shou(ws):
         f['数量'] = f'=N({ix("数量")})'
         f['单价'] = f'=N({ix("单价")})'
         D = f'D{r}'
-        f['方向'] = f'=IF({D}="","",IFERROR(INDEX(项目_方向,MATCH({D},项目_名称,0))&"",""))'
-        f['用途'] = f'=IF({D}="","普通",IFERROR(INDEX(项目_用途,MATCH({D},项目_名称,0))&"","普通"))'
-        f['库存'] = f'=IF({D}="","",IFERROR(INDEX(项目_库存,MATCH({D},项目_名称,0))&"",""))'
+        f['方向'] = f'=IF({D}="","",IFERROR(INDEX(项目_方向,MATCH({esc(D)},项目_名称,0))&"",""))'
+        f['用途'] = f'=IF({D}="","普通",IFERROR(INDEX(项目_用途,MATCH({esc(D)},项目_名称,0))&"","普通"))'
+        f['库存'] = f'=IF({D}="","",IFERROR(INDEX(项目_库存,MATCH({esc(D)},项目_名称,0))&"",""))'
         rin, rout = f'N({ix("收入")})', f'N({ix("支出")})'
         qp = f'ROUND(G{r}*H{r},2)'
         f['有效'] = (f'=IF(AND(B{r}>0,OR({rin}<>0,{rout}<>0,AND({qp}<>0,OR(P{r}="收入",P{r}="支出")))),1,0)')
@@ -137,7 +139,7 @@ def build_shou(ws):
         f['年月'] = f'=IF(B{r}=0,0,YEAR(B{r})*100+MONTH(B{r}))'
         f['显示摘要'] = f'=IF(E{r}<>"",E{r},D{r})'
         f['排序键'] = f'=IF(O{r}=1,B{r}*10000+A{r},"")'
-        f['账户有效'] = f'=IF(ISNUMBER(MATCH(L{r},账户_名称,0)),1,0)'
+        f['账户有效'] = f'=IF(ISNUMBER(MATCH({esc(f"L{r}")},账户_名称,0)),1,0)'
         F = f'F{r}'
         f['最新收付'] = (f'=IF(AND(O{r}=1,OR(Q{r}="冲应收",Q{r}="冲应付"),{F}<>"",B{r}<=P_截止),'
                        f'IF(COUNTIFS(收_往来单位,{esc(F)},收_用途,Q{r},收_有效,1,收_日期,">"&B{r},收_日期,"<="&P_截止)'
@@ -147,15 +149,18 @@ def build_shou(ws):
             (blank, '""'),
             (f'B{r}=0', '"✗ 没填日期（或不是真日期）"'),
             (f'D{r}=""', '"✗ 没选收支项目"'),
-            (f'ISNA(MATCH(D{r},项目_名称,0))', f'"✗ 收支项目「"&D{r}&"」不在【基础资料】④里"'),
+            (f'ISNA(MATCH({esc(f"D{r}")},项目_名称,0))', f'"✗ 收支项目「"&D{r}&"」不在【基础资料】④里"'),
             (f'O{r}=0', '"✗ 没填金额（也没有数量×单价）"'),
             (f'AND({rin}<>0,{rout}<>0)', '"⚠ 收入、支出都填了"'),
-            (f'AND(C{r}<>"",ISNA(MATCH(C{r},板块_名称,0)))', f'"✗ 业务板块「"&C{r}&"」不在【基础资料】②里"'),
+            (f'AND(C{r}<>"",ISNA(MATCH({esc(f"C{r}")},板块_名称,0)))', f'"✗ 业务板块「"&C{r}&"」不在【基础资料】②里"'),
             (f'AND(C{r}="",X{r}=0)', '"⚠ 没选业务板块（不进任何板块表）"'),
             (f'AG{r}=0', f'"✗ 账户「"&L{r}&"」不在【基础资料】③里"'),
             (f'AND(OR(Q{r}="冲应收",Q{r}="冲应付"),{F}="")', '"✗ 收回/支付欠款要选往来单位"'),
-            (f'AND({F}<>"",ISNA(MATCH({F},单位_名称,0)))', f'"⚠ 往来单位「"&{F}&"」不在【往来单位】里"'),
+            (f'AND({F}<>"",ISNA(MATCH({esc(F)},单位_名称,0)))', f'"⚠ 往来单位「"&{F}&"」不在【往来单位】里"'),
             (f'AND(R{r}<>"",G{r}=0)', '"⚠ 粮食购进/销售没填数量（存量不变）"'),
+            (f'AND(M{r}<>"",ISNA(MATCH({esc(f"M{r}")},经手人_姓名,0)))', f'"⚠ 经手人「"&M{r}&"」不在【基础资料】⑤里"'),
+            (f'B{r}<P_建账日', '"⚠ 日期在建账日以前（已经算进期初；期初余额里如果已经有了就重复了）"'),
+            (f'OR(YEAR(B{r})>YEAR(P_建账日)+10,YEAR(B{r})<2000)', '"⚠ 年份看着不对（打错了？）"'),
             (f'AND(P{r}="收入",{rout}<>0,{rin}=0)', '"⚠ 收入类的项目填在了支出栏"'),
             (f'AND(P{r}="支出",{rin}<>0,{rout}=0)', '"⚠ 支出类的项目填在了收入栏"'),
             (f'AND(O{r}=1,{rin}=0,{rout}=0)', f'"金额没填，按数量×单价＝"&TEXT(I{r}+J{r},"#,##0.00")&" 计"'),
@@ -183,15 +188,15 @@ def build_wang(ws):
         f['单价'] = f'=N({ix("单价")})'
         f['金额'] = f'=IF(N({ix("金额")})<>0,N({ix("金额")}),ROUND(H{r}*I{r},2))'
         D, E, F = f'D{r}', f'E{r}', f'F{r}'
-        term = f'IFERROR(INDEX(单位_账期,MATCH({D},单位_名称,0)),P_账期)'
+        term = f'IFERROR(INDEX(单位_账期,MATCH({esc(D)},单位_名称,0)),P_账期)'
         f['约定日期'] = f'=IF(ISNUMBER({ix("约定日期")}),INT({ix("约定日期")}),IF(B{r}>0,B{r}+{term},0))'
         f['有效'] = f'=IF(AND(B{r}>0,{D}<>"",OR({E}="应收",{E}="应付"),J{r}<>0),1,0)'
         f['应收额'] = f'=IF(AND(N{r}=1,{E}="应收"),J{r},0)'
         f['应付额'] = f'=IF(AND(N{r}=1,{E}="应付"),J{r},0)'
-        f['库存'] = f'=IF({F}="","",IFERROR(INDEX(项目_库存,MATCH({F},项目_名称,0))&"",""))'
+        f['库存'] = f'=IF({F}="","",IFERROR(INDEX(项目_库存,MATCH({esc(F)},项目_名称,0))&"",""))'
         f['入库量'] = f'=IF(AND(N{r}=1,Q{r}="入库"),H{r},0)'
         f['出库量'] = f'=IF(AND(N{r}=1,Q{r}="出库"),H{r},0)'
-        f['固定资产'] = f'=IF(AND(N{r}=1,IFERROR(INDEX(项目_用途,MATCH({F},项目_名称,0)),"")="固定资产"),J{r},0)'
+        f['固定资产'] = f'=IF(AND(N{r}=1,IFERROR(INDEX(项目_用途,MATCH({esc(F)},项目_名称,0)),"")="固定资产"),J{r},0)'
         f['正额'] = f'=IF(AND(N{r}=1,J{r}>0,B{r}<=P_截止),J{r},0)'
         f['累计前'] = (f'=IF(U{r}=0,0,SUMIFS(往_正额,往_往来单位,{esc(D)},往_类型,{E},往_日期,"<"&B{r})'
                     f'+SUMIFS(往_正额,往_往来单位,{esc(D)},往_类型,{E},往_日期,B{r},往_n,"<"&A{r}))')
@@ -202,8 +207,8 @@ def build_wang(ws):
         f['逾期天数'] = f'=IF(AND(W{r}>0,K{r}<P_截止),P_截止-K{r},0)'
         f['最早未结'] = (f'=IF(W{r}>0,IF(COUNTIFS(往_往来单位,{esc(D)},往_类型,{E},往_未结,">0",往_约定日期,"<"&K{r})'
                      f'+COUNTIFS(往_往来单位,{esc(D)},往_类型,{E},往_未结,">0",往_约定日期,K{r},往_n,"<"&A{r})=0,1,0),0)')
-        f['最新发生'] = (f'=IF(AND(N{r}=1,B{r}<=P_截止),IF(COUNTIFS(往_往来单位,{esc(D)},往_类型,{E},往_有效,1,往_日期,">"&B{r},'
-                     f'往_日期,"<="&P_截止)+COUNTIFS(往_往来单位,{esc(D)},往_类型,{E},往_有效,1,往_日期,B{r},往_n,">"&A{r})=0,1,0),0)')
+        f['最新发生'] = (f'=IF(AND(N{r}=1,J{r}>0,B{r}<=P_截止),IF(COUNTIFS(往_往来单位,{esc(D)},往_类型,{E},往_有效,1,往_金额,">0",往_日期,">"&B{r},'
+                     f'往_日期,"<="&P_截止)+COUNTIFS(往_往来单位,{esc(D)},往_类型,{E},往_有效,1,往_金额,">0",往_日期,B{r},往_n,">"&A{r})=0,1,0),0)')
         f['录入行'] = f'=ROW({ix("日期")})'
         f['年月'] = f'=IF(B{r}=0,0,YEAR(B{r})*100+MONTH(B{r}))'
         f['显示摘要'] = f'=IF(G{r}<>"",G{r},{F})'
@@ -215,10 +220,14 @@ def build_wang(ws):
             (f'{D}=""', '"✗ 没选往来单位"'),
             (f'AND({E}<>"应收",{E}<>"应付")', '"✗ 应收/应付没选"'),
             (f'J{r}=0', '"✗ 没填金额（也没有数量×单价）"'),
-            (f'AND(C{r}<>"",ISNA(MATCH(C{r},板块_名称,0)))', f'"✗ 业务板块「"&C{r}&"」不在【基础资料】②里"'),
+            (f'AND(C{r}<>"",ISNA(MATCH({esc(f"C{r}")},板块_名称,0)))', f'"✗ 业务板块「"&C{r}&"」不在【基础资料】②里"'),
             (f'C{r}=""', '"⚠ 没选业务板块（板块表里看不到这笔）"'),
-            (f'ISNA(MATCH({D},单位_名称,0))', f'"⚠ 往来单位「"&{D}&"」不在【往来单位】里"'),
-            (f'AND({F}<>"",ISNA(MATCH({F},项目_名称,0)))', f'"⚠ 业务内容「"&{F}&"」不在收支项目里"'),
+            (f'ISNA(MATCH({esc(D)},单位_名称,0))', f'"⚠ 往来单位「"&{D}&"」不在【往来单位】里"'),
+            (f'AND({F}<>"",ISNA(MATCH({esc(F)},项目_名称,0)))', f'"⚠ 业务内容「"&{F}&"」不在收支项目里"'),
+            (f'AND(TRIM({ix("约定日期")}&"")<>"",NOT(ISNUMBER({ix("约定日期")})))', '"⚠ 约定日期不是真日期（按账期算了）"'),
+            (f'AND(L{r}<>"",ISNA(MATCH({esc(f"L{r}")},经手人_姓名,0)))', f'"⚠ 经手人「"&L{r}&"」不在【基础资料】⑤里"'),
+            (f'B{r}<P_建账日', '"⚠ 日期在建账日以前（老欠款就这么记，没问题）"'),
+            (f'OR(YEAR(B{r})>YEAR(P_建账日)+10,YEAR(B{r})<2000)', '"⚠ 年份看着不对（打错了？）"'),
         ])
         for k, v in f.items():
             ws[f'{Wn[k]}{r}'] = v

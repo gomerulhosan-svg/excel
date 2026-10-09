@@ -7,6 +7,30 @@ from common import *
 
 CHK_X, CHK_W = 'C4', 'F4'
 CHECK_ROWS = {}
+
+
+def _over(sh, hdr, cap, col='A'):
+    """录入表第 cap 条以后还有没有东西（区域从表头行锚定，插删行跟着动）"""
+    return (f'COUNTA(INDEX({sh}!${col}:${col},ROW({sh}!${col}${hdr})+{cap + 1}):INDEX({sh}!${col}:${col},1048576))')
+
+
+def _over_base():
+    parts = []
+    for i, (key, ttl, tr, hr, cap) in enumerate(BASE_BLOCKS):
+        a = f'INDEX({SH_BASE}!$A:$A,ROW({SH_BASE}!$A${hr})+{cap + 1})'
+        if i + 1 < len(BASE_BLOCKS):
+            nxt = BASE_BLOCKS[i + 1][1]
+            b = f'INDEX({SH_BASE}!$A:$A,MAX(ROW({SH_BASE}!$A${hr})+{cap + 1},IFERROR(MATCH("{nxt}",{SH_BASE}!$A:$A,0)-1,0)))'
+        else:
+            b = f'INDEX({SH_BASE}!$A:$A,ROW({SH_BASE}!$A${hr})+{cap + 300})'
+        parts.append(f'COUNTA({a}:{b})')
+    return '=' + '+'.join(parts)
+
+
+CAP_CASH = '=' + _over(SH_CASH, CASH_HDR, N_CASH)
+CAP_WL = '=' + _over(SH_WL, WL_HDR, N_WL)
+CAP_UNIT = '=' + _over(SH_UNIT, UNIT_HDR, N_UNIT)
+CAP_BASE = _over_base()
 ARR_DIR = '{"' + '","'.join(ITEM_DIRS) + '"}'
 ARR_USE = '{"' + '","'.join(ITEM_USES) + '"}'
 ARR_STK = '{"' + '","'.join(ITEM_STOCK) + '"}'
@@ -82,18 +106,34 @@ def build(wb, ctx=None):
     header(ws, r + 1, [('A', '#'), ('B', '检查'), ('C', '金额/个数'), ('D', '状态'), ('G', '说明')], C_CHK)
     d = 'P_截止'
     acc_total = f'(SUM(账户_期初余额)+SUMIFS(收_净额,收_日期,"<="&{d}))'
-    seg_total = (f'(SUM(板块_期初结余)+SUMIFS(收_板块收入,收_日期,"<="&{d})-SUMIFS(收_板块支出,收_日期,"<="&{d})'
-                 f'-SUMIFS(收_板块收入,收_板块,"",收_日期,"<="&{d})+SUMIFS(收_板块支出,收_板块,"",收_日期,"<="&{d}))')
+    seg_total = f'(SUM(板块_期初结余)+SUM($AI$1:$AI${N_SEG}))'
+    for i in range(N_SEG):                          # 名单里每个板块：收支合计（AG）、赊账合计（AH）、到截止日的净额（AI）
+        rr = i + 1
+        sg = f'INDEX(板块_名称,{rr})'
+        ws[f'AG{rr}'] = f'=IF({sg}="",0,SUMIFS(收_板块收入,收_板块,{esc(sg)})+SUMIFS(收_板块支出,收_板块,{esc(sg)}))'
+        ws[f'AH{rr}'] = f'=IF({sg}="",0,SUMIFS(往_应收额,往_板块,{esc(sg)})+SUMIFS(往_应付额,往_板块,{esc(sg)}))'
+        ws[f'AI{rr}'] = (f'=IF({sg}="",0,SUMIFS(收_板块收入,收_板块,{esc(sg)},收_日期,"<="&{d})'
+                         f'-SUMIFS(收_板块支出,收_板块,{esc(sg)},收_日期,"<="&{d}))')
+        for c in ('AG', 'AH', 'AI'):
+            ws[f'{c}{rr}'].font = F_HELP
+    hide(ws, 'AG', 'AH', 'AI')
     num = [
         ('各账户余额合计 − 各板块结余合计', f'=ROUND({acc_total}-{seg_total},2)', 'ABS(C{r})>=0.01', '⚠',
-         '不为 0：基础资料里账户期初余额合计和板块期初结余合计不一样，或者有收支没选板块，或者内部转账只记了一边'),
+         '不为 0：基础资料里账户期初余额合计和板块期初结余合计不一样，或者有收支没选板块（板块名不对），或者内部转账只记了一边'),
         ('内部转账没配对（一出一进合计不为 0）', '=ROUND(SUMIFS(收_净额,收_内部转账,1),2)', 'ABS(C{r})>=0.01', '⚠',
          '现金存银行、银行取现要记两行（一行支出、一行收入），金额一样'),
-        ('收支没选业务板块的金额（不含内部转账）',
-         f'=ROUND(SUMIFS(收_板块收入,收_板块,"")+SUMIFS(收_板块支出,收_板块,""),2)', 'ABS(C{r})>=0.01', '⚠',
-         '这些钱不进任何板块表；在收支登记里补上业务板块'),
+        ('收支没选业务板块或板块名不对的金额（收入＋支出，不含内部转账）',
+         f'=ROUND(SUM(收_板块收入)+SUM(收_板块支出)-SUM($AG$1:$AG${N_SEG}),2)', 'ABS(C{r})>=0.01', '⚠',
+         '这些钱不进任何板块表；在收支登记里补上业务板块（改过板块名的，用查找替换把旧名字改掉）'),
+        ('应收应付没选业务板块或板块名不对的金额', f'=ROUND(SUM(往_应收额)+SUM(往_应付额)-SUM($AH$1:$AH${N_SEG}),2)',
+         'ABS(C{r})>=0.01', '⚠', '这些赊账不进任何板块表'),
         ('应收为负（多收了）的往来单位家数', None, 'C{r}>0', '⚠', '收回的比赊出去的多：可能是预收款，或者收款记错了单位'),
         ('应付为负（多付了）的往来单位家数', None, 'C{r}>0', '⚠', '付出的比赊进来的多：可能是预付款，或者付款记错了单位'),
+        ('收支登记超过 5000 笔（多出来的不算）', CAP_CASH, 'C{r}>0', '✗', '一本账最多 5000 笔收支：建议一年一本，年底另起一本（期初余额填上一年的期末）'),
+        ('应收应付登记超过 2000 笔（多出来的不算）', CAP_WL, 'C{r}>0', '✗', '同上'),
+        ('往来单位超过 500 个（多出来的不算）', CAP_UNIT, 'C{r}>0', '✗', '删掉不用的单位'),
+        ('基础资料某一块超了（多出来的不算）', CAP_BASE, 'C{r}>0', '✗', '业务板块最多 15 个、账户 20 个、收支项目 120 个、经手人 50 个；块里不要留太多空行'),
+        ('基础资料没填建账日期', f'=IF(ISNUMBER({SH_BASE}!$C${PAR_ROW["建账日"]}),0,1)', 'C{r}>0', '⚠', '没填就按最早一笔算；填上更清楚（期初余额都是这一天的）'),
         ('应收已逾期金额', f'=ROUND(SUMIFS(往_未结,往_类型,"应收",往_逾期天数,">0"),2)', 'C{r}>0', '⚠', '看【应收应付跟进】，该催款了'),
         ('应付已逾期金额', f'=ROUND(SUMIFS(往_未结,往_类型,"应付",往_逾期天数,">0"),2)', 'C{r}>0', '⚠', '看【应收应付跟进】'),
     ]
@@ -114,11 +154,11 @@ def build(wb, ctx=None):
             f = f'=SUM($AE$1:$AE${N_UNIT})' if '应收' in lab else f'=SUM($AF$1:$AF${N_UNIT})'
         put(ws, f'A{rr}', i + 1, F_TXT, align=AC)
         put(ws, f'B{rr}', lab, F_TXT, align=ALW)
-        put(ws, f'C{rr}', f, F_AUTOB, fmt='0' if '家数' in lab else MONEY, align=AR)
+        put(ws, f'C{rr}', f, F_AUTOB, fmt='0' if ('家数' in lab or '超' in lab or '没填' in lab) else MONEY, align=AR)
         put(ws, f'D{rr}', f'=IF({bad.format(r=rr)},"{kind}","✓")', F_TXTB, align=AC)
         put(ws, f'G{rr}', how, F_NOTE, align=ALW)
         ws.row_dimensions[rr].height = 30
-        wsum.append(f'IF({bad.format(r=rr)},1,0)')
+        (xs if kind == '✗' else wsum).append(f'IF({bad.format(r=rr)},1,0)')
         CHECK_ROWS[lab] = rr
     r += len(num) + 1
     put(ws, CHK_X, '=' + '+'.join(xs), F_KPI_V, fill('FFFFFFFF'), '0', AC)
@@ -126,7 +166,7 @@ def build(wb, ctx=None):
 
     # ④ 有问题的行
     section(ws, r, 'A', 'G', '④ 有问题的行（回到那张表按行号找；只列 ✗ 和 ⚠）', C_CHK)
-    header(ws, r + 1, [('A', '#'), ('B', '问题'), ('C', '表'), ('D', '行号'), ('E', '日期'), ('F', '金额'), ('G', '摘要 / 往来单位')], C_CHK)
+    header(ws, r + 1, [('A', '第几条'), ('B', '问题'), ('C', '表'), ('D', '行号'), ('E', '日期'), ('F', '金额'), ('G', '摘要 / 往来单位')], C_CHK)
     r += 2
     SHOW = 150
     lists = [(SH_CASH, N_CASH, '收_校验', '收_录入行', '收_日期', 'INDEX(收_收入,{k})-INDEX(收_支出,{k})',

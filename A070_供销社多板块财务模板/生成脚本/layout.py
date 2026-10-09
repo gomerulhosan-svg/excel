@@ -30,14 +30,14 @@ GROUPS = [
     ('校验', C_CHK, [SH_CHK]),
 ]
 HIDDEN = [H_PAR, H_SHOU, H_WANG, H_LIST, H_SORT]        # _序：板块表共用的排序键（s_seg 写）
-VIEW_GROUPS = ('查看', '往来', '校验')          # 这些组的表保护（黄格不锁）
+VIEW_GROUPS = ('首页', '查看', '往来', '校验')  # 这些组的表保护（黄格不锁）
 
 HOME_END = 'C4'                                 # 首页：截止日期（黄格；空＝两张登记表里最后一笔的日期）
 
 # ───────────── 容量 ─────────────
 N_CASH, N_WL = 5000, 2000
-N_SEG, N_ACC, N_ITEM, N_PER, N_UNIT = 10, 20, 100, 50, 500
-REF_END = 20000
+N_SEG, N_ACC, N_ITEM, N_PER, N_UNIT = 15, 20, 120, 50, 500
+REF_END = 1048576                    # 锚定区域一直到表的最后一行：用户整片删行也不会把区域删没
 
 # ───────────── 录入表 ─────────────
 # 收支登记（就是「登记汇总表」）：第 1 行标题、第 2 行提示、第 3 行合计、第 4 行表头、第 5 行起数据
@@ -54,18 +54,23 @@ WL_SHOW = dict(未结='M', 校验='N')
 WL_LAST = 'N'
 WL_TYPES = ['应收', '应付']
 
-# ───────────── 基础资料（一张表，几块并排，表头都在第 11 行） ─────────────
-BASE_PAR_R0 = 4                                  # ① 参数：B 名称、C 值（第 4～6 行）
-PARAMS = [('单位名称', '单位名称', '（请填单位全称）'), ('建账日', '建账日期', None), ('账期', '默认账期（天）', 30)]
+# ───────────── 基础资料（一张表，几块上下排：每块有自己的标题行、表头行，整行插删只动这一块） ─────────────
+BASE_PAR_R0 = 4                                  # ① 参数：A 名称、C 值（第 4～6 行）
+PARAMS = [('单位名称', '单位名称', None), ('建账日', '建账日期', None), ('账期', '默认账期（天）', 30)]
 PAR_ROW = {k: BASE_PAR_R0 + i for i, (k, *_r) in enumerate(PARAMS)}
-BASE_HDR = 11
-BASE_R0 = BASE_HDR + 1
 SEG_COLS = dict(名称='A', 期初结余='B', 期初存量='C', 期初固定资产='D', 备注='E')          # ② 业务板块
-ACC_COLS = dict(名称='G', 期初余额='H', 备注='I')                                         # ③ 账户
-ITEM_COLS = dict(名称='K', 方向='L', 用途='M', 库存='N', 备注='O')                         # ④ 收支项目
-PER_COLS = dict(姓名='Q', 备注='R')                                                      # ⑤ 经手人
+ACC_COLS = dict(名称='A', 期初余额='B', 备注='C')                                         # ③ 账户
+ITEM_COLS = dict(名称='A', 方向='B', 用途='C', 库存='D', 备注='E')                         # ④ 收支项目
+PER_COLS = dict(姓名='A', 备注='B')                                                      # ⑤ 经手人
+BASE_BLOCKS = []                                 # (键, 标题, 标题行, 表头行, 容量)
+_r = 8
+for _k, _t, _n in (('板块', '② 业务板块', N_SEG), ('账户', '③ 账户', N_ACC), ('项目', '④ 收支项目', N_ITEM), ('经手人', '⑤ 经手人', N_PER)):
+    BASE_BLOCKS.append((_k, _t, _r, _r + 1, _n))
+    _r += _n + 4
+BASE_HDR = {k: h for k, _t, _tr, h, _n in BASE_BLOCKS}
+BASE_TITLE = {k: (t, tr) for k, t, tr, _h, _n in BASE_BLOCKS}
 ITEM_DIRS = ['收入', '支出', '双向']
-ITEM_USES = ['普通', '冲应收', '冲应付', '固定资产', '内部转账']
+ITEM_USES = ['普通', '冲应收', '冲应付', '固定资产', '内部转账', '借款', '调拨']   # 借款、调拨：照常算收支，首页单独列出来（不是经营收支）
 ITEM_STOCK = ['入库', '出库']
 # 往来单位（单独一张表）
 UNIT_HDR, UNIT_R0 = 4, 5
@@ -113,7 +118,7 @@ LIST_SEG = dict(名称='A', 期初结余='B', 期初存量='C', 期初固定资�
 LIST_ACC = dict(名称='F', 期初余额='G')
 LIST_ITEM = dict(名称='I', 方向='J', 用途='K', 库存='L')
 LIST_PER = dict(姓名='N')
-LIST_UNIT = dict(名称='P', 类型='Q', 账期='R', 联系人='S', 电话='T')
+LIST_UNIT = dict(名称='P', 类型='Q', 账期='R', 联系人='S', 电话='T', 备注='U')
 # 压紧的清单（下拉用，没有空行）：板块 W、账户 X、收支项目 Y、经手人 Z、往来单位 AA；计数在第 1 行
 COMPACT = dict(板块=('W', 'A', N_SEG), 账户=('X', 'F', N_ACC), 收支项目=('Y', 'I', N_ITEM), 经手人=('Z', 'N', N_PER),
                往来单位=('AA', 'P', N_UNIT))
@@ -145,9 +150,9 @@ for k, cell in PAR.items():
 DV_NAMES = {f'{k}列表': f"OFFSET({H_LIST}!${col}$2,0,0,MAX(1,{H_LIST}!${col}$1),1)" for k, (col, _s, _n) in COMPACT.items()}
 
 
-def inref(sh, col, last=REF_END):
-    """录入表 / 基础资料某列的锚定区域（从表头行开始），配合 INDEX(区域, n+1) 用"""
-    h = {SH_CASH: CASH_HDR, SH_WL: WL_HDR, SH_BASE: BASE_HDR, SH_UNIT: UNIT_HDR}[sh]
+def inref(sh, col, last=REF_END, block=None):
+    """录入表 / 基础资料某列的锚定区域（从表头行开始），配合 INDEX(区域, n+1) 用；基础资料要给 block（板块/账户/项目/经手人）"""
+    h = BASE_HDR[block] if sh == SH_BASE else {SH_CASH: CASH_HDR, SH_WL: WL_HDR, SH_UNIT: UNIT_HDR}[sh]
     return f"{sh}!${col}${h}:${col}${last}"
 
 
