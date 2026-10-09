@@ -364,7 +364,7 @@ def build(wb, ctx):
     ws.conditional_formatting.add(rng3, FormulaRule(formula=[f'${KIND}{d0}=1'], border=BD))
     last_bal = f'INDEX($I${d0}:$I${d1},{NN3})'
     ws.merge_cells(f'A{note3}:{LAST}{note3}')
-    put(ws, f'A{note3}', (f'=IF({n3}=0,"这段时间没有流水（余额不变：期初＝期末）",'
+    put(ws, f'A{note3}', (f'=IF({n3}=0,IF({SEG}<>"","这段时间这个板块没有流水（上面的期初、期末是账户全部的）","这段时间没有流水（余额不变：期初＝期末）"),'
                           f'"共 "&{n3}&" 笔，按日期排（同一天按登记顺序）"'
                           f'&IF({n3}>{SHOW},"　⚠ 只显示前 {SHOW} 笔（余额也只滚到第 {SHOW} 笔），请缩短日期范围","")'
                           f'&IF({SEG}<>"","；选了板块：余额是账户的实际余额（含别的板块的收支）",'

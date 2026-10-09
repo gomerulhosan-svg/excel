@@ -195,3 +195,4 @@ def build(wb, ctx=None):
         ws.merge_cells(f'B{rr}:L{rr}')
         ws.row_dimensions[rr].height = 20
     print_setup(ws, None, landscape=False)
+    ws.oddFooter.center.text = '第 &P 页 共 &N 页'

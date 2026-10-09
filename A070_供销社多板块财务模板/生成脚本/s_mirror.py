@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """隐藏计算表：_参（全书期间）、_表（基础资料逐行镜像＋压紧的下拉清单）、_收（收支登记逐条）、_往（应收应付登记逐条）。
-   全部按「第 n 条」取数：INDEX(录入表!$X$表头行:$X$20000, n+1)，插行删行不错位。查看表只用 layout.NAMES 里的名称。"""
+   全部按「第 n 条」取数：INDEX(录入表!$X$表头行:$X$1048576, n+1)，插行删行不错位。查看表只用 layout.NAMES 里的名称。"""
 from layout import *
 from common import F_HELP
 
@@ -40,6 +40,12 @@ def build_par(ws):
                  f'{H_LIST}!${COMPACT["账户"][0]}$2))'),
         '截止年月': '=YEAR(B6)*100+MONTH(B6)',
     }
+    for i, (key, _t, _tr, hr, cap) in enumerate(BASE_BLOCKS):
+        if i + 1 < len(BASE_BLOCKS):
+            nxt = BASE_BLOCKS[i + 1][1]
+            rows[f'{key}位'] = f'=IFERROR(MATCH("{nxt}",{SH_BASE}!$A:$A,0)-ROW({SH_BASE}!$A${hr})-1,{cap})'
+        else:
+            rows[f'{key}位'] = f'={cap + 300}'
     ws['A1'] = '全书共用的参数（自动，别改）'
     for k, cell in PAR.items():
         r = int(cell[1:])
@@ -59,23 +65,23 @@ def build_list(ws):
         if n <= N_SEG:
             g = lambda k: _ix(SH_BASE, SEG_COLS[k], n, '板块')
             a = f'{LIST_SEG["名称"]}{r}'
-            ws[a] = f'=TRIM({g("名称")}&"")'
+            ws[a] = f'=IF({n}>P_板块位,"",TRIM({g("名称")}&""))'
             for k in ('期初结余', '期初存量', '期初固定资产'):
                 ws[f'{LIST_SEG[k]}{r}'] = f'=IF({a}="",0,N({g(k)}))'
         if n <= N_ACC:
             g = lambda k: _ix(SH_BASE, ACC_COLS[k], n, '账户')
             a = f'{LIST_ACC["名称"]}{r}'
-            ws[a] = f'=TRIM({g("名称")}&"")'
+            ws[a] = f'=IF({n}>P_账户位,"",TRIM({g("名称")}&""))'
             ws[f'{LIST_ACC["期初余额"]}{r}'] = f'=IF({a}="",0,N({g("期初余额")}))'
         if n <= N_ITEM:
             g = lambda k: _ix(SH_BASE, ITEM_COLS[k], n, '项目')
             a = f'{LIST_ITEM["名称"]}{r}'
-            ws[a] = f'=TRIM({g("名称")}&"")'
+            ws[a] = f'=IF({n}>P_项目位,"",TRIM({g("名称")}&""))'
             ws[f'{LIST_ITEM["方向"]}{r}'] = f'=IF({a}="","",IF(TRIM({g("方向")}&"")="","双向",TRIM({g("方向")}&"")))'
             ws[f'{LIST_ITEM["用途"]}{r}'] = f'=IF({a}="","",IF(TRIM({g("用途")}&"")="","普通",TRIM({g("用途")}&"")))'
             ws[f'{LIST_ITEM["库存"]}{r}'] = f'=IF({a}="","",TRIM({g("库存")}&""))'
         if n <= N_PER:
-            ws[f'{LIST_PER["姓名"]}{r}'] = f'=TRIM({_ix(SH_BASE, PER_COLS["姓名"], n, "经手人")}&"")'
+            ws[f'{LIST_PER["姓名"]}{r}'] = f'=IF({n}>P_经手人位,"",TRIM({_ix(SH_BASE, PER_COLS["姓名"], n, "经手人")}&""))'
         if n <= N_UNIT:
             g = lambda k: _ix(SH_UNIT, UNIT_COLS[k], n)
             a = f'{LIST_UNIT["名称"]}{r}'

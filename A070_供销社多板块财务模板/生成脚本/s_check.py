@@ -15,15 +15,12 @@ def _over(sh, hdr, cap, col='A'):
 
 
 def _over_base():
+    """基础资料每块：第 cap 个以后、下一块标题以前还有没有名字（块变短时 X位<=cap，不算超）"""
     parts = []
-    for i, (key, ttl, tr, hr, cap) in enumerate(BASE_BLOCKS):
+    for key, ttl, tr, hr, cap in BASE_BLOCKS:
         a = f'INDEX({SH_BASE}!$A:$A,ROW({SH_BASE}!$A${hr})+{cap + 1})'
-        if i + 1 < len(BASE_BLOCKS):
-            nxt = BASE_BLOCKS[i + 1][1]
-            b = f'INDEX({SH_BASE}!$A:$A,MAX(ROW({SH_BASE}!$A${hr})+{cap + 1},IFERROR(MATCH("{nxt}",{SH_BASE}!$A:$A,0)-1,0)))'
-        else:
-            b = f'INDEX({SH_BASE}!$A:$A,ROW({SH_BASE}!$A${hr})+{cap + 300})'
-        parts.append(f'COUNTA({a}:{b})')
+        b = f'INDEX({SH_BASE}!$A:$A,ROW({SH_BASE}!$A${hr})+P_{key}位)'
+        parts.append(f'IF(P_{key}位<={cap},0,COUNTA({a}:{b}))')
     return '=' + '+'.join(parts)
 
 
@@ -170,9 +167,9 @@ def build(wb, ctx=None):
     r += 2
     SHOW = 150
     lists = [(SH_CASH, N_CASH, '收_校验', '收_录入行', '收_日期', 'INDEX(收_收入,{k})-INDEX(收_支出,{k})',
-              'INDEX(收_板块,{k})&"｜"&INDEX(收_显示摘要,{k})', 'AH'),
+              'INDEX(收_板块,{k})&"｜"&INDEX(收_显示摘要,{k})', 'AJ'),
              (SH_WL, N_WL, '往_校验', '往_录入行', '往_日期', 'INDEX(往_金额,{k})',
-              'INDEX(往_往来单位,{k})&"｜"&INDEX(往_显示摘要,{k})', 'AI')]
+              'INDEX(往_往来单位,{k})&"｜"&INDEX(往_显示摘要,{k})', 'AK')]
     for sh, n, chk, row_nm, date_nm, amt, desc, cc in lists:
         counter(ws, cc, 1, n, lambda i, chk=chk: f'OR(LEFT(INDEX({chk},{i + 1}),1)="✗",LEFT(INDEX({chk},{i + 1}),1)="⚠")')
         hide(ws, cc)
@@ -199,3 +196,5 @@ def build(wb, ctx=None):
                                                                      font=Font(name=YH, sz=10, bold=True, color='FFC65911')))
     ws.freeze_panes = 'A5'
     print_setup(ws, '1:4', landscape=False)
+    ws.print_area = f'A1:G{r}'
+    ws.oddFooter.center.text = '第 &P 页 共 &N 页'
