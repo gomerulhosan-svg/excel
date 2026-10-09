@@ -160,7 +160,7 @@ def build_shou(ws):
         f['对方账户'] = f'=TRIM({ix("对方账户")}&"")'
         f['归属原'] = f'=TRIM({ix("费用归属")}&"")'
         f['已开票'] = f'=IF(S{r}=1,N({ix("已开票")}),0)'
-        f['开票日期'] = f'=IF(ISNUMBER({ix("开票日期")}),INT({ix("开票日期")}),0)'
+        f['开票日期'] = f'=IF(ISNUMBER({ix("开票日期")}),INT({ix("开票日期")}),IF(Q{r}<>0,B{r},0))'
         f['开票年月'] = f'=IF(R{r}=0,0,YEAR(R{r})*100+MONTH(R{r}))'
         f['归类原'] = (f'=IF(F{r}="","",IF(D{r}="收入",IFERROR(INDEX(收入项目_归类,MATCH(F{r},收入项目_名称,0)),'
                      f'IFERROR(INDEX(支出项目_归类,MATCH(F{r},支出项目_名称,0)),"")),IFERROR(INDEX(支出项目_归类,MATCH(F{r},支出项目_名称,0)),'

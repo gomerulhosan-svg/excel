@@ -40,9 +40,9 @@ def fill(rgb):
     return PatternFill('solid', fgColor=rgb)
 
 
-C_BASE, C_CASH, C_CONV, C_INV, C_RPT, C_AR, C_CHK, C_HOME = \
-    'FF595959', 'FF2F75B5', 'FF7F7F7F', 'FF7030A0', 'FF375623', 'FFBF8F00', 'FF833C0C', 'FF1F3864'
-C_IN, C_VAR, C_FIX, C_OTH, C_MISC = 'FFE2EFDA', 'FFDDEBF7', 'FFFFF2CC', 'FFF2F2F2', 'FFFFFFFF'   # 截图里各组的底色
+# 分组颜色（C_HOME、C_IN、C_RPT 等）以 layout.py 为准，这里不再定义，免得 `from common import *` 把 layout 的覆盖掉
+C_BASE, C_CASH, C_CONV, C_INV, C_AR, C_CHK = 'FF595959', 'FF2F75B5', 'FF7F7F7F', 'FF7030A0', 'FFBF8F00', 'FF833C0C'
+C_VAR, C_FIX, C_OTH, C_MISC = 'FFDDEBF7', 'FFFFF2CC', 'FFF2F2F2', 'FFFFFFFF'
 C_IN_D, C_VAR_D, C_FIX_D = 'FF70AD47', 'FF5B9BD5', 'FFBF8F00'
 
 FILL_TIP = fill('FFFFF2CC')
