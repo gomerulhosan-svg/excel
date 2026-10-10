@@ -39,13 +39,29 @@ def check_formulas(wb):
                 if isinstance(v, str) and v.startswith('='):
                     outside = ''.join(v.split('"')[0::2]).upper()
                     hit = BANNED.findall(outside) + (['_xlfn'] if '_XLFN.' in outside else [])
-                    if hit or not _balanced(v) or len(v) > 8000:
-                        bad.append(f'{ws.title}!{c.coordinate}: {hit} len={len(v)} {v[:160]}')
+                    long_lit = [t for t in v.split('"')[1::2] if len(t) > 255]       # 公式里的文字常量 Excel 最多 255 字
+                    if hit or long_lit or not _balanced(v) or len(v) > 8000:
+                        bad.append(f'{ws.title}!{c.coordinate}: {hit} len={len(v)} 长文字={[len(t) for t in long_lit]} {v[:160]}')
     assert not bad, '\n'.join(bad[:40])
     for ws in wb.worksheets:                         # 有效性的提示、出错文字 Excel 最多 255 字
         for dv in ws.data_validations.dataValidation:
             for t in (dv.prompt, dv.error, dv.promptTitle, dv.errorTitle):
                 assert t is None or len(t) <= 255, f'{ws.title} 有效性文字超过 255 字：{t[:60]}…（{len(t)}）'
+
+
+def _no_emoji(wb):
+    """💡 在老电脑的 Excel / WPS 上可能显示成方框：统一换成 ★（标题行 title() 已经换过，这里兜底）"""
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for c in row:
+                v = c.value
+                if isinstance(v, str) and '💡' in v:
+                    c.value = v.replace('💡 ', '★ ').replace('💡', '★ ')
+        for dv in ws.data_validations.dataValidation:
+            for a in ('prompt', 'error', 'promptTitle', 'errorTitle'):
+                t = getattr(dv, a)
+                if t and '💡' in t:
+                    setattr(dv, a, t.replace('💡 ', '★ ').replace('💡', '★ '))
 
 
 def define_names(wb):
@@ -118,6 +134,7 @@ def build(only=None, scenario=None, ctx=None):
                                                 formatCells=False, selectLockedCells=False, selectUnlockedCells=False)
             if not ws.print_title_rows and grp not in ('首页',):
                 print_setup(ws, None, landscape=True)
+    _no_emoji(wb)
     check_formulas(wb)
     _fit_widths(wb)
     for ws in wb.worksheets:

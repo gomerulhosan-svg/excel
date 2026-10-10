@@ -109,7 +109,8 @@ def _print_to_last(ws, last_col, par_key, cap):
     q = f"'{ws.title}'"
     cell = PAR[par_key]
     ws.defined_names['Print_Area'] = DefinedName(
-        'Print_Area', attr_text=f'{q}!$A$1:INDEX({q}!${last_col}$1:${last_col}${R0 + cap - 1},{H_PAR}!${cell[0]}${cell[1:]})')
+        'Print_Area', attr_text=f'{q}!$A$1:INDEX({q}!${last_col}$1:${last_col}${R0 + cap - 1},MIN({R0 + cap - 1},{H_PAR}!${cell[0]}${cell[1:]}))')
+    ws.oddFooter.center.text = '第 &P 页 共 &N 页'
 
 
 def _kpi(ws, row, cells):
@@ -146,8 +147,9 @@ def _check_cf(ws, col, last):
 
 def _nofx(ws, key_col, chk_col, cell, last, merge_to=None):
     """「右边没公式的行」提示：有日期、问题列却是空的（插进来的行）"""
-    f = (f'=IF(COUNTIFS({key_col}{R0}:{key_col}{last},"<>",{chk_col}{R0}:{chk_col}{last},"")>0,'
-         f'COUNTIFS({key_col}{R0}:{key_col}{last},"<>",{chk_col}{R0}:{chk_col}{last},"")&" 行右边没公式：选上一行右边灰色几格往下拉","")')
+    f = (f'=IF(COUNTIFS({key_col}{HDR}:{key_col}{last},"<>",{chk_col}{HDR}:{chk_col}{last},"")>0,'
+         f'COUNTIFS({key_col}{HDR}:{key_col}{last},"<>",{chk_col}{HDR}:{chk_col}{last},"")'
+         f'&" 行右边没公式（这几行也没算进第 3 行的金额合计）：选上一行右边灰色几格往下拉","")')
     put(ws, cell, f, F_RED, align=AL, border=False)
     if merge_to:
         ws.merge_cells(f'{cell}:{merge_to}')
@@ -167,7 +169,7 @@ def build_cash(ws, ctx):
     heads = [(C['日期'], '日期★'), (C['账户'], '账户★'), (C['类别'], '收支类别★'), (C['往来单位'], '往来单位\n（收付货款必选）'),
              (C['摘要'], '摘要'), (C['收入'], '收入'), (C['支出'], '支出'),
              (C['关联单号'], '关联单号\n（付审批过的款、固定支出选）'), (C['所属月份'], '所属月份\n（工资电费填几月；空＝付款月）'),
-             (C['备注'], '备注'), (S['余额'], '本账户余额\n（自动，按上下顺序）'), (S['单位类型'], '单位类型\n（自动）'),
+             (C['备注'], '备注'), (S['余额'], '本账户余额\n（按上下顺序）'), (S['单位类型'], '单位类型\n（自动）'),
              (S['归类'], '算到哪\n（自动）'), (S['校验'], '这一行的问题\n（自动）')]
     tip = ('💡 7 个账户混在一张表录，一笔一行，收入、支出只填一个。收客户货款、付供应商货款一定要选往来单位（冲欠款）；'
            '付审批过的款，关联单号选那张审批单。内部转账记两行：转出账户记支出、转进账户记收入，类别都选「内部转账」。'
@@ -202,6 +204,8 @@ def build_cash(ws, ctx):
     dv_list(ws, rng(C['类别']), '=收支类别列表', prompt='从【基础资料】③收支类别里选；收付货款选「收客户货款」「付供应商货款」')
     dv_list(ws, rng(C['往来单位']), '=往来单位列表', stop=False,
             prompt='收付货款要选【往来单位】里的客户、供应商；房东、电费户名等可以直接打。替供应商付给别人的（钢磊让付聊城正信），选这家供应商，实际收款人写摘要')
+    dv_tip(ws, rng(C['所属月份']), '工资、电费是哪个月的就填几月：填 1～12 算付款日往前最近的那个月（10 月里填 9＝今年 9 月，填 11＝去年 11 月）；'
+                                   '预付以后月份的写 2026-11 这样带年份的。空着＝付款月')
     dv_list(ws, rng(C['关联单号']), '=关联单号列表', stop=False,
             prompt='付审批过的款选审批单（只列批了没付完的）；付固定支出可以选编号（不选也行）')
     for k in ('收入', '支出'):
@@ -374,7 +378,8 @@ def build_apv(ws, ctx):
              (C['审批意见'], '审批意见\n（老板）'), (C['审批日期'], '审批日期\n（老板）'), (C['备注'], '备注'),
              (S['现在欠款'], '这家现在欠\n（自动）'), (S['欠票'], '欠票\n（自动）'), (S['已付'], '已付\n（自动）'),
              (S['还差'], '批了还没付\n（自动）'), (S['状态'], '状态\n（自动）'), (S['校验'], '这一行的问题\n（自动）')]
-    tip = ('💡 要付的款都在这里申请一行：货款、外协款，还有每个月计划要付的电费、税、借款利息等（计划付款日期定在哪个月）。'
+    tip = ('💡 要付的款都在这里申请一行：货款、外协款，还有不固定、一次性的（税、季度利息、设备款……，计划付款日期定在哪个月）；'
+           '每月固定的（房租、工资、社保、电费、贷款利息）登在【固定支出】，这里不用再申请（两边都登，资金计划会扣两次）。'
            '老板在紫色几列选审批结果（同意 / 部分同意 / 不同意 / 暂缓），部分同意填批准金额。'
            '付款时在【资金台帐】那一笔的「关联单号」选这张单，已付、状态自动出。【待审批付款单】可以打印给老板签字。第 3 行有下一个单号。灰底是示例行。')
     W = {C['单号']: 12, C['申请日期']: 11, C['申请人']: 8, C['收款单位']: 14, C['付款内容']: 20, C['申请金额']: 12,
@@ -390,13 +395,13 @@ def build_apv(ws, ctx):
             ws[f'{C[k]}{r}'].fill = fill('FFF3EAF9')
     _kpi(ws, 3, [('A', '下一个单号', '=P_下一审批号', '@'),
                  ('D', '待审批合计', '=SUMIFS(批_申请金额,批_状态码,0)', MONEY),
-                 ('G', '批了还没付', '=SUM(批_未付)', MONEY)])
+                 ('G', '批了还没付（全部）', '=SUM(批_未付)', MONEY)])
     _nofx(ws, 'B', S['校验'], f'{C["备注"]}3', R0 + N_APV + 2000, f'{S["校验"]}3')
     _write_rows(ws, rows, C, date_keys=('申请日期', '计划付款日期', '审批日期'), text_keys=('单号',))
     code = 'INDEX(批_状态码,{n})'
     _show(ws, N_APV, {
         S['现在欠款']: 'IF(INDEX(批_末行,{n})=0,"",INDEX(批_现在欠款,{n}))',
-        S['欠票']: 'IF(INDEX(批_末行,{n})=0,"",INDEX(批_欠票,{n}))',
+        S['欠票']: 'IF(INDEX(批_末行,{n})=0,"",IF(N(INDEX(批_欠票,{n}))<-0.005,"多收票 "&TEXT(-INDEX(批_欠票,{n}),"#,##0.00"),INDEX(批_欠票,{n})))',
         S['已付']: 'IF(INDEX(批_末行,{n})=0,"",INDEX(批_已付,{n}))',
         S['还差']: f'IF(OR({code}=1,{code}=2),INDEX(批_未付,{{n}}),"")',
         S['状态']: 'INDEX(批_状态,{n})&""',
@@ -407,7 +412,7 @@ def build_apv(ws, ctx):
     _check_cf(ws, S['校验'], lastshow)
     st = S['状态']
     rng_st = f'{st}{R0}:{st}{lastshow}'
-    ws.conditional_formatting.add(rng_st, FormulaRule(formula=[f'{st}{R0}="待审批"'], font=F_WARN, fill=fill('FFFFF2CC')))
+    ws.conditional_formatting.add(rng_st, FormulaRule(formula=[f'{st}{R0}="待审批"'], font=F_WARN, fill=cf_bg('FFFFF2CC')))
     ws.conditional_formatting.add(rng_st, FormulaRule(formula=[f'OR({st}{R0}="待付款",{st}{R0}="部分已付")'],
                                                       font=Font(name=YH, sz=10, bold=True, color='FF2F75B5')))
     ws.conditional_formatting.add(f'A{R0}:{C["备注"]}{lastshow}',
@@ -457,7 +462,7 @@ def build_pp(ws, ctx):
     lastshow = R0 + N_PP - 1
     _check_cf(ws, S['校验'], lastshow)
     st = S['状态']
-    ws.conditional_formatting.add(f'{st}{R0}:{st}{lastshow}', FormulaRule(formula=[f'{st}{R0}="待审批"'], font=F_WARN, fill=fill('FFFFF2CC')))
+    ws.conditional_formatting.add(f'{st}{R0}:{st}{lastshow}', FormulaRule(formula=[f'{st}{R0}="待审批"'], font=F_WARN, fill=cf_bg('FFFFF2CC')))
     rng = lambda col: f'{col}{R0}:{col}{R0 + N_PP - 1}'
     for k in ('日期', '需用日期'):
         dv_day(ws, rng(C[k]))
@@ -487,7 +492,7 @@ def build_base(ws, ctx):
     notes = {'公司名称': '首页、对账单抬头用',
              '建账日': '从哪天开始用这本账：账户余额、期初应收应付都是这一天之前（前一天晚上）的数；只录这一天及以后的单子',
              '回款天数': '客户欠款多少天没回款，首页、客户往来标红提醒',
-             '期初库存': '建账日仓库里料、在制品、成品（含在外协厂的料）大概值多少（按买价估）；不填就当没变',
+             '期初库存': '建账日前一天（9 月 30 日）仓库里料、在制品、成品（含在外协厂的料）大概值多少（按买价估）；不填的话，第一次估库存的那个月不调成本',
              '月折旧': '机床等设备每月大概折旧多少，从建账月起每月算进生产成本；不填＝不算折旧'}
     for k, lbl, default in PARAMS:
         r = PAR_ROW[k]
@@ -557,6 +562,7 @@ def build_base(ws, ctx):
         put(ws, f'{c2}{r0 + cap}', f'（这一块最多 {cap} 个，超过了【数据校验】会提醒）', F_NOTE, align=AL, border=False)
     ws.freeze_panes = 'A4'
     print_setup(ws, None, landscape=False)
+    ws.oddFooter.center.text = '第 &P 页 共 &N 页'
 
 
 # ───────────────────────── 往来单位 ─────────────────────────
@@ -614,7 +620,7 @@ def build_fix(ws, ctx):
              (C['每月几号'], '每月几号付'), (C['付款账户'], '付款账户'), (C['开始月份'], '开始月份\n（空＝一直）'),
              (C['结束月份'], '结束月份\n（空＝一直）'), (C['备注'], '备注'),
              (S['本月已付'], '本月已付\n（自动）'), (S['校验'], '这一行的问题\n（自动）')]
-    tip = ('💡 每个月固定要付的（厂房租金、工资、社保、贷款利息……）一条一行。资金台帐付这笔钱时，关联单号选编号；'
+    tip = ('💡 每个月固定要付的（厂房租金、工资、社保、电费、贷款利息……）一条一行，【付款审批】里就不用再申请。资金台帐付这笔钱时，关联单号选编号；'
            '不选也行：收支类别（填了收款单位的再加往来单位）对得上就自动算已付。【资金计划】看每个月还有哪些没付。'
            '季付、年付的不放这里，到时候在【付款审批】里申请。灰底是示例。')
     W = {C['编号']: 8, C['项目']: 14, C['类别']: 14, C['收款单位']: 14, C['每月金额']: 12, C['每月几号']: 9, C['付款账户']: 10,

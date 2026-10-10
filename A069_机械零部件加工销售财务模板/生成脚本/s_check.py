@@ -40,7 +40,7 @@ def _over_base():
 
 def _nofx(sh, key_col, chk_col, cap):
     last = R0 + cap + 2000
-    return f'COUNTIFS({sh}!${key_col}${R0}:${key_col}${last},"<>",{sh}!${chk_col}${R0}:${chk_col}${last},"")'
+    return f'COUNTIFS({sh}!${key_col}${HDR}:${key_col}${last},"<>",{sh}!${chk_col}${HDR}:${chk_col}${last},"")'
 
 
 def build(wb, ctx=None):
@@ -159,8 +159,10 @@ def build(wb, ctx=None):
         ('本月固定支出过了日子还没付清（条）', f'={late_fix_n}', 'C{r}>0', '⚠', '看【资金计划】①；付了以后资金台帐关联单号选编号（或者类别、收款单位对上）'),
         ('预付了钱的供应商（家）', '=COUNTIFS(位_是供应商,1,位_应付,"<-0.005")', 'C{r}>0', '⚠', '先付款后到货的正常；到了货要记采购登记'),
         ('采购计划到了需用日期还没买（条）', '=COUNTIF(购_校验,"⚠ 已经到了需用日期*")', 'C{r}>0', '⚠', '看【采购计划汇总】'),
-        ('上个月月底没估库存', f'=IF(COUNTIFS(库存_有值,1)=0,0,IF(COUNTIFS(库存_年月,IF(MOD({Y},100)=1,{Y}-89,{Y}-1),库存_有值,1)=0,1,0))',
-         'C{r}>0', 'ℹ', '不估也行：那个月的利润只供参考，看几个月合计更准'),
+        ('上个月月底（建账第一个月＝建账日）没估库存',
+         f'=IF(COUNTIFS(库存_有值,1)=0,0,IF(IF(MOD({Y},100)=1,{Y}-89,{Y}-1)<YEAR(P_建账日)*100+MONTH(P_建账日),IF(ISNUMBER(P_期初库存),0,1),'
+         f'IF(COUNTIFS(库存_年月,IF(MOD({Y},100)=1,{Y}-89,{Y}-1),库存_有值,1)=0,1,0)))',
+         'C{r}>0', 'ℹ', '不估也行：那个月的利润只供参考，看几个月合计更准；建账第一个月要有建账日的库存（基础资料①期初库存），不然那个月不调成本'),
         ('基础资料没填建账日期', f'=IF(ISNUMBER({SH_BASE}!$C${PAR_ROW["建账日"]}),0,1)', 'C{r}>0', '⚠', '期初余额、期初欠款都是建账日前一天晚上的数，一定要填'),
         ('基础资料没填公司名称', '=IF(P_公司名称="",1,0)', 'C{r}>0', 'ℹ', '首页、对账单抬头用'),
         (f'资金台帐超过 {N_CASH} 笔（多出来的不算）', '=' + _over(SH_CASH, N_CASH), 'C{r}>0', '✗', '一本最多这么多：另起一本（账户期初余额、往来期初填上一本的余额）'),
@@ -195,6 +197,7 @@ def build(wb, ctx=None):
     put(ws, CHK_W, '=' + '+'.join(wsum), F_KPI_V, fill('FFFFFFFF'), '0', AC)
 
     # ④ 有问题的行
+    sec4 = r + 1
     section(ws, r, 'A', 'G', '④ 有问题的行（回到那张表按行号找；只列 ✗ 和 ⚠）', C_CHK)
     header(ws, r + 1, [('A', '第几条'), ('B', '问题'), ('C', '表'), ('D', '行号'), ('E', '日期'), ('F', '金额'), ('G', '内容')], C_CHK)
     r += 2
@@ -244,5 +247,13 @@ def build(wb, ctx=None):
     ws.conditional_formatting.add(f'B1:B{r}', FormulaRule(formula=['LEFT(B1,1)="⚠"'], font=Font(name=YH, sz=10, color='FFC65911')))
     ws.freeze_panes = 'A5'
     print_setup(ws, '1:4', landscape=False)
-    ws.print_area = f'A1:G{r}'
+    for rr in range(sec4, r + 1):                            # 打印到最后一行有内容的地方（④ 清单空着的行不印）
+        ws[f'AZ{rr}'] = f'=IF(A{rr}<>"",ROW(),0)'
+        ws[f'AZ{rr}'].font = F_HELP
+    ws['AZ1'] = f'=MAX({sec4},MAX(AZ{sec4}:AZ{r}))'
+    ws['AZ1'].font = F_HELP
+    hide(ws, 'AZ')
+    from openpyxl.workbook.defined_name import DefinedName
+    q = f"'{ws.title}'"
+    ws.defined_names['Print_Area'] = DefinedName('Print_Area', attr_text=f'{q}!$A$1:INDEX({q}!$G$1:$G${r},{q}!$AZ$1)')
     ws.oddFooter.center.text = '第 &P 页 共 &N 页'

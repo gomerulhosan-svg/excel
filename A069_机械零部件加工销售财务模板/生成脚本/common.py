@@ -40,6 +40,11 @@ def fill(rgb):
     return PatternFill('solid', fgColor=rgb)
 
 
+def cf_bg(rgb):
+    """条件格式用的底色：Excel/WPS 认 bgColor，前景、背景都填上"""
+    return PatternFill('solid', fgColor=rgb, bgColor=rgb)
+
+
 # 分组颜色（C_HOME、C_IN、C_RPT 等）以 layout.py 为准，这里不再定义，免得 `from common import *` 把 layout 的覆盖掉
 C_BASE, C_CASH, C_CONV, C_INV, C_AR, C_CHK = 'FF595959', 'FF2F75B5', 'FF7F7F7F', 'FF7030A0', 'FFBF8F00', 'FF833C0C'
 C_VAR, C_FIX, C_OTH, C_MISC = 'FFDDEBF7', 'FFFFF2CC', 'FFF2F2F2', 'FFFFFFFF'
@@ -98,6 +103,8 @@ def title(ws, text, last_col, color, tip=None, h1=33, h2=None):
         per_line = max(20, int(width / 1.9))
         lines = -(-len(tip or '') // per_line)
         h2 = max(24, 16 * lines + 6)
+    if tip:
+        tip = tip.replace('💡 ', '★ ').replace('💡', '★ ')       # 💡 在老系统上可能显示成方框
     ws.merge_cells(f'A1:{last_col}1')
     put(ws, 'A1', text, F_TITLE, fill(color), align=AC, border=False)
     ws.row_dimensions[1].height = h1
