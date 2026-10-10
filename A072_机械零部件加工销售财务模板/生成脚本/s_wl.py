@@ -2,9 +2,10 @@
 """往来组（橙）：客户往来、供应商往来、对账单，以及隐藏表 _序（对账单的合并排序键）。
    只用 layout 的定义名称、本表格子（对账单还用 _序），不引用录入表。
 
-【客户往来】黄格 C3 起（空＝P_月初）、E3 止（空＝P_截止；晚于截止日按截止日）。
+【客户往来】黄格 C3 起（空＝P_月初；早于建账日按建账日）、E3 止（空＝P_截止；晚于截止日按截止日，早于建账日按建账日前一天）。
+   起日前欠只算到 MIN(起－1, 止)（止 ≤ 截止），所以起选得比截止日还晚时也不会把截止日以后的行算进来。
    第 4 行（固定位置，首页可引用）：C4 客户欠款合计（止日欠款只算正数）、E4 预收合计（正数显示）、
-   G4 超期没回款家数（位_没回款天数 > P_回款天数）、J4 超期的欠款（这些家到截止日的 位_应收）、M4 待定价发货笔数。
+   G4 超期没回款家数（位_没回款天数 > P_回款天数）、J4 超期的欠款（这些家到截止日的 位_应收）、M4 待定价发货笔数（日期 ≤ 截止）。
    第 7 行起：位_是客户=1 的每一家，按止日欠款从大到小（预收的排最后，一样多按往来单位表顺序）；后面合计行、「共 N 家」。
    列：序号、客户、期初应收、起日前欠、本期发货、本期回款、止日欠款、预收、已开票、未开票（到截止日）、待定价发货、
    最后发货、最后回款、没回款天数、状态。
@@ -12,9 +13,10 @@
    列：序号、供应商、期初应付、起日前欠、本期到货、本期付款、止日欠款、预付、已收票、欠票、待定价到货、待审批、已批未付、
    最后到货、最后付款、状态。
    隐藏：AA/AB 标量（第 3 行起）；AD..AL 每家一行（第 i 家在第 6+i 行）：家号、是不是、期初、起日前欠、本期货、本期钱、止日欠、
-   分键（止日欠×100 取整）、名次；AM 显示行取第几家（-1 合计、-2 共几家）。
+   分键（止日欠×100 取整）、名次；AM 显示行取第几家（-1 合计、-2 共几家）；AN 待定价笔数（日期 ≤ 截止）；AO 简称重复（1＝前面有同名的）。
 【对账单】黄格 B3 往来单位（下拉；简称、全称、其他叫法都认；空＝第一家客户）、F3 对账方向（客户/供应商；空＝是客户就按客户，否则按供应商）、
-   H3 起（空＝P_建账日）、J3 止（空＝P_截止；晚于截止日按截止日）。
+   H3 起（空＝P_建账日；早于建账日按建账日）、J3 止（空＝P_截止；晚于截止日按截止日，早于建账日按建账日前一天）。
+   期初余额＝到 MIN(起－1, 止) 的欠款（不会算进截止日以后的行；起晚于止时期末＝止日的欠款）。
    第 6 行抬头（单位不在往来单位表＝大字提示）、第 7 行期间、联系人电话；第 8 行期末大字；第 9 行期初＋本期－本期＝期末；第 10 行本期发票。
    第 11 行表头（每页重复）、第 12 行期初、第 13 行起明细（最多 300 行，同一天先货后钱），紧跟本期合计、共几笔、签字。
    余额＝期初＋SUM(货列 13 行到本行)－SUM(钱列 13 行到本行)。
@@ -44,8 +46,8 @@ F_HEADB = Font(name=YH, sz=11, bold=True, color='FF000000')
 DATE_SEL = 'IF(AND(ISNUMBER({x}),{x}>=36526,{x}<73051),INT({x}),{d})'
 OK_SEL = 'IF(TRIM({x}&"")="",1,IF(AND(ISNUMBER({x}),{x}>=36526,{x}<73051),1,0))'
 QTY = 'General'
-PRICE = '0.00##'
-DAYS = '0;-0;""'
+PRICE = '#,##0.00##'
+DAYS = '0;-0;0'                            # 0 天也显示 0（没欠款时隐藏层给 ""，自然是空）
 
 
 def cf_fill(rgb):
@@ -112,7 +114,7 @@ def finish(ws, last, hdr_rows, start, end_cell, cap_row, freeze, landscape):
 P_H, P_L0 = 6, 7                       # 表头行、清单第一行
 P_N = N_UNIT + 2                       # 每家一行＋合计＋共几家
 U0 = P_L0                              # 隐藏每家表：第 i 家在第 U0+i-1 行
-HU = dict(家='AD', 是='AE', 期初='AF', 前欠='AG', 货='AH', 钱='AI', 止欠='AJ', 分='AK', 名次='AL', 取='AM')
+HU = dict(家='AD', 是='AE', 期初='AF', 前欠='AG', 货='AH', 钱='AI', 止欠='AJ', 分='AK', 名次='AL', 取='AM', 待='AN', 重='AO')
 
 
 def _rng(col):
@@ -120,12 +122,12 @@ def _rng(col):
 
 
 TIP_AR = ('💡 每家客户欠多少、这段时间发了多少货、回了多少款。黄格选起止日期：起空着＝截止日那个月 1 号，止空着＝截止日'
-          '（截止日在首页改；晚于截止日的按截止日算），右边灰字是实际用的日期。只列【往来单位】里类型是客户（或客户和供应商）的，'
+          '（截止日在首页改；晚于截止日的按截止日算，早于建账日的按建账日），右边灰字是实际用的日期。只列【往来单位】里类型是客户（或客户和供应商）的，'
           '按止日欠款从大到小排，预收（欠款是负数）的排最后。期初应收是建账那天的数；起日前欠＝期初＋起日以前的发货－回款；'
           '止日欠款＝起日前欠＋本期发货－本期回款。已开票、未开票、待定价、最后发货、最后回款、没回款天数都是到截止日的数，'
           '没回款天数超过【基础资料】里设的天数标红。要给哪家对账，去【对账单】选它。')
 TIP_AP = ('💡 欠每家供应商多少、这段时间到了多少货、付了多少款。黄格选起止日期：起空着＝截止日那个月 1 号，止空着＝截止日'
-          '（晚于截止日的按截止日算），右边灰字是实际用的日期。只列【往来单位】里类型是供应商（或客户和供应商）的，'
+          '（晚于截止日的按截止日算，早于建账日的按建账日），右边灰字是实际用的日期。只列【往来单位】里类型是供应商（或客户和供应商）的，'
           '按止日欠款从大到小排，预付（欠款是负数）的排最后。起日前欠＝期初应付＋起日以前的到货－付款；止日欠款＝起日前欠＋本期到货－本期付款。'
           '已收票、欠票、待定价、待审批（付款审批里老板还没批的申请金额）、已批未付（批了还没付完的）、最后到货、最后付款都是到截止日的数。')
 
@@ -134,10 +136,10 @@ def build_party(ws, cust):
     who = '客户' if cust else '供应商'
     LAST = 'O' if cust else 'P'
     if cust:
-        W = dict(A=5, B=16, C=13.5, D=13.5, E=13.5, F=13.5, G=13.5, H=6, I=13.5, J=13.5, K=8, L=12.5, M=12.5, N=8, O=24)
+        W = dict(A=5, B=16, C=13.5, D=13.5, E=13.5, F=13.5, G=13.5, H=6, I=13.5, J=13.5, K=8, L=12.5, M=12.5, N=8, O=30)
     else:
         W = dict(A=5, B=16, C=13.5, D=13.5, E=13.5, F=13.5, G=13.5, H=6, I=13.5, J=13.5, K=8, L=13.5, M=13.5, N=12.5,
-                 O=12.5, P=22)
+                 O=12.5, P=30)
     widths(ws, W)
     title(ws, f'=IF(P_公司名称="","",P_公司名称&"　")&"{who}往来"', LAST, C_WL, TIP_AR if cust else TIP_AP)
     selector(ws, 'B3', '起日期', 'C3', None, fmt=DATE)
@@ -150,12 +152,16 @@ def build_party(ws, cust):
     keys = ['起', '起认出', '止输入', '止', '止认出', '家数', '末行', '回款天数',
             't_期初', 't_前欠', 't_货', 't_钱', 't_止欠', 't_票', 't_欠票', 't_待定价', 'k_欠', 'k_预']
     keys += ['k_超家', 'k_超额'] if cust else ['t_待审批', 't_已批未付']
+    keys += ['起选', '止0', '前界']                    # 加在最后，前面各格位置不变
     sc = Sc(ws, keys)
     S0, S1 = sc('起'), sc('止')
-    sc.set('起', DATE_SEL.format(x='C3', d='P_月初'))
+    sc.set('起选', DATE_SEL.format(x='C3', d='P_月初'))
+    sc.set('起', f'MAX({sc("起选")},P_建账日)')                      # 早于建账日按建账日（建账前的数都在期初里）
     sc.set('起认出', OK_SEL.format(x='C3'))
     sc.set('止输入', DATE_SEL.format(x='E3', d='P_截止'))
-    sc.set('止', f'MIN({sc("止输入")},P_截止)')
+    sc.set('止0', f'MIN({sc("止输入")},P_截止)')
+    sc.set('止', f'MAX({sc("止0")},P_建账日-1)')                     # 早于建账日按建账日前一天（只有期初）
+    sc.set('前界', f'MIN({S0}-1,{S1})')                              # 起日前欠算到这天（≤ 止 ≤ 截止）
     sc.set('止认出', OK_SEL.format(x='E3'))
     sc.set('回款天数', 'P_回款天数')
 
@@ -181,7 +187,7 @@ def build_party(ws, cust):
         hset(ws, f'{H["是"]}{r}', f'IF(INDEX({flag},{u})=1,1,0)')
         ok = f'{c("是")}=1'
         hset(ws, f'{H["期初"]}{r}', f'IF({ok},INDEX({open_},{u}),0)')
-        lt = f'"<"&{S0}'
+        lt = f'"<="&{sc("前界")}'
         bef = R2(c('期初') + '+' + goods(u, f'{gd},{lt}') + '-' + money(u, f'{md},{lt}'))
         hset(ws, f'{H["前欠"]}{r}', f'IF({ok},{bef},0)')
         hset(ws, f'{H["货"]}{r}', f'IF({ok},{R2(goods(u, dr(gd, S0, S1)))},0)')
@@ -191,6 +197,13 @@ def build_party(ws, cust):
         kk = c('分')
         above = (f'+COUNTIF(${H["分"]}${U0}:{H["分"]}{r - 1},{kk})' if i else '')
         hset(ws, f'{H["名次"]}{r}', f'IF({ok},1+COUNTIF({_rng(H["分"])},">"&{kk}){above},"")')
+        # 待定价笔数：只算日期 ≤ 截止（位_待定价发货/到货 没限截止日）
+        pend = (f'COUNTIFS(销_单位号,{u},销_计入往来,1,销_待定价,1,销_日期,"<="&P_截止)' if cust else
+                f'COUNTIFS(采_单位号,{u},采_计入往来,1,采_待定价,1,采_日期,"<="&P_截止)')
+        hset(ws, f'{H["待"]}{r}', f'IF({ok},{pend},0)')
+        # 简称重复：前面已有同名的（发货、回款都记在第一家）
+        hset(ws, f'{H["重"]}{r}', (f'IF({ok},IF(IFERROR(MATCH({esc(f"INDEX(位_简称,{u})")},位_简称,0),{u})<{u},1,0),0)'
+                                  if u > 1 else '0'))
     rg = lambda k: _rng(H[k])
     sc.set('家数', f'COUNTIF({rg("是")},1)')
     sc.set('末行', f'{P_L0 - 1}+{sc("家数")}+2')
@@ -201,13 +214,13 @@ def build_party(ws, cust):
     if cust:
         sc.set('t_票', R2(f'SUMIFS(位_已开票,{flag},1)'))
         sc.set('t_欠票', R2(f'SUMIFS(位_未开票,{flag},1)'))
-        sc.set('t_待定价', f'SUMIFS(位_待定价发货,{flag},1)')
+        sc.set('t_待定价', f'SUMIFS({rg("待")},{rg("是")},1)')
         sc.set('k_超家', f'COUNTIFS({flag},1,位_没回款天数,">"&P_回款天数)')
         sc.set('k_超额', R2(f'SUMIFS(位_应收,{flag},1,位_没回款天数,">"&P_回款天数)'))
     else:
         sc.set('t_票', R2(f'SUMIFS(位_已收票,{flag},1)'))
         sc.set('t_欠票', R2(f'SUMIFS(位_欠票,{flag},1)'))
-        sc.set('t_待定价', f'SUMIFS(位_待定价到货,{flag},1)')
+        sc.set('t_待定价', f'SUMIFS({rg("待")},{rg("是")},1)')
         sc.set('t_待审批', R2(f'SUMIFS(位_待审批,{flag},1)'))
         sc.set('t_已批未付', R2(f'SUMIFS(位_已批未付,{flag},1)'))
 
@@ -215,17 +228,21 @@ def build_party(ws, cust):
     nl = 'N' if cust else 'O'
     ws.merge_cells(f'F3:{nl}3')
     put(ws, 'F3', (f'="实际用的："&TEXT({S0},"yyyy-mm-dd")&" ～ "&TEXT({S1},"yyyy-mm-dd")'
-                   f'&IF(TRIM(C3&"")="","（起空着＝截止日那个月 1 号）","")&IF(TRIM(E3&"")="","（止空着＝截止日）","")'
+                   f'&IF(TRIM(C3&"")="","（起空着＝截止日那个月 1 号"&IF(P_月初<P_建账日,"，早于建账日按建账日","")&"）","")'
+                   f'&IF(TRIM(E3&"")="","（止空着＝截止日）","")'
                    f'&IF({sc("起认出")}=0,"　⚠ 起日期没认出，按截止日那个月 1 号","")'
                    f'&IF({sc("止认出")}=0,"　⚠ 止日期没认出，按截止日","")'
+                   f'&IF(AND(TRIM(C3&"")<>"",{sc("起认出")}=1,{sc("起选")}<P_建账日),"　⚠ 起早于建账日 "&TEXT(P_建账日,"yyyy-mm-dd")'
+                   f'&"，按建账日（建账前的数都在期初里）","")'
+                   f'&IF({sc("止输入")}<P_建账日,"　⚠ 止早于建账日 "&TEXT(P_建账日,"yyyy-mm-dd")&"，按建账日前一天（只有期初）","")'
                    f'&IF({sc("止输入")}>P_截止,"　⚠ 止晚于截止日 "&TEXT(P_截止,"yyyy-mm-dd")&"，按截止日算","")'
-                   f'&IF({S0}>{S1},"　✗ 起晚于止：本期都是 0，请改日期","")'), F_NOTE, align=ALW, border=False)
+                   f'&IF({sc("起选")}>{sc("止0")},"　✗ 起晚于止：本期都是 0，请改日期","")'), F_NOTE, align=ALW, border=False)
     ws.conditional_formatting.add('F3', FormulaRule(formula=['OR(ISNUMBER(FIND("⚠",$F$3)),ISNUMBER(FIND("✗",$F$3)))'],
                                                     font=Font(bold=True, color='FFC00000')))
     if cust:
         kpi(ws, 'B4', '客户欠款合计\n（只算欠的）', 'C4', sc('k_欠'))
         kpi(ws, 'D4', '预收合计', 'E4', sc('k_预'))
-        put(ws, 'F4', '="超 "&P_回款天数&" 天没回款"', F_KPI_L, LBL, align=ACW)
+        put(ws, 'F4', '="超 "&P_回款天数&" 天没回款（到截止日）"', F_KPI_L, LBL, align=ACW)
         put(ws, 'G4', '=' + sc('k_超家'), F_KV, FILL_AUTO, '0" 家"', AR)
         kpi(ws, 'I4', '超期的欠款\n（到截止日）', 'J4', sc('k_超额'))
         ws.merge_cells('K4:L4')
@@ -244,11 +261,12 @@ def build_party(ws, cust):
     ws.row_dimensions[4].height = 32
     ws.merge_cells(f'A5:{LAST}5')
     if cust:
-        t5 = ('="按止日欠款从大到小排，预收（负数）的排最后。已开票、未开票、待定价、最后发货、最后回款、没回款天数都是到截止日 "'
-              '&TEXT(P_截止,"yyyy-mm-dd")&" 的数；没回款天数超过 "&P_回款天数&" 天标红（天数在【基础资料】改）。"')
+        t5 = ('="按止日欠款从大到小排，预收（负数）的排最后。已开票、未开票、待定价、最后发货、最后回款、没回款天数、超期都是到截止日 "'
+              '&TEXT(P_截止,"yyyy-mm-dd")&" 的数（止日选得比截止日早时：预收看止日欠款，超期看截止日）；没回款天数超过 "'
+              '&P_回款天数&" 天标红（天数在【基础资料】改）。"')
     else:
         t5 = ('="按止日欠款从大到小排，预付（负数）的排最后。已收票、欠票、待定价、待审批、已批未付、最后到货、最后付款都是到截止日 "'
-              '&TEXT(P_截止,"yyyy-mm-dd")&" 的数。"')
+              '&TEXT(P_截止,"yyyy-mm-dd")&" 的数；欠票是负数＝对方发票多开了。"')
     put(ws, 'A5', t5, F_NOTE, align=ALW, border=False)
     ws.row_dimensions[5].height = 20
 
@@ -281,23 +299,25 @@ def build_party(ws, cust):
         if cust:
             cell(ws, f'I{r}', pk('位_已开票', sc('t_票')), fmt=MONEY, align=AR)
             cell(ws, f'J{r}', pk('位_未开票', sc('t_欠票')), fmt=MONEY, align=AR)
-            cell(ws, f'K{r}', pk('位_待定价发货', sc('t_待定价')), fmt=INT)
+            cell(ws, f'K{r}', pk(rg('待'), sc('t_待定价')), fmt=INT)
             cell(ws, f'L{r}', pos('位_最后发货'), fmt=DATE)
             cell(ws, f'M{r}', pos('位_最后回款'), fmt=DATE)
             cell(ws, f'N{r}', f'IF({ix}>0,INDEX(位_没回款天数,{ix}),"")', fmt=DAYS)
             st = (f'IF({zq}<-0.005,"、预收","")&IF(N(INDEX(位_没回款天数,{ix}))>P_回款天数,"、超 "&P_回款天数&" 天没回款","")'
-                  f'&IF(INDEX(位_待定价发货,{ix})>0,"、有待定价","")')
+                  f'&IF(INDEX({rg("待")},{ix})>0,"、有待定价","")&IF(INDEX(位_未开票,{ix})<-0.005,"、发票多开","")'
+                  f'&IF(INDEX({rg("重")},{ix})=1,"、简称重复（数记在同名第一家）","")')
             cell(ws, f'O{r}', f'IF({ix}>0,MID({st},2,100),"")', align=AL)
         else:
             cell(ws, f'I{r}', pk('位_已收票', sc('t_票')), fmt=MONEY, align=AR)
             cell(ws, f'J{r}', pk('位_欠票', sc('t_欠票')), fmt=MONEY, align=AR)
-            cell(ws, f'K{r}', pk('位_待定价到货', sc('t_待定价')), fmt=INT)
+            cell(ws, f'K{r}', pk(rg('待'), sc('t_待定价')), fmt=INT)
             cell(ws, f'L{r}', pk('位_待审批', sc('t_待审批')), fmt=MONEY, align=AR)
             cell(ws, f'M{r}', pk('位_已批未付', sc('t_已批未付')), fmt=MONEY, align=AR)
             cell(ws, f'N{r}', pos('位_最后到货'), fmt=DATE)
             cell(ws, f'O{r}', pos('位_最后付款'), fmt=DATE)
-            st = (f'IF({zq}<-0.005,"、预付","")&IF(INDEX(位_待定价到货,{ix})>0,"、有待定价","")'
-                  f'&IF(INDEX(位_待审批,{ix})>0,"、有待审批","")')
+            st = (f'IF({zq}<-0.005,"、预付","")&IF(INDEX({rg("待")},{ix})>0,"、有待定价","")'
+                  f'&IF(INDEX(位_待审批,{ix})>0,"、有待审批","")&IF(INDEX(位_欠票,{ix})<-0.005,"、对方发票多开","")'
+                  f'&IF(INDEX({rg("重")},{ix})=1,"、简称重复（数记在同名第一家）","")')
             cell(ws, f'P{r}', f'IF({ix}>0,MID({st},2,100),"")', align=AL)
     a0, a1 = P_L0, P_L0 + P_N - 1
     z0 = f'${H["取"]}{a0}'
@@ -316,7 +336,7 @@ def build_party(ws, cust):
     cf.add(f'H{a0}:H{a1}', FormulaRule(formula=[f'AND({z0}>0,$H{a0}<>"")'], font=Font(bold=True, color='FF2F75B5'),
                                      fill=cf_fill('FFDDEBF7'), border=CF_BD, stopIfTrue=True))
     cf.add(rng, FormulaRule(formula=[f'{z0}>0'], border=CF_BD))
-    hide(ws, *[CL(i) for i in range(CI('AA'), CI(H['取']) + 1)])
+    hide(ws, *[CL(i) for i in range(CI('AA'), CI(H['重']) + 1)])
     finish(ws, LAST, f'{P_H}:{P_H}', 1, sc('末行'), a1, 'C7', True)
 
 
@@ -327,16 +347,14 @@ ST_N = NL + 7                           # 明细 300 行＋本期合计、共几
 ST_D1 = ST_D0 + ST_N - 1
 HS = dict(k='AD', 类型='AE', 键='AF', 源='AG', 条='AH')
 
-TIP_ST = ('💡 给客户、供应商对账，A4 竖着打（一页宽，表头每页重复），打出来请对方核对盖章。黄格：往来单位（下拉选，也可以打简称、全称、'
-          '其他叫法；空着＝第一家客户）、对账方向（客户/供应商；空着＝按单位类型，是客户就按客户对，不然按供应商）、起（空＝建账日）、'
-          '止（空＝截止日；晚于截止日的按截止日）。明细按日期排，同一天先列货、后列钱；余额＝期初＋发货－回款逐笔往下算。'
-          '待定价的货（还没定单价）金额按 0 算，备注写「单价待定」。客户：货＝销售登记，钱＝资金台帐里「收客户货款」（退给客户的是负数）；'
-          '供应商：货＝采购登记，钱＝「付供应商货款」。打印只印第 6 行往下。')
+TIP_ST = ('💡 给客户、供应商对账，A4 竖着打（只印第 6 行往下），请对方核对盖章。黄格：往来单位（下拉选，也可打简称、全称、其他叫法；'
+          '空＝第一家客户）、对账方向（空＝按单位类型）、起（空＝建账日）、止（空＝截止日）。明细按日期排，同一天先货后钱；'
+          '待定价的货按 0 算。客户：货＝销售登记，钱＝资金台帐「收客户货款」（退款是负数）；供应商：货＝采购登记，钱＝「付供应商货款」。')
 
 
 def build_stmt(ws):
     LAST = ST_LAST
-    W = dict(A=12.5, B=13, C=20, D=8, E=6, F=10, G=13.5, H=13.5, I=14, J=20, K=10)
+    W = dict(A=11, B=16, C=20, D=11, E=6, F=10, G=13.5, H=13.5, I=14, J=22, K=10)
     widths(ws, W)
     title(ws, '对账单', LAST, C_WL, TIP_ST)
     home_link(ws, 'K1')
@@ -353,7 +371,8 @@ def build_stmt(ws):
     ws.row_dimensions[3].height = 26
 
     keys = ['名', '名规', 'u找', '首客户', 'u', '是客户', '是供应商', '方向输入', 'dir', '起', '起认出', '止输入', '止', '止认出',
-            'lo', 'hi', '期初', '货', '钱', '期末', '待定价', '票', '欠票', '笔数', 'n', '末行', '简称', '抬头名', '联系人', '电话']
+            'lo', 'hi', '期初', '货', '钱', '期末', '待定价', '票', '欠票', '笔数', 'n', '末行', '简称', '抬头名', '联系人', '电话',
+            '起选', '止0', '前界']                  # 新的加在最后，前面各格位置不变
     sc = Sc(ws, keys)
     U, D, S0, S1 = sc('u'), sc('dir'), sc('起'), sc('止')
     sc.set('名', 'TRIM(B3&"")')
@@ -365,14 +384,17 @@ def build_stmt(ws):
     sc.set('是供应商', f'IF({U}=0,0,INDEX(位_是供应商,{U}))')
     sc.set('方向输入', 'TRIM(F3&"")')
     sc.set('dir', f'IF({sc("方向输入")}="客户",1,IF({sc("方向输入")}="供应商",2,IF({sc("是客户")}=1,1,2)))')
-    sc.set('起', DATE_SEL.format(x='H3', d='P_建账日'))
+    sc.set('起选', DATE_SEL.format(x='H3', d='P_建账日'))
+    sc.set('起', f'MAX({sc("起选")},P_建账日)')                      # 早于建账日按建账日（建账前的数都在期初里）
     sc.set('起认出', OK_SEL.format(x='H3'))
     sc.set('止输入', DATE_SEL.format(x='J3', d='P_截止'))
-    sc.set('止', f'MIN({sc("止输入")},P_截止)')
+    sc.set('止0', f'MIN({sc("止输入")},P_截止)')
+    sc.set('止', f'MAX({sc("止0")},P_建账日-1)')                     # 早于建账日按建账日前一天（只有期初）
+    sc.set('前界', f'MIN({S0}-1,{S1})')                              # 期初余额算到这天（≤ 止 ≤ 截止）
     sc.set('止认出', OK_SEL.format(x='J3'))
     sc.set('lo', f'{S0}*{M}')
     sc.set('hi', f'({S1}+1)*{M}')
-    bef = lambda nm: f'{nm},"<"&{S0}'
+    bef = lambda nm: f'{nm},"<="&{sc("前界")}'
     per = lambda nm: dr(nm, S0, S1)
     upto = lambda nm: f'{nm},"<="&{S1}'
     cs = dict(
@@ -411,15 +433,18 @@ def build_stmt(ws):
                    f'"✓ "&{sc("简称")}&"（"&INDEX(位_类型,{U})&"）"&IF({sc("名")}="","　空着＝第一家客户",""))'),
         F_AUTOB, FILL_AUTO, align=ACW)
     ws.merge_cells('D4:F4')
-    put(ws, 'D4', f'=IF({D}=1,"按客户对","按供应商对")&IF({sc("方向输入")}="","（按单位类型）","")', F_AUTOB, FILL_AUTO, align=AC)
+    put(ws, 'D4', f'=IF({U}=0,"—",IF({D}=1,"按客户对","按供应商对")&IF({sc("方向输入")}="","（按单位类型）",""))', F_AUTOB,
+        FILL_AUTO, align=AC)
     ws['E4'].border = ws['F4'].border = BD
     put(ws, 'H4', f'={S0}', F_AUTOB, FILL_AUTO, DATE, AC)
     put(ws, 'J4', f'={S1}', F_AUTOB, FILL_AUTO, DATE, AC)
     ws.row_dimensions[4].height = 30
     ws.merge_cells(f'A5:{LAST}5')
     warn = (f'IF({sc("起认出")}=0,"⚠ 起日期没认出，按建账日。","")&IF({sc("止认出")}=0,"⚠ 止日期没认出，按截止日。","")'
+            f'&IF({sc("起选")}<P_建账日,"⚠ 起早于建账日 "&TEXT(P_建账日,"yyyy-mm-dd")&"，按建账日（建账前的数都在期初里）。","")'
+            f'&IF({sc("止输入")}<P_建账日,"⚠ 止早于建账日 "&TEXT(P_建账日,"yyyy-mm-dd")&"，按建账日前一天（只有期初）。","")'
             f'&IF({sc("止输入")}>P_截止,"⚠ 止晚于截止日 "&TEXT(P_截止,"yyyy-mm-dd")&"，按截止日算。","")'
-            f'&IF({S0}>{S1},"✗ 起晚于止，请改日期。","")'
+            f'&IF({sc("起选")}>{sc("止0")},"✗ 起晚于止，请改日期。","")'
             f'&IF({sc("笔数")}>{NL},"⚠ 共 "&{sc("笔数")}&" 笔，只列了前 {NL} 笔（合计是全部的），请缩短日期分几张对。","")')
     put(ws, 'A5', (f'=IF({warn}="","起空着＝建账日 "&TEXT(P_建账日,"yyyy-mm-dd")&"，止空着＝截止日 "&TEXT(P_截止,"yyyy-mm-dd")'
                    f'&"；往来单位空着＝第一家客户。下面第 6 行起是打印出来的对账单。",{warn})'), F_NOTE, align=ALW, border=False)
@@ -435,9 +460,10 @@ def build_stmt(ws):
     ws.conditional_formatting.add('A6', FormulaRule(formula=['LEFT($A$6,1)="⚠"'], font=Font(bold=True, color='FFC00000')))
     ws.row_dimensions[6].height = 40
     ws.merge_cells('A7:E7')
-    put(ws, 'A7', f'="对账期间："&TEXT({S0},"yyyy-mm-dd")&" 至 "&TEXT({S1},"yyyy-mm-dd")', F_HEADB, align=AL, border=False)
+    put(ws, 'A7', f'=IF({U}=0,"","对账期间："&TEXT({S0},"yyyy-mm-dd")&" 至 "&TEXT({S1},"yyyy-mm-dd"))', F_HEADB, align=AL,
+        border=False)
     ws.merge_cells(f'F7:{LAST}7')
-    put(ws, 'F7', f'="对方联系人："&{sc("联系人")}&"　　电话："&{sc("电话")}', F_TXT, align=AR, border=False)
+    put(ws, 'F7', f'=IF({U}=0,"","对方联系人："&{sc("联系人")}&"　　电话："&{sc("电话")})', F_TXT, align=AR, border=False)
     ws.row_dimensions[7].height = 22
     E = sc('期末')
     amt = lambda x: f'TEXT({x},"#,##0.00")'
@@ -448,7 +474,7 @@ def build_stmt(ws):
     put(ws, 'A8', '=' + big, F_BIG2, fill('FFFFF2CC'), align=ACW, border=False)
     ws.row_dimensions[8].height = 32
     ws.merge_cells(f'A9:{LAST}9')
-    put(ws, 'A9', (f'=IF({U}=0,"","期初余额 "&{amt(sc("期初"))}&" ＋ 本期"&IF({D}=1,"发货","到货")&" "&{amt(sc("货"))}'
+    put(ws, 'A9', (f'=IF({U}=0,"","上期结欠 "&{amt(sc("期初"))}&" ＋ 本期"&IF({D}=1,"发货","到货")&" "&{amt(sc("货"))}'
                    f'&" － 本期"&IF({D}=1,"回款","付款")&" "&{amt(sc("钱"))}&" ＝ 期末余额 "&{amt(E)}&" 元"'
                    f'&IF({sc("待定价")}>0,"；另有 "&{sc("待定价")}&" 笔"&IF({D}=1,"发货","到货")&"单价待定（金额没算）",""))'),
         F_TXT, align=ALW, border=False)
@@ -469,8 +495,8 @@ def build_stmt(ws):
     r = ST_O
     for col in 'ABCDEFGHIJ':
         put(ws, f'{col}{r}', None, F_TXTB, fill('FFF2F2F2'), align=AC)
-    put(ws, f'A{r}', f'=IF({U}=0,"","期初余额")', F_TXTB, fill('FFF2F2F2'), align=AL)
-    put(ws, f'C{r}', f'=IF({U}=0,"","截至 "&TEXT({S0}-1,"yyyy-mm-dd"))', F_TXTB, fill('FFF2F2F2'), align=AL)
+    put(ws, f'A{r}', f'=IF({U}=0,"","上期结欠")', F_TXTB, fill('FFF2F2F2'), align=AL)
+    put(ws, f'C{r}', f'=IF({U}=0,"","截至 "&TEXT({sc("前界")},"yyyy-mm-dd"))', F_TXTB, fill('FFF2F2F2'), align=AL)
     put(ws, f'I{r}', f'=IF({U}=0,"",{sc("期初")})', F_TXTB, fill('FFF2F2F2'), MONEY, AR)
 
     # ── 明细（活动区：明细 → 本期合计 → 共几笔 → 签字） ──
@@ -480,7 +506,8 @@ def build_stmt(ws):
         t, key, s, i = (f'${HS[x]}{r}' for x in ('类型', '键', '源', '条'))
         ws[f'{HS["k"]}{r}'] = k
         ws[f'{HS["k"]}{r}'].font = F_HELP
-        hset(ws, f'{HS["类型"]}{r}', f'IF({k}<={n},1,IF({k}={n}+1,2,IF({k}={n}+2,3,IF({k}={n}+4,4,IF({k}={n}+7,5,0)))))')
+        hset(ws, f'{HS["类型"]}{r}',
+             f'IF({U}=0,0,IF({k}<={n},1,IF({k}={n}+1,2,IF({k}={n}+2,3,IF({k}={n}+4,4,IF({k}={n}+7,5,0))))))')
         hset(ws, f'{HS["键"]}{r}', f'IF({t}=1,SMALL({SEQ},{k}),0)')
         hset(ws, f'{HS["源"]}{r}', f'IF({t}<>1,0,IF(MOD({key},{M})<={NG},1,2))')
         hset(ws, f'{HS["条"]}{r}', f'IF({s}=1,MOD({key},{M}),IF({s}=2,MOD({key},{M})-{NG},0))')
@@ -492,18 +519,20 @@ def build_stmt(ws):
         cell(ws, f'B{r}', (f'IF({s}=1,IF({D}=1,{no_s},{z("采_采购单号")}),IF({s}=2,IF({z("资_关联键")}="","",'
                            f'MID({z("资_关联键")},2,100)),""))'), align=AL)
         cash_lbl = (f'IF({D}=1,IF({z("资_净额")}<0,"退款","回款"),IF({z("资_支出额")}<0,"退回","付款"))')
-        cell(ws, f'C{r}', (f'IF({s}=1,{g("销_品名规格", "采_品名规格")},IF({s}=2,{cash_lbl},IF({t}=3,'
+        cell(ws, f'C{r}', (f'IF({s}=1,{g("销_品名规格", "采_品名规格")},IF({s}=2,{cash_lbl}&"（"&{z("资_账户")}&"）",IF({t}=3,'
                            f'IF({N_}>{NL},"⚠ 只列了前 {NL} 笔",""),IF({t}=4,"我方（盖章）：",IF({t}=5,"日期：","")))))'), align=AL)
         cell(ws, f'D{r}', f'IF({s}=1,IF({g("销_数量", "采_数量")}=0,"",{g("销_数量", "采_数量")}),"")', fmt=QTY, align=AR)
         cell(ws, f'E{r}', f'IF({s}=1,{g("销_计量单位", "采_计量单位")},"")')
         cell(ws, f'F{r}', f'IF({s}=1,IF({g("销_单价", "采_单价")}=0,"",{g("销_单价", "采_单价")}),"")', fmt=PRICE, align=AR)
-        cell(ws, f'G{r}', f'IF({s}=1,{g("销_金额", "采_金额")},IF({t}=2,{sc("货")},""))', fmt=MONEY, align=AR)
+        cell(ws, f'G{r}', (f'IF({s}=1,IF({g("销_待定价", "采_待定价")}=1,"待定价",{g("销_金额", "采_金额")}),'
+                           f'IF({t}=2,{sc("货")},""))'), fmt=MONEY, align=AR)
         cell(ws, f'H{r}', f'IF({s}=2,{g("资_净额", "资_支出额")},IF({t}=2,{sc("钱")},""))', fmt=MONEY, align=AR)
         cell(ws, f'I{r}', (f'IF({t}=1,ROUND({sc("期初")}+SUM(G${ST_D0}:G{r})-SUM(H${ST_D0}:H{r}),2),'
                            f'IF({t}=2,{E},""))'), fmt=MONEY, align=AR)
         bz = g('销_备注', '采_备注')
         cell(ws, f'J{r}', (f'IF({s}=1,IF({g("销_待定价", "采_待定价")}=1,"单价待定"&IF({bz}="","","；"&{bz}),{bz}),'
-                           f'IF({s}=2,{z("资_显示摘要")},IF({t}=2,IF({sc("待定价")}>0,"另有 "&{sc("待定价")}&" 笔单价待定",""),'
+                           f'IF({s}=2,{z("资_显示摘要")}&IF({z("资_备注")}="","","；"&{z("资_备注")}),'
+                           f'IF({t}=2,IF({sc("待定价")}>0,"另有 "&{sc("待定价")}&" 笔单价待定",""),'
                            f'IF({t}=4,"对方确认（盖章）：",IF({t}=5,"日期：","")))))'), align=AL)
     reg = f'A{ST_D0}:{LAST}{ST_D1}'
     t0 = f'${HS["类型"]}{ST_D0}'

@@ -42,7 +42,8 @@ HOWTO = [
                               '对账单就能和供应商的账一行对一行'),
     ('零星现买（当场付清、不用对账）', '【资金台帐】类别「零星料钱（现买）」，往来单位不用填；登过采购登记的货付款一定选「付供应商货款」，不然成本算两遍'),
     ('工资、电费、房租、社保', '【资金台帐】选对应类别；工资、电费是上个月的，「所属月份」填几月（利润算到那个月）。每月固定的在【固定支出】登记一次，【资金计划】自动看哪些还没付'),
-    ('计划要付的（电费、税、利息……）', '在【付款审批】申请一行，计划付款日期填哪天；老板批了，【资金计划】那个月就算进要付的'),
+    ('计划要付的（税、利息、一次性的大额……）', '在【付款审批】申请一行，计划付款日期填哪天；老板批了，【资金计划】那个月就算进要付的。'
+                                     '【固定支出】里已经登了的（房租、工资、社保、每月电费）不用再申请'),
     ('退货、扣款、折让、质量罚款', '【销售登记】或【采购登记】记一行负数金额，产品名称写原因'),
     ('开发票、收发票', '【发票登记】一张一行：开出（我们开给客户）或收到（供应商开来的）、往来单位、价税合计；税额空着自动算'),
     ('账户之间倒钱（转账、取现、存现）', '【资金台帐】记两行「内部转账」：转出账户记支出、转进账户记收入，金额一样；手续费另记一行'),
@@ -63,11 +64,13 @@ def _pl_month(j):
     m = f'(P_年度*100+{j})'
     upto = '资_日期,"<="&P_截止'
     cash = lambda kind: f'SUMIFS(资_支出额,资_归类,"{kind}",资_所属年月,{m},{upto})'
+    bm = ym('P_建账日')
     has = f'COUNTIFS(库存_年月,{m},库存_有值,1)>0'
     val = f'SUMIFS(库存_估值,库存_年月,{m},库存_有值,1)'
     prevm = f'IFERROR(LARGE(库存_键,COUNTIF(库存_键,">="&{m})+1),0)'
-    inv = (f'IF({has},IF({prevm}>0,SUMIFS(库存_估值,库存_年月,{prevm},库存_有值,1)-{val},'
-           f'IF(ISNUMBER(P_期初库存),P_期初库存-{val},0)),0)')
+    prev_val = (f'IF(AND({prevm}>0,OR({prevm}>={bm},NOT(ISNUMBER(P_期初库存)))),SUMIFS(库存_估值,库存_年月,{prevm},库存_有值,1),'
+                f'IF(ISNUMBER(P_期初库存),P_期初库存,0))')
+    inv = f'IF(AND({m}>={bm},{has},OR({prevm}>0,ISNUMBER(P_期初库存))),{prev_val}-{val},0)'      # 跟【利润表】同一规则
     return dict(
         收入=f'SUMIFS(销_金额,销_计入往来,1,销_年月,{m},销_日期,"<="&P_截止)',
         采购=f'SUMIFS(采_金额,采_计入往来,1,采_年月,{m},采_日期,"<="&P_截止)',
@@ -125,8 +128,9 @@ def build(wb, ctx=None):
         c0, cv = (('B', 'C'), ('F', 'G'), ('J', 'K'))[i % 3]
         rr = r + 1 + i // 3
         a = f'INDEX(账户_名称,{i + 1})'
-        put(ws, f'{c0}{rr}', f'=IF({a}="","",{a}&IF(INDEX(账户_可用,{i + 1})=0,"（不算可用）",""))', F_TXTB, align=AL, border=False)
-        put(ws, f'{cv}{rr}', f'=IF({a}="","",ROUND({bal(i + 1)},2))', F_AUTOB, None, MONEY, AR, border=False)
+        skip = f'OR({a}="",{_dup(i + 1)})'                      # 重名的只算第一个（跟资金日报一样）
+        put(ws, f'{c0}{rr}', f'=IF({skip},"",{a}&IF(INDEX(账户_可用,{i + 1})=0,"（不算可用）",""))', F_TXTB, align=AL, border=False)
+        put(ws, f'{cv}{rr}', f'=IF({skip},"",ROUND({bal(i + 1)},2))', F_AUTOB, None, MONEY, AR, border=False)
         ws.merge_cells(f'{cv}{rr}:{CL(CI(cv) + 1)}{rr}')
     last_acc = r + (NA + 2) // 3
     ws.conditional_formatting.add(f'B{r + 1}:L{last_acc}', FormulaRule(formula=[f'AND(ISNUMBER(B{r + 1}),B{r + 1}<-0.005)'], font=F_RED))
@@ -143,7 +147,8 @@ def build(wb, ctx=None):
           ('="超 "&P_回款天数&" 天没回款"', f'=COUNTIFS({od})&" 家 / "&TEXT(SUMIFS(位_应收,{od}),"#,##0")', '@', SH_AR),
           ('我们欠供应商（合计）', '=SUMIFS(位_应付,位_是供应商,1,位_应付,">0")', MONEY, SH_AP),
           ('预付供应商', '=-SUMIFS(位_应付,位_是供应商,1,位_应付,"<0")', MONEY, SH_AP),
-          ('还没定价（发货 / 到货）', '=COUNTIFS(销_待定价,1,销_计入往来,1)&" 笔 / "&COUNTIFS(采_待定价,1,采_计入往来,1)&" 笔"', '@', SH_SALE),
+          ('还没定价（发货 / 到货）', '=COUNTIFS(销_待定价,1,销_计入往来,1,销_日期,"<="&P_截止)&" 笔 / "&COUNTIFS(采_待定价,1,采_计入往来,1,采_日期,"<="&P_截止)&" 笔"',
+           '@', SH_SALE),
           ('客户还没开票', '=SUMIFS(位_未开票,位_是客户,1,位_未开票,">0")', MONEY, SH_INVS),
           ('供应商欠我们发票', '=SUMIFS(位_欠票,位_是供应商,1,位_欠票,">0")', MONEY, SH_INVS),
           ('对账单', '选一家、选起止日期，A4 打印', '@', SH_STMT)]
@@ -196,7 +201,7 @@ def build(wb, ctx=None):
         ws[f'{c}1'].font = F_HELP
         hide(ws, c)
     mon = lambda k: f'INDEX(${hc[k]}$2:${hc[k]}$13,MONTH(P_截止))'
-    yr = lambda k: f'SUM(${hc[k]}$2:${hc[k]}$13)'
+    yr = lambda k: f'SUM(${hc[k]}$2:INDEX(${hc[k]}$2:${hc[k]}$13,MONTH(P_截止)))'      # 只加到截止月
     lines = [('销售收入（发货）', lambda g: g('收入')),
              ('销售成本', lambda g: f'{g("采购")}+{g("生产")}+{g("折旧")}+{g("库存")}'),
              ('毛利', lambda g: f'{g("收入")}-({g("采购")}+{g("生产")}+{g("折旧")}+{g("库存")})'),
@@ -309,8 +314,13 @@ def build(wb, ctx=None):
     ws.oddFooter.center.text = '第 &P 页 共 &N 页'
 
 
+def _dup(a):
+    """第 a 个账户名在它前面出现过（重名的只算第一个）"""
+    return '0=1' if a == 1 else f'COUNTIF(INDEX(账户_名称,1):INDEX(账户_名称,{a - 1}),{esc(f"INDEX(账户_名称,{a})")})>0'
+
+
 def acc_expr(flag):
-    """可用资金（flag=1）或手上承兑（flag=0，账户_可用=0 的账户）到截止日的余额"""
-    return (f'(SUMIFS(账户_期初余额,账户_可用,{flag},账户_名称,"?*")'
-            + ''.join(f'+IF(AND(INDEX(账户_名称,{a})<>"",INDEX(账户_可用,{a})={flag}),SUMIFS(资_净额,资_账户号,{a},资_日期,"<="&P_截止),0)'
-                      for a in range(1, N_ACC + 1)) + ')')
+    """可用资金（flag=1）或手上承兑（flag=0，账户_可用=0 的账户）到截止日的余额；重名账户只算第一个（跟资金日报一样）"""
+    return ('(0' + ''.join(f'+IF(AND(INDEX(账户_名称,{a})<>"",INDEX(账户_可用,{a})={flag},NOT({_dup(a)})),'
+                           f'INDEX(账户_期初余额,{a})+SUMIFS(资_净额,资_账户号,{a},资_日期,"<="&P_截止),0)'
+                           for a in range(1, N_ACC + 1)) + ')')

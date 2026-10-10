@@ -2,24 +2,30 @@
 """计划组（紫）：资金计划、待审批付款单、采购计划汇总。只用 layout 的定义名称和本表格子，不引用录入表。口径见 agent_common「口径速查」。
 
 【资金计划】黄格 B3 月份 m（2026-10 / 202610 / 只填 10＝截止日那年的 10 月；空＝P_截止年月）。
-   第 5～12 行（固定位置，首页可引用）：C5 现在可用资金（账户_可用=1，按日期算到 P_截止）、C6 本月固定支出还没付（① 没付合计）、
+   第 5～12 行（固定位置，首页可引用）：C5 现在可用资金（账户_可用=1，按日期算到 P_截止）、C6 本月固定支出还没付（① 没付合计；
+   m 比截止年月晚时再加截止月还没付的、截止月以后到 m 前一个月整月的，标签变成「含之前月份」）、
    C7 批了还没付（② 还差合计）、C8 预计还剩＝C5－C6－C7、C9 等老板审批（③ 合计）、C10 如果待审批的都批了＝C8－C9、
    C11 手上票据（承兑，账户_可用=0，不算可用）、C12 采购计划同意了还没买（购_状态码=1 的 购_预计金额，只供参考）。
    第 14 行起四块一块接一块往下排（前一块有几行占几行，不留大段空行）：
-   ① 固定支出（固_有效=1、开始年月≤m≤结束年月，按 _固 顺序）：已付＝按编号键 ＋（先占的）按 "固|"&匹配键，资_年月=m、资_日期≤P_截止；
+   ① 固定支出（固_有效=1、开始年月≤m≤结束年月，按 _固 顺序）：已付＝按编号键 ＋（这个月先占的）按 "固|"&匹配键，资_年月=m、资_日期≤P_截止；
+      「这个月先占」＝m 月生效、本表上面 m 月生效的行里没有同一匹配键（不用 固_先占：换了新的一条时旧的不生效，付款要算给新的）；
       没付＝MAX(0,应付－已付)；状态：已付清 / 没付 / 付了一部分；m＝截止年月、0<每月几号<截止日的日、没付清 →「过了日子还没付」。
    ② 批了还没付（批_状态码 1/2、批_计划年月≤m，按 批_排序键，最多 100 单）；③ 等老板审批（状态码 0、计划年月≤m，最多 100 单）；
-   ④ 暂缓（状态码 5，全部，最多 50 单）。合计都是全部的（不受「只列前几条」影响）。
+   ④ 暂缓（状态码 5，全部，最多 50 单）。合计都是全部的（不受「只列前几条」影响）。②③ 提示：没填/过了计划日期、
+   收款单位跟本月生效的固定支出一样（可能重复登记）、③ 这家有到货没定价。「回首页」在 K3（打印范围 A～J 外）。
 【待审批付款单】打印给老板签字（A4 横向一页宽，第 7 行表头每页重复）。第 5 行（固定位置）：A5 现在可用资金、D5 手上票据、
    F5 本月（截止月）固定支出还没付、H5 已批未付（全部）、J5 待审批合计、L5 都批了还剩（＝A5－F5－H5－J5）。
    第 8 行起往下排：待审批（状态码 0，按 批_排序键，最多 100 单）→ 合计 → 暂缓（状态码 5，最多 50 单）→ 合计 → 老板签字。
+   超过显示条数时，清单下面的合计只算列出来的（老板签字的单子上看得到的），全部的在第 5 行。
    「批示」「批准金额」两栏不放数，只画框给老板手写。
 【采购计划汇总】黄格 C3 日期 d（空＝P_截止）、F3 月份 m（空＝P_截止年月）、H3 打印（当天的单 / 全部；空＝当天的单，只印 ①）。
    第 7 行起往下排：① d 那天提交的（购_排序键＝提交日期×SORT_M＋n 连着的一段，最多 100 条）；
    ② m 月提交的按状态（7 种）、按提交人（人员_姓名 顺序，同名只算第一个，外加「其他」＝合计－各人）；
    ③ 待审批、④ 同意没买（全部，按需用日期，没填的排最后，最多 100 条；需用日期≤P_截止 标红「已到日子」）。
+   C3 空着、采购计划最晚的提交日期比截止日晚时，A4 提醒去选那天。冻结到第 4 行；「回首页」在 K3（打印范围外）。
 隐藏列（三张表一样）：AA 名字、AB 值（标量，第 3 行起）；AC～AG 往下排的「段、段内第几行、行类、第几条、来源行」；AI～AP 每段的分界（第 3 行起）；
-   AR～AX 固定支出逐条 / 人员逐个（第 3 行起）；BB～BE 账户（第 3 行起 15 行）；BH 起排序键辅助列（第 2 行起，每条源数据一行）；counter() 的条件列从 CA 往右。
+   AR～BA、BF 固定支出逐条 / AR～AV 人员逐个（第 3 行起）；BB～BE 账户（第 3 行起 15 行）；BH 起排序键辅助列（第 2 行起，每条源数据一行）；
+   BL～BR 资金计划的截止月固定支出（选以后的月份用）；counter() 的条件列从 CA 往右。
 行类：1 段标题、2 表头、5 明细、3 合计、6 共几条、7x 附加行（签字）、0 空。"""
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
@@ -36,7 +42,7 @@ SIGN_BD = Border(bottom=Side(style='thin', color='FF000000'))
 LBL = fill('FFE4DFEC')
 F_KV = Font(name=YH, sz=11, bold=True, color='FF1F3864')
 F_KVB = Font(name=YH, sz=12, bold=True, color='FF1F3864')
-YM_FMT = '[<100000]yyyy-mm;0'
+YM_FMT = '[<13]0"月";[<100000]yyyy-mm;0'   # 只填 10 显示「10月」；日期显示 2026-10；202610 原样
 NUM = 'General'
 SHOW_APV, SHOW_HOLD, SHOW_PP = 100, 50, 100
 ST_PP = ['待审批', '同意没买', '已下单', '已到货', '不同意', '暂缓', '取消']
@@ -127,7 +133,7 @@ def month_selector(ws, sc, cell, keys=('输入', '认出前', 'm', '认出', 'Y'
 
 
 def neg(v, word):
-    """负数写成文字：预付 / 多给"""
+    """负数写成文字：预付 / 多收票"""
     return f'IF({v}="","",IF({v}<-0.005,"{word} "&TEXT(-{v},"#,##0.00"),{v}))'
 
 
@@ -275,36 +281,67 @@ def acct_table(ws, r0=3, cols=('BB', 'BC', 'BD', 'BE')):
     return (R2(f'SUMIFS({g(cb)},{g(cf_)},1,{g(ca)},1)'), R2(f'SUMIFS({g(cb)},{g(cf_)},1,{g(ca)},0)'))
 
 
-FIX_C = dict(生效='AR', 应付='AS', 已付='AT', 没付='AU', 过期='AV', 状态='AW', 计数='AX')
+FIX_C = dict(生效='AR', 应付='AS', 已付='AT', 没付='AU', 过期='AV', 状态='AW', 计数='AX', 键='AY', 先占='AZ', 单位='BA',
+             名='BF')
+FIX_CUT = dict(生效='BL', 应付='BM', 已付='BN', 没付='BO', 键='BP', 先占='BQ', 后月='BR')   # 资金计划：截止月（选以后的月份时用）
 
 
-def fix_table(ws, m, r0=3):
-    """固定支出第 i 条（第 r0+i-1 行）在月份 m：生效、应付、已付（资_年月=m、≤截止）、没付、过期、状态；返回汇总公式 dict"""
-    C = FIX_C
+def mon_idx(x):
+    """YYYYMM → 月序号（年×12＋月），好算两个年月之间隔几个月"""
+    return f'(INT({x}/100)*12+MOD({x},100))'
+
+
+def fix_table(ws, m, r0=3, C=FIX_C, gate=None, lite=False):
+    """固定支出第 i 条（第 r0+i-1 行）在月份 m：生效、应付、已付（资_年月=m、≤截止）、没付、过期、状态；返回汇总公式 dict。
+       先占按「这个月」算：这个月生效、而且本表上面这个月生效的行里没有同一个匹配键（换了新的一条、旧的不生效了，
+       没填关联单号的付款就算给新的那条）。gate：另加的生效条件；lite：只算到没付（不要状态、计数）。"""
     for k, c in C.items():
         ws[f'{c}{r0 - 1}'] = k
         ws[f'{c}{r0 - 1}'].font = F_HELP
     upto = '资_日期,"<="&P_截止'
+    last = r0 + N_FIX - 1
     for i in range(N_FIX):
         n, r = i + 1, r0 + i
         g = lambda k: f'INDEX(固_{k},{n})'
-        on, due, paid, left, late = (f'{C[k]}{r}' for k in ('生效', '应付', '已付', '没付', '过期'))
-        hset(ws, on, f'IF(AND({g("有效")}=1,{g("开始年月")}<={m},{g("结束年月")}>={m}),1,0)')
+        on, due, paid, left, key, first = (f'{C[k]}{r}' for k in ('生效', '应付', '已付', '没付', '键', '先占'))
+        cond = f'{g("有效")}=1,{g("开始年月")}<={m},{g("结束年月")}>={m}' + (f',{gate}' if gate else '')
+        hset(ws, on, f'IF(AND({cond}),1,0)')
+        hset(ws, key, f'IF({on}=1,{g("匹配键")},"")')
+        prev = (f'COUNTIFS(${C["键"]}${r0}:{C["键"]}{r - 1},{esc(key)},${C["生效"]}${r0}:{C["生效"]}{r - 1},1)'
+                if i else '0')
+        hset(ws, first, f'IF({on}<>1,0,IF({prev}=0,1,0))')
         hset(ws, due, f'IF({on}=1,{g("每月金额")},0)')
         k1 = f'IF({g("编号键")}="",0,SUMIFS(资_支出额,资_归属,{esc(g("编号键"))},资_年月,{m},{upto}))'
-        k2 = (f'IF({g("先占")}=1,SUMIFS(资_支出额,资_归属,{esc(chr(34) + "固|" + chr(34) + "&" + g("匹配键"))},'
+        k2 = (f'IF({first}=1,SUMIFS(资_支出额,资_归属,{esc(chr(34) + "固|" + chr(34) + "&" + key)},'
               f'资_年月,{m},{upto}),0)')
         hset(ws, paid, f'IF({on}<>1,0,ROUND({k1}+{k2},2))')
         hset(ws, left, f'IF({on}<>1,0,MAX(0,ROUND({due}-{paid},2)))')
+        if lite:
+            continue
+        late = f'{C["过期"]}{r}'
         hset(ws, late, f'IF(AND({on}=1,{left}>0.005,{m}=P_截止年月,{g("每月几号")}>0,{g("每月几号")}<DAY(P_截止)),1,0)')
         hset(ws, f'{C["状态"]}{r}', (f'IF({on}<>1,"",IF({late}=1,"过了日子还没付",IF({left}<=0.005,"已付清",'
                                     f'IF({paid}>0.005,"付了一部分","没付"))))'))
+        # 给 ②③ 提示「可能跟固定支出重复」：这个月生效、填了收款单位的，放收款单位和编号（没编号放项目）
+        un = f'{C["单位"]}{r}'
+        hset(ws, un, f'IF({on}=1,{g("收款单位")}&"","")')
+        hset(ws, f'{C["名"]}{r}', f'IF({un}="","",IF({g("编号")}<>"",{g("编号")},{g("项目")}))')
+    g = lambda k: f'${C[k]}${r0}:${C[k]}${last}'
+    out = dict(没付=R2(f'SUMIFS({g("没付")},{g("生效")},1)'), rng=g)
+    if lite:
+        return out
     counter(ws, C['计数'], r0, N_FIX, lambda i: f'${C["生效"]}${r0 + i}=1')
-    g = lambda k: f'${C[k]}${r0}:${C[k]}${r0 + N_FIX - 1}'
-    return dict(n=cnt(C['计数'], r0, N_FIX), 应付=R2(f'SUMIFS({g("应付")},{g("生效")},1)'),
-                已付=R2(f'SUMIFS({g("已付")},{g("生效")},1)'), 没付=R2(f'SUMIFS({g("没付")},{g("生效")},1)'),
-                过期n=f'COUNTIFS({g("过期")},1)', 未清n=f'COUNTIFS({g("生效")},1,{g("没付")},">0.005")',
-                rng=g, kth=lambda k: kth(k, C['计数'], r0, N_FIX))
+    out.update(n=cnt(C['计数'], r0, N_FIX), 应付=R2(f'SUMIFS({g("应付")},{g("生效")},1)'),
+               已付=R2(f'SUMIFS({g("已付")},{g("生效")},1)'),
+               过期n=f'COUNTIFS({g("过期")},1)', 未清n=f'COUNTIFS({g("生效")},1,{g("没付")},">0.005")',
+               kth=lambda k: kth(k, C['计数'], r0, N_FIX))
+    return out
+
+
+def fix_dup(fx, unit):
+    """②③ 提示：收款单位跟这个月生效的某条固定支出一样 →「；可能跟固定支出 GD04 重复」，不然空"""
+    return (f'IF({unit}="","",IFERROR("；可能跟固定支出 "&INDEX({fx["rng"]("名")},MATCH({esc(unit)},{fx["rng"]("单位")},0))'
+            f'&" 重复",""))')
 
 
 def key_col(ws, col, n_src, cond, key, title):
@@ -339,22 +376,24 @@ def kpi_rows(ws, r, last, items):
 
 # ═══════════════════════════════ 资金计划 ═══════════════════════════════
 TIP_PLAN = ('💡 看这个月的钱够不够付。黄格选月份（填 2026-10 或 202610，只填 10 也行；空着＝截止日那个月）。'
-            '顶上：现在可用资金（银行、微信、现金……算到截止日）减掉这个月固定支出还没付的、老板批了还没付的，就是预计还剩；'
-            '再减掉等老板审批的，看都批了够不够。下面四块：① 这个月的固定支出（【固定支出】里这个月生效的；付款时资金台帐关联单号选编号，'
-            '或者类别、收款单位对上，就算付了；已付按付款月份算到截止日）；② 老板批了还没付完的；③ 等老板审批的（②③ 都是计划在这个月及以前的）；④ 暂缓的（全部）。')
+            '顶上：现在可用资金（银行、微信、现金……算到截止日）减掉这个月固定支出还没付的、老板批了还没付的，就是预计还剩'
+            '（选以后的月份，截止日那个月起还没付的固定支出也一起扣）；再减掉等老板审批的，看都批了够不够。'
+            '下面四块：① 这个月的固定支出（【固定支出】里这个月生效的；付款时资金台帐关联单号选编号，'
+            '或者类别、收款单位对上，就算付了；已付按付款月份算到截止日）；② 老板批了还没付完的；③ 等老板审批的（②③ 都是计划在这个月及以前的；'
+            '「现在欠这家」＝我们还欠收款单位的货款，「预付」＝先付了钱，「多收票」＝对方发票开多了）；④ 暂缓的（全部）。')
 FP_R0 = 14
 
 
 def build_fplan(ws):
     LAST = 'J'
-    widths(ws, {'A': 13, 'B': 16, 'C': 22, 'D': 14, 'E': 12.5, 'F': 13.5, 'G': 13.5, 'H': 13.5, 'I': 11, 'J': 16})
+    widths(ws, {'A': 13, 'B': 16, 'C': 22, 'D': 14, 'E': 12.5, 'F': 13.5, 'G': 13.5, 'H': 13.5, 'I': 11, 'J': 22, 'K': 10})
     title(ws, '=IF(P_公司名称="","",P_公司名称&"　")&"资金计划"', LAST, C_PLAN, TIP_PLAN)
     selector(ws, 'A3', '选月份', 'B3', None, fmt=YM_FMT)
-    home_link(ws, f'{LAST}3')
+    home_link(ws, 'K3')                       # 放在打印范围（A～J）外面
     ws.row_dimensions[3].height = 30
     keys = ['输入', '认出前', 'm', '认出', 'Y', 'mo', '可用', '票据', '固n', '固应付', '固已付', '固没付', '固过期n', '固未清n',
             '批n', '批批准', '批已付', '批还差', '审n', '审申请', '缓n', '缓申请', '购n', '购金额', '预计还剩', '都批了还剩',
-            '尾', '末行']
+            '尾', '末行', '之前没付', '固没付含前']
     sc = Sc(ws, keys)
     month_selector(ws, sc, 'B3')
     m, Y, mo = sc('m'), sc('Y'), sc('mo')
@@ -365,6 +404,17 @@ def build_fplan(ws):
     for k in ('应付', '已付', '没付', '过期n', '未清n'):
         sc.set(f'固{k}', fx[k])
     sc.set('固n', fx['n'])
+    # 选以后的月份：截止日那个月还没付的 ＋ 中间几个月（截止月以后的月份还没有付款，整月都算没付）
+    later = f'{m}>P_截止年月'
+    fxc = fix_table(ws, 'P_截止年月', C=FIX_CUT, gate=later, lite=True)
+    C2 = FIX_CUT
+    for i in range(N_FIX):
+        n = i + 1
+        g = lambda k: f'INDEX(固_{k},{n})'
+        span = (f'MAX(0,MIN({mon_idx(g("结束年月"))},{mon_idx(m)}-1)-MAX({mon_idx(g("开始年月"))},{mon_idx("P_截止年月")}+1)+1)')
+        hset(ws, f'{C2["后月"]}{3 + i}', f'IF(AND({later},{g("有效")}=1),ROUND({g("每月金额")}*{span},2),0)')
+    sc.set('之前没付', f'IF({later},ROUND({fxc["没付"]}+SUM(${C2["后月"]}$3:${C2["后月"]}${N_FIX + 2}),2),0)')
+    sc.set('固没付含前', R2(f'{sc("固没付")}+{sc("之前没付")}'))
     # 排序辅助：② 批了没付、③ 待审批、④ 暂缓
     pi = lambda k, n: f'INDEX(批_{k},{n})'
     K2 = key_col(ws, 'BH', N_APV, lambda n: (f'AND({pi("有效", n)}=1,OR({pi("状态码", n)}=1,{pi("状态码", n)}=2),'
@@ -384,13 +434,14 @@ def build_fplan(ws):
     sc.set('缓申请', R2('SUMIFS(批_申请金额,批_有效,1,批_状态码,5)'))
     sc.set('购n', 'COUNTIFS(购_有效,1,购_状态码,1)')
     sc.set('购金额', R2('SUMIFS(购_预计金额,购_有效,1,购_状态码,1)'))
-    sc.set('预计还剩', R2(f'{sc("可用")}-{sc("固没付")}-{sc("批还差")}'))
+    sc.set('预计还剩', R2(f'{sc("可用")}-{sc("固没付含前")}-{sc("批还差")}'))
     sc.set('都批了还剩', R2(f'{sc("预计还剩")}-{sc("审申请")}'))
 
     ws.merge_cells(f'C3:I3')
     put(ws, 'C3', (f'="实际用的："&{Y}&" 年 "&{mo}&" 月"&IF(TRIM(B3&"")="","（空着＝截止日那个月）","")'
                    f'&IF({sc("认出")}=0,"　⚠ 没认出这个月份，先按截止日那个月","")'
-                   f'&IF({m}>P_截止年月,"　（这个月还没到：钱只算到截止日 "&TEXT(P_截止,"yyyy-mm-dd")&"，固定支出都算没付）","")'
+                   f'&IF({later},"　（这个月还没到：钱只算到截止日 "&TEXT(P_截止,"yyyy-mm-dd")&"，固定支出都算没付；'
+                   f'截止日那个月起还没付的固定支出也一起扣）","")'
                    f'&IF({m}<P_截止年月,"　（以前的月份：已付算到截止日）","")'
                    f'&IF(DATE({Y},{mo}+1,0)<P_建账日,"　⚠ 这个月在建账以前，没有流水（固定支出都算没付）","")'),
         F_NOTE, align=ALW, border=False)
@@ -400,11 +451,16 @@ def build_fplan(ws):
     section(ws, 4, 'A', LAST, f'="这个月的钱够不够（"&{Y}&" 年 "&{mo}&" 月；钱算到截止日 "&TEXT(P_截止,"yyyy-mm-dd")&"）"', C_PLAN)
     left = sc('预计还剩')
     allok = sc('都批了还剩')
+    cy, cmo = 'INT(P_截止年月/100)', 'MOD(P_截止年月,100)'
+    prev_m = f'IF({mo}=1,({Y}-1)&" 年 12 月",{Y}&" 年 "&({mo}-1)&" 月")'
     kpi_rows(ws, 5, LAST, [
         ('现在可用资金', sc('可用'), '="银行、微信、支付宝、现金等账户截至 "&TEXT(P_截止,"yyyy-mm-dd")&" 的余额合计（不含承兑汇票）"', False),
-        ('－ 本月固定支出还没付', sc('固没付'),
-         f'="下面 ① 的「没付」合计：这个月 "&{sc("固n")}&" 条固定支出，还有 "&{sc("固未清n")}&" 条没付清"'
-         f'&IF({sc("固过期n")}>0,"（"&{sc("固过期n")}&" 条过了日子）","")', False),
+        (f'=IF({later},"－ 固定支出还没付（含之前月份）","－ 本月固定支出还没付")', sc('固没付含前'),
+         f'="下面 ① 的「没付」合计"&IF({later},"（"&TEXT({sc("固没付")},"#,##0.00")&"）","")&"：这个月 "&{sc("固n")}&" 条固定支出，还有 "'
+         f'&{sc("固未清n")}&" 条没付清"&IF({sc("固过期n")}>0,"（"&{sc("固过期n")}&" 条过了日子）","")'
+         f'&IF({later},"；另加 "&{cy}&" 年 "&{cmo}&" 月（截止日那个月）"'
+         f'&IF({mon_idx(m)}-{mon_idx("P_截止年月")}=1,"","到 "&{prev_m})&"还没付的 "&TEXT({sc("之前没付")},"#,##0.00"),"")',
+         False),
         ('－ 批了还没付', sc('批还差'), f'="下面 ② 的「还差」合计："&{sc("批n")}&" 单（老板同意了、计划在这个月及以前、还没付完的）"', False),
         ('＝ 预计还剩', left, f'=IF({left}<-0.005,"⚠ 不够付，还差 "&TEXT(-{left},"#,##0.00")&"：先催回款、贴现承兑，或者跟老板商量哪些晚点付","够付")', True),
         ('－ 等老板审批的', sc('审申请'), f'="下面 ③ 合计："&{sc("审n")}&" 单（计划在这个月及以前的申请金额）"', False),
@@ -434,24 +490,28 @@ def build_fplan(ws):
                       C=f'IF({sc("固n")}=0,"这个月没有固定支出",IF({sc("固过期n")}>0,"⚠ "&{sc("固过期n")}&" 条过了日子还没付",""))'),
            n_all=sc('固n'), cap=N_FIX, src=lambda k: fx['kth'](k))
     P = lambda k, n: f'INDEX(批_{k},{n})'
-    plan_hint = lambda n: (f'IF({P("计划付款日期", n)}=0,"没填计划日期",IF({P("计划付款日期", n)}<P_截止,"过了计划日期",""))')
+    # 提示：几样都有就用「；」连起来（每样前面带「；」，最后去掉第一个）
+    plan_hint = lambda n: (f'IF({P("计划付款日期", n)}=0,"；没填计划日期",IF({P("计划付款日期", n)}<P_截止,"；过了计划日期",""))')
+    dup = lambda n: fix_dup(fx, P('单位', n))
+    pend = lambda n: (f'IF({P("单位号", n)}=0,"",IF(INDEX(位_待定价到货,MAX(1,{P("单位号", n)}))>0,'
+                      f'"；另有 "&INDEX(位_待定价到货,MAX(1,{P("单位号", n)}))&" 笔到货没定价（没算进欠款）",""))')
     common = dict(A=lambda n, k: P('单号', n), B=lambda n, k: P('单位', n), C=lambda n, k: P('付款内容', n),
                   D=lambda n, k: dt0(P('申请日期', n)), E=lambda n, k: dt0(P('计划付款日期', n)))
     fl.add(title=dict(A='"② 批了没付"', B='"计划在本月及以前"', C='"老板同意了、还没付完的"'),
            head=dict(A='"单号"', B='"收款单位"', C='"付款内容"', D='"申请日期"', E='"计划付款日期"', F='"批准金额"', G='"已付"',
                      H='"还差"', I='"付款账户"', J='"提示"'),
            item=dict(common, F=lambda n, k: P('批准金额', n), G=lambda n, k: P('已付', n), H=lambda n, k: P('未付', n),
-                     I=lambda n, k: P('付款账户', n), J=lambda n, k: plan_hint(n)),
+                     I=lambda n, k: P('付款账户', n), J=lambda n, k: f'MID({plan_hint(n)}&{dup(n)},2,200)'),
            tot=dict(A='"合计"', F=sc('批批准'), G=sc('批已付'), H=sc('批还差')),
            trail=dict(A=f'IF({sc("批n")}=0,"（没有）","共 "&{sc("批n")}&" 单")',
                       C=f'IF({sc("批n")}>{SHOW_APV},"只列了前 {SHOW_APV} 单（合计是全部的）","")'),
            n_all=sc('批n'), cap=SHOW_APV, src=lambda k: f'MOD(SMALL({K2},{k}),{M})')
     fl.add(title=dict(A='"③ 等老板审批"', B='"计划在本月及以前"', C='"打印看【待审批付款单】"'),
            head=dict(A='"单号"', B='"收款单位"', C='"付款内容"', D='"申请日期"', E='"计划付款日期"', F='"申请金额"',
-                     G='"这家现在欠"', H='"欠票"', I='"申请人"', J='"提示"'),
+                     G='"现在欠这家"', H='"欠票"', I='"申请人"', J='"提示"'),
            item=dict(common, F=lambda n, k: P('申请金额', n), G=lambda n, k: neg(P('现在欠款', n), '预付'),
-                     H=lambda n, k: neg(P('欠票', n), '多给'), I=lambda n, k: P('申请人', n),
-                     J=lambda n, k: (f'IF(AND({P("计划付款日期", n)}>0,{P("计划付款日期", n)}<P_截止),"过了计划日期","")')),
+                     H=lambda n, k: neg(P('欠票', n), '多收票'), I=lambda n, k: P('申请人', n),
+                     J=lambda n, k: f'MID({plan_hint(n)}&{dup(n)}&{pend(n)},2,200)'),
            tot=dict(A='"合计"', F=sc('审申请')),
            trail=dict(A=f'IF({sc("审n")}=0,"（没有）","共 "&{sc("审n")}&" 单")',
                       C=f'IF({sc("审n")}>{SHOW_APV},"只列了前 {SHOW_APV} 单（合计是全部的）","")'),
@@ -471,20 +531,21 @@ def build_fplan(ws):
     T, S0, r0 = fl.t(), fl.s(), FP_R0
     red = dict(font=Font(bold=True, color='FFC00000'), border=CF_BD)
     fl.cf(LAST, [
-        ('J', 'J', lambda c: f'AND({T}=5,OR($J{r0}="过了日子还没付",$J{r0}="过了计划日期"))', red),
+        ('J', 'J', lambda c: f'AND({T}=5,OR({S0}=1,{S0}=2,{S0}=3),ISNUMBER(FIND("过了",$J{r0})))', red),
         ('J', 'J', lambda c: f'AND({T}=5,$J{r0}="已付清")', dict(font=Font(color='FF548235'), border=CF_BD)),
         ('H', 'H', lambda c: f'AND({T}=5,{S0}=1,N($H{r0})>0.005)', dict(font=Font(bold=True), border=CF_BD)),
         ('G', 'H', lambda c: f'AND({T}=5,{S0}=3,ISTEXT({c}{r0}))', dict(font=Font(bold=True, color='FF2F75B5'), border=CF_BD)),
         ('C', 'C', lambda c: f'AND({T}=6,LEFT($C{r0},1)="⚠")', dict(font=Font(bold=True, color='FFC00000'))),
     ])
-    hide(ws, *[CL(i) for i in range(CI('K'), CI('BJ') + 1)])
+    hide(ws, *[CL(i) for i in range(CI('L'), CI(FIX_CUT['后月']) + 1)])
     finish(ws, LAST, sc('末行'), fl.r1, 'A4')
 
 
 # ═══════════════════════════════ 待审批付款单 ═══════════════════════════════
 TIP_APR = ('💡 给老板打印签字用（A4 横向一页宽）：【付款审批】里全部还没审批的单，按计划付款日期排（没填计划日期的按申请日期），'
            '「批示」「批准金额」两栏空着给老板手写；下面另列暂缓的单。老板批完，出纳把结果填回【付款审批】紫色几列（审批结果、批准金额、审批意见、审批日期）。'
-           '这家现在欠、欠票、已批未付都是截止日的数；「预付」＝已经先付了钱，「多给」＝发票给多了。')
+           '现在欠这家（我们还欠收款单位的货款）、欠票、已批未付都是截止日的数；「预付」＝已经先付了钱，「多收票」＝对方发票开多了，'
+           '「＋N笔没定价」＝还有到货没定价、没算进欠款。都批了还剩＝可用资金－本月固定支出还没付－已批未付－待审批（票据不算）。')
 AP_R0 = 8
 
 
@@ -526,8 +587,9 @@ def build_aprint(ws):
     # 第 4、5 行：钱
     kp = [('A', 'C', '现在可用资金', sc('可用')), ('D', 'E', '手上票据（承兑）', sc('票据')),
           ('F', 'G', f'="本月（"&MOD(P_截止年月,100)&" 月）固定支出还没付"', sc('固没付')),
-          ('H', 'I', '已批未付（全部）', sc('已批未付')), ('J', 'K', '本单待审批合计', sc('审申请')),
-          ('L', 'M', '都批了还剩\n（可用－左边三项）', sc('都批了还剩'))]
+          ('H', 'I', '已批未付（全部）', sc('已批未付')),
+          ('J', 'K', f'=IF({sc("审n")}>{SHOW_APV},"待审批合计（全部 "&{sc("审n")}&" 单）","本单待审批合计")', sc('审申请')),
+          ('L', 'M', '都批了还剩\n（可用－固定没付－已批未付－待审批）', sc('都批了还剩'))]
     for c1, c2, lab, f in kp:
         ws.merge_cells(f'{c1}4:{c2}4')
         ws.merge_cells(f'{c1}5:{c2}5')
@@ -536,36 +598,48 @@ def build_aprint(ws):
         for i in range(CI(c1) + 1, CI(c2) + 1):
             put(ws, f'{CL(i)}4', None, F_KPI_L, LBL)
             put(ws, f'{CL(i)}5', None, F_KVB, FILL_TOT)
-    ws.row_dimensions[4].height = 30
+    ws.row_dimensions[4].height = 44
     ws.row_dimensions[5].height = 24
     ws.conditional_formatting.add('A5:M5', FormulaRule(formula=['LEFT(A5,1)="-"'], font=Font(bold=True, color='FFC00000')))
     section(ws, 6, 'A', LAST, '="等老板审批的付款（按计划付款日期排；没填计划日期的按申请日期）　截至 "&TEXT(P_截止,"yyyy-mm-dd")', C_PLAN)
     heads = [('A', '序号'), ('B', '单号'), ('C', '申请日期'), ('D', '申请人'), ('E', '收款单位'), ('F', '付款内容'), ('G', '申请金额'),
-             ('H', '计划付款日期'), ('I', '这家现在欠'), ('J', '欠票'), ('K', '这家已批未付'), ('L', '批示\n（同意/不同意/暂缓）'),
+             ('H', '计划付款日期'), ('I', '现在欠这家'), ('J', '欠票'), ('K', '这家已批未付'), ('L', '批示\n（同意/不同意/暂缓）'),
              ('M', '批准金额')]
     header(ws, 7, heads[:11], PURPLE_H, height=36)
     header(ws, 7, heads[11:], C_PLAN, height=36)
 
     P = lambda k, n: f'INDEX(批_{k},{n})'
     u = lambda n: P('单位号', n)
+    npp = lambda n: f'INDEX(位_待定价到货,MAX(1,{u(n)}))'
+    ow = lambda n: P('现在欠款', n)
+
+    def owe(n):
+        """现在欠这家：负数写「预付」；这家还有到货没定价（没算进欠款）→ 后面加「＋N笔没定价」"""
+        return (f'IF(AND({ow(n)}<>"",{u(n)}>0),IF({npp(n)}>0,IF({ow(n)}<-0.005,"预付 "&TEXT(-{ow(n)},"#,##0.00"),'
+                f'TEXT({ow(n)},"#,##0.00"))&"＋"&{npp(n)}&"笔没定价",{neg(ow(n), "预付")}),{neg(ow(n), "预付")})')
+    # 只列前几条时，合计只算列出来的（老板签字的单子上看得到的才合计）
+    shown = lambda K, cap, n_all, all_: (f'IF({n_all}>{cap},ROUND(SUMIFS(批_申请金额,批_有效,1,{K},"<="&SMALL({K},{cap})),2),'
+                                         f'{all_})')
     item = dict(A=lambda n, k: k, B=lambda n, k: P('单号', n), C=lambda n, k: dt0(P('申请日期', n)), D=lambda n, k: P('申请人', n),
                 E=lambda n, k: P('单位', n), F=lambda n, k: P('付款内容', n), G=lambda n, k: P('申请金额', n),
-                H=lambda n, k: dt0(P('计划付款日期', n)), I=lambda n, k: neg(P('现在欠款', n), '预付'),
-                J=lambda n, k: neg(P('欠票', n), '多给'), K=lambda n, k: f'IF({u(n)}=0,"",INDEX(位_已批未付,MAX(1,{u(n)})))')
+                H=lambda n, k: dt0(P('计划付款日期', n)), I=lambda n, k: owe(n),
+                J=lambda n, k: neg(P('欠票', n), '多收票'), K=lambda n, k: f'IF({u(n)}=0,"",INDEX(位_已批未付,MAX(1,{u(n)})))')
     fl = Flow(ws, sc, AP_R0, 'ABCDEFGHIJKLM')
-    fl.add(item=item, tot=dict(B='"合计"', G=sc('审申请')),
+    fl.add(item=item, tot=dict(B='"合计"', G=shown(K1, SHOW_APV, sc('审n'), sc('审申请'))),
            trail=dict(B=f'IF({sc("审n")}=0,"（没有）","共 "&{sc("审n")}&" 单")',
-                      F=f'IF({sc("审n")}=0,"现在没有等审批的",IF({sc("审n")}>{SHOW_APV},"只列了前 {SHOW_APV} 单（合计是全部的）",""))'),
+                      F=(f'IF({sc("审n")}=0,"现在没有等审批的",IF({sc("审n")}>{SHOW_APV},'
+                         f'"只列了前 {SHOW_APV} 单（合计只算这些；全部见顶上）",""))')),
            n_all=sc('审n'), cap=SHOW_APV, src=lambda k: f'MOD(SMALL({K1},{k}),{M})')
     fl.add(title=dict(B='"暂缓的"', C='"（全部）"', F='"老板说先放一放的，也可以再批"'),
-           head={c: f'"{t}"'.replace('\n', '') for c, t in heads},
-           item=item, tot=dict(B='"合计"', G=sc('缓申请')),
+           head=dict({c: f'"{t}"' for c, t in heads if '\n' not in t}, L='"批示"'),
+           item=item, tot=dict(B='"合计"', G=shown(K2, SHOW_HOLD, sc('缓n'), sc('缓申请'))),
            trail=dict(B=f'IF({sc("缓n")}=0,"（没有）","共 "&{sc("缓n")}&" 单")',
-                      F=f'IF({sc("缓n")}>{SHOW_HOLD},"只列了前 {SHOW_HOLD} 单（合计是全部的）","")'),
+                      F=f'IF({sc("缓n")}>{SHOW_HOLD},"只列了前 {SHOW_HOLD} 单（合计只算这些）","")'),
            extra=[{}, dict(I='"老板签字："', L='"日期："')],
            n_all=sc('缓n'), cap=SHOW_HOLD, src=lambda k: f'MOD(SMALL({K2},{k}),{M})', spacer=0)
     fl.build(fmts=dict(C=DATE, G=MONEY, H=DATE, I=MONEY, J=MONEY, K=MONEY),
-             aligns=dict(A=AC, B=AL, C=AC, D=AC, E=AL, F=AL, G=AR, H=AC, I=AR, J=AR, K=AR, L=AC, M=AR), height=24, shrink='EF')
+             aligns=dict(A=AC, B=AL, C=AC, D=AC, E=AL, F=AL, G=AR, H=AC, I=AR, J=AR, K=AR, L=AC, M=AR), height=24,
+             shrink='EFIKL')
     sc.set('尾', fl.end)
     sc.set('末行', f'{AP_R0}+{sc("尾")}-1')
     T, r0 = fl.t(), AP_R0
@@ -581,17 +655,16 @@ def build_aprint(ws):
 
 
 # ═══════════════════════════════ 采购计划汇总 ═══════════════════════════════
-TIP_PP = ('💡 黄格选日期（空着＝截止日）：① 列出这天提交的采购计划，直接打印就是「今日采购计划」（审批栏空着的可以给老板手写）。'
-          '黄格选月份（填 2026-10 或 202610，只填 10 也行；空着＝截止日那个月）：② 这个月提交的，按状态、按提交人汇总条数和预计金额。'
-          '③ 等老板审批的、④ 老板同意了还没买的：都是全部的，按需用日期排（没填需用日期的排最后），到了需用日期还没买的标红。'
-          '打印：黄格「打印」选「当天的单」只印 ①，选「全部」印整张。')
+TIP_PP = ('💡 选日期（空着＝截止日）：① 这天提交的采购计划，打印就是「今日采购计划」。'
+          '选月份（2026-10、202610 或只填 10；空着＝截止日那个月）：② 这个月按状态、按提交人汇总。'
+          '③ 等老板审批的、④ 同意了还没买的（全部，按需用日期排，到了日子标红）。打印选「当天的单」只印 ①，选「全部」印整张。')
 PP_R0 = 7
 PER_C = dict(姓名='AR', 第一次='AS', 条数='AT', 金额='AU', 计数='AV')
 
 
 def build_ppsum(ws):
     LAST = 'J'
-    widths(ws, {'A': 6, 'B': 10, 'C': 24, 'D': 9, 'E': 7, 'F': 13.5, 'G': 14, 'H': 12.5, 'I': 12.5, 'J': 12})
+    widths(ws, {'A': 6, 'B': 10, 'C': 24, 'D': 9, 'E': 7, 'F': 13.5, 'G': 14, 'H': 12.5, 'I': 12.5, 'J': 12, 'K': 10})
     title(ws, '=IF(P_公司名称="","",P_公司名称&"　")&"采购计划汇总"', LAST, C_PLAN, TIP_PP)
     selector(ws, 'A3', '选日期', 'C3', None, fmt=DATE)
     ws.merge_cells('A3:B3')
@@ -599,14 +672,16 @@ def build_ppsum(ws):
     selector(ws, 'D3', '选月份', 'F3', None, fmt=YM_FMT)
     ws.merge_cells('D3:E3')
     selector(ws, 'G3', '打印', 'H3', None, dv_formula='"当天的单,全部"', prompt='当天的单＝只印 ①（今日采购计划）；全部＝整张；空着＝当天的单')
-    home_link(ws, f'{LAST}3')
+    home_link(ws, 'K3')                       # 放在打印范围（A～J）外面
     ws.row_dimensions[3].height = 30
     keys = ['d', '认出d', '输入', '认出前', 'm', '认出', 'Y', 'mo', '全部印', '①前', '①n', '①金额', '月n', '月金额', '人数',
-            '各人n', '各人金额', '其他n', '其他金额', '③n', '③金额', '④n', '④金额', '尾', '①末行', '全末行', '末行']
+            '各人n', '各人金额', '其他n', '其他金额', '③n', '③金额', '④n', '④金额', '尾', '①末行', '全末行', '末行', '最晚']
     sc = Sc(ws, keys)
     d = sc('d')
     sc.set('d', 'IF(AND(ISNUMBER(C3),C3>=36526,C3<73051),INT(C3),P_截止)')
     sc.set('认出d', 'IF(TRIM(C3&"")="",1,IF(AND(ISNUMBER(C3),C3>=36526,C3<73051),1,0))')
+    # 采购计划里最晚的提交日期（不超过日期上限）：比截止日晚（资金台帐还没记到那天）时提醒去选
+    sc.set('最晚', f'IFERROR(INT(LARGE(购_排序键,COUNTIF(购_排序键,">="&(P_日期上限+1)*{M})+1)/{M}),0)')
     month_selector(ws, sc, 'F3')
     m, Y, mo = sc('m'), sc('Y'), sc('mo')
     sc.set('全部印', 'IF(TRIM(H3&"")="全部",1,0)')
@@ -648,10 +723,13 @@ def build_ppsum(ws):
     ws.merge_cells('A4:J4')
     put(ws, 'A4', (f'="实际用的：日期 "&TEXT({d},"yyyy-mm-dd")&IF(TRIM(C3&"")="","（空着＝截止日）","")'
                    f'&IF({sc("认出d")}=0,"（⚠ 没认出这个日期，先按截止日）","")'
+                   f'&IF(AND(TRIM(C3&"")="",{sc("最晚")}>{d}),"（⚠ 采购计划最晚有 "&TEXT({sc("最晚")},"yyyy-mm-dd")'
+                   f'&" 提交的，比截止日晚：要印那天的单，黄格填那天）","")'
                    f'&"；月份 "&{Y}&" 年 "&{mo}&" 月"&IF(TRIM(F3&"")="","（空着＝截止日那个月）","")'
                    f'&IF({sc("认出")}=0,"（⚠ 没认出这个月份，先按截止日那个月）","")'
-                   f'&"；打印："&IF({sc("全部印")}=1,"整张","只印 ①（当天的单）")'), F_NOTE, align=AL, border=False)
-    ws.conditional_formatting.add('A4', FormulaRule(formula=[f'OR({sc("认出d")}=0,{sc("认出")}=0)'],
+                   f'&"；打印："&IF({sc("全部印")}=1,"整张","只印 ①（当天的单）")'), F_NOTE, align=ALW, border=False)
+    ws.row_dimensions[4].height = 28
+    ws.conditional_formatting.add('A4', FormulaRule(formula=['ISNUMBER(FIND("⚠",$A$4))'],
                                                     font=Font(bold=True, color='FFC00000')))
     section(ws, 5, 'A', LAST, f'="① "&TEXT({d},"yyyy-mm-dd")&" 提交的采购计划（今日采购计划）"', C_PLAN)
     header(ws, 6, [('A', '序号'), ('B', '提交人'), ('C', '物料及规格'), ('D', '数量'), ('E', '单位'), ('F', '预计金额'),
@@ -710,8 +788,8 @@ def build_ppsum(ws):
         ('J', 'J', lambda c: f'AND({T}=5,$J{r0}="已到日子")', red),
         ('B', 'J', lambda c: f'AND({T}=5,OR({S0}=2,{S0}=3),$B{r0}="其他")', dict(font=Font(color='FF808080'), border=CF_BD)),
     ])
-    hide(ws, *[CL(i) for i in range(CI('K'), CI('BI') + 1)])
-    finish(ws, LAST, sc('末行'), fl.r1, f'A{PP_R0}')
+    hide(ws, *[CL(i) for i in range(CI('L'), CI('BI') + 1)])
+    finish(ws, LAST, sc('末行'), fl.r1, 'A5')          # 只冻标题、选择格、实际用的（① 的表头跟下面几段对不上）
 
 
 def build(wb, ctx=None):

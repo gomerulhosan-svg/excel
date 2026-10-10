@@ -2,12 +2,17 @@
 """查看表（绿）【利润表】＋ 往来表（橙）【发票跟进】。口径见 agent_common「口径速查」（利润表、发票、往来）。
 
 利润表：黄格 B3 年份（空＝P_年度；填 2026、202610、或那年里的一个日期都认）。A 列项目，B～M 列 1～12 月，N 列全年（＝各月合计）。
-   截止年月以后的月份空着（不是 0）。收入、采购按 销_年月 / 采_年月（≤截止），资金类按 资_所属年月（≤截止），折旧 P_月折旧（建账月～截止年月），
-   库存变动＝本月估了且前面有估值（前面估过的月，或者 P_期初库存）时：上一个估值－本月估值。
-   隐藏：AA/AB 标量（第 3 行起）；AD～AL 每月辅助（第 2+m 行）：月、年月、显示、估了、本月估值、上次估的年月、上次估值、库存变动、折旧。
+   截止年月以后的月份空着（不是 0）；建账月以前的月份，只有资金台帐「所属月份」填到那个月的才显示（表头浅色），不然也空着。
+   收入、采购按 销_年月 / 采_年月（≤截止），资金类按 资_所属年月（≤截止），折旧 P_月折旧（建账月～截止年月），
+   库存变动（只算建账月以后）＝本月估了且前面有估值（前面估过的月，或者 P_期初库存）时：上一个估值－本月估值；
+   上一个估值是建账以前的月份、又填了 P_期初库存 时，用 P_期初库存（建账日的估值）。
+   备查最后一行：已付、所属月份在截止以后的费用，只在截止以后的月份列里显示（上面的数里都没有）。
+   隐藏：AA/AB 标量（第 3 行起）；AD～AO 每月辅助（第 2+m 行）：月、年月、显示、估了、本月估值、上次估的年月、上次估值、库存变动、折旧、
+   建账前（显示的建账前月份＝1）、以后（已付、算在这个月的费用：这个月在截止以后才显示）。
 
-发票跟进：黄格 B3 年份（① 各月用；空＝P_年度）、D3 月份（④ 清单用：1～12，空＝截止日期那个月；填 2026-9 / 202609 连年份一起认）。
-   第 4、5 行 KPI（截至截止日，固定位置，首页可引用）：B5 客户没开票、D5 客户多开、E5 供应商欠票、G5 供应商多给。
+发票跟进：黄格 B3 年份（① 各月用；空＝P_年度）、D3 月份（④ 清单用：1～12 按 B3 的年份；空或认不出＝截止日期那个月（截止年月）；
+   填 2026-9 / 202609 连年份一起认）。
+   第 4、5 行 KPI（截至截止日，固定位置，首页可引用）：B5 客户没开票、D5 多开给客户的票、E5 供应商欠票、G5 供应商多给的票。
    ① 各月（固定位置）：开出/收到 张数、价税合计、税额、收到专票税额、开出税额－收到专票税额；合计行。
    ② 客户开票情况、③ 供应商欠票、④ 选的月的发票清单：从第 FLOW_R0 行起一块接一块往下排（前一块有几行就占几行，不留大段空行）。
    隐藏列：AD/AE 客户（未开票、排序键＝比它大的个数×1000＋家号），AF/AG 供应商（欠票、键），第 3 行起每家一行，SMALL 取第 k 个＝从大到小；
@@ -85,7 +90,9 @@ def _year_selector(ws, prompt):
 PL_LAST = 'N'
 MCOL = [CL(2 + i) for i in range(12)]                  # B～M：1～12 月
 PL_HDR, PL_R0 = 5, 6
-PH = dict(月='AD', 年月='AE', 显示='AF', 估了='AG', 估值='AH', 上次='AI', 上次估值='AJ', 变动='AK', 折旧='AL')
+PH = dict(月='AD', 年月='AE', 显示='AF', 估了='AG', 估值='AH', 上次='AI', 上次估值='AJ', 变动='AK', 折旧='AL', 建账前='AM',
+          以后='AN')
+SHOW_KINDS = EXPENSE_KINDS + ['其他收入', '买设备', '不算收支']   # 利润表上出现的资金归类（建账前的月份有这些才显示）
 
 TIP_PL = ('💡 全自动不用填。黄格 B3 填年份（比如 2026；空着＝截止日期那年），出 1～12 月和全年。'
           '收入按发货日期（销售登记），料、外协、外购成品按到货日期（采购登记），工资、电费、费用、税金按资金台帐付钱的月份'
@@ -99,7 +106,9 @@ NOTES_PL = [
     '③ 没估库存的月份，买进来的料可能还没用完，利润只供参考；看几个月合计更准。',
     '④ 收客户货款、付供应商货款是往来款，不进利润表（收入、成本按发货、到货算）；买设备不算当月费用（每月折旧在【基础资料】估一个数）；'
     '老板存取、借款、还款、保证金、内部转账不算收支。待定价的发货、到货收入成本里都没算，定了价补上单价就有了。',
-    '⑤ 资金台帐里所属月份填到建账以前的（比如 7 月发的 6 月工资），算在那个月：那个月没有收入，利润是负数，看全年时心里有数。',
+    '⑤ 资金台帐里所属月份填到建账以前的（比如 7 月发的 6 月工资），算在那个月（表头浅色的列），跟【费用统计】【首页】一样：'
+    '那个月没有收入，利润是负数，全年也含这笔，看全年时心里有数。所属月份填到截止日期以后的（提前付的），到那个月才算，先在最下面备查里列出来。',
+    '⑥ 截止日期那个月只算到截止日（折旧按整月），跟别的整月比时注意。',
 ]
 
 
@@ -134,7 +143,8 @@ def _pl_items():
         ('财务费', '　　财务费用', '', 'f', kind('财务费用')),
         ('费用', '期间费用合计', 'key', 'sum', [('销售费', 1), ('管理费', 1), ('财务费', 1)]),
         ('税金', '五、税金', 'big', 'f', kind('税金')),
-        ('其他收入', '六、其他收入（废料、利息等）', 'big', 'f', kind('其他收入', '资_净额')),
+        ('S', '六、其他收入、其他支出'),
+        ('其他收入', '　　其他收入（废料、利息等）', '', 'f', kind('其他收入', '资_净额')),
         ('其他支出', '　　其他支出（罚款、赞助等）', '', 'f', kind('其他支出')),
         ('利润', '七、利润（＝毛利－期间费用－税金＋其他收入－其他支出）', 'tot', 'sum',
          [('毛利', 1), ('费用', -1), ('税金', -1), ('其他收入', 1), ('其他支出', -1)]),
@@ -147,6 +157,7 @@ def _pl_items():
          lambda y: f'COUNTIFS(采_待定价,1,采_计入往来,1,采_年月,{y},采_日期,"<="&P_截止)'),
         ('设备', '买设备（不算当月费用）', 'memo', 'f', kind('买设备')),
         ('不算', '老板存取、借款等（不算收支；净额：＋进来 －出去）', 'memo', 'f', kind('不算收支', '资_净额')),
+        ('以后', '已付、算在以后月份的费用（所属月份填到截止日期以后，到那个月才算）', 'memo', 'fut', helper('以后')),
     ]
 
 
@@ -176,12 +187,16 @@ def build_pl(wb):
 
     # ── 第 4 行：截止日、建账日 ──
     ws.merge_cells(f'A4:{PL_LAST}4')
+    pre_n = f'SUM(${PH["建账前"]}$3:${PH["建账前"]}$14)'
     put(ws, 'A4', ('="截止日期 "&TEXT(P_截止,"yyyy-mm-dd")&"（【首页】改），建账日 "&TEXT(P_建账日,"yyyy-mm-dd")'
-                   '&"：只算建账日～截止日期的发货、到货、付款；截止日期以后的月份空着。"'
+                   '&"：只算建账日～截止日期的发货、到货、付款；截止日期以后的月份空着"'
+                   f'&IF(AND(YEAR(P_截止)={S("年份")},P_截止<DATE(YEAR(P_截止),MONTH(P_截止)+1,0)),'
+                   '"；"&MONTH(P_截止)&" 月只算到 "&DAY(P_截止)&" 日（折旧按整月）","")'
+                   f'&IF({pre_n}>0,"；表头浅色的是建账以前的月份，只有所属月份填到那个月的工资电费等","")&"。"'
                    f'&IF({S("年份")}<YEAR(P_建账日),"⚠ 选的年份在建账以前，基本没有数。","")'
-                   f'&IF({S("年份")}>YEAR(P_截止),"⚠ 选的年份在截止日期以后，都是空的。","")'),
-        F_NOTE, align=AL, border=False)
-    ws.row_dimensions[4].height = 20
+                   f'&IF({S("年份")}>YEAR(P_截止),"⚠ 选的年份在截止日期以后，上面都是空的。","")'),
+        F_NOTE, align=ALW, border=False)
+    ws.row_dimensions[4].height = 30
 
     # ── 每月辅助（隐藏）：第 2+m 行 ──
     y0 = S('年份')
@@ -191,17 +206,27 @@ def build_pl(wb):
     for m in range(1, 13):
         r = 2 + m
         h = lambda k: f'{PH[k]}{r}'
+        bm = S('建账月')
+        cash_n = '+'.join(f'COUNTIFS(资_所属年月,{h("年月")},资_资金有效,1,资_日期,"<="&P_截止,资_归类,"{k}")'
+                          for k in SHOW_KINDS)
         f = {
             '月': m,
             '年月': f'={y0}*100+{m}',
-            '显示': f'=IF({h("年月")}<=P_截止年月,1,0)',
+            # 截止以后不显示；建账以前只有资金台帐所属月份填到这个月（利润表上出现的归类）才显示
+            '显示': f'=IF({h("年月")}>P_截止年月,0,IF({h("年月")}>={bm},1,IF({cash_n}>0,1,0)))',
             '估了': f'=IF(COUNTIFS(库存_年月,{h("年月")},库存_有值,1)>0,1,0)',
             '估值': f'=SUMIFS(库存_估值,库存_年月,{h("年月")},库存_有值,1)',
             '上次': f'=IFERROR(LARGE(库存_键,COUNTIF(库存_键,">="&{h("年月")})+1),0)',
-            '上次估值': (f'=IF({h("上次")}>0,SUMIFS(库存_估值,库存_年月,{h("上次")},库存_有值,1),'
-                       f'IF(ISNUMBER(P_期初库存),P_期初库存,0))'),
-            '变动': f'=IF(AND({h("估了")}=1,OR({h("上次")}>0,ISNUMBER(P_期初库存))),ROUND({h("上次估值")}-{h("估值")},2),0)',
-            '折旧': f'=IF(AND({h("年月")}>={S("建账月")},{h("年月")}<=P_截止年月),P_月折旧,0)',
+            # 上次估的是建账以前的月份、又填了期初库存（建账日的估值）→ 用期初库存
+            '上次估值': (f'=IF(AND({h("上次")}>0,OR({h("上次")}>={bm},NOT(ISNUMBER(P_期初库存)))),'
+                       f'SUMIFS(库存_估值,库存_年月,{h("上次")},库存_有值,1),IF(ISNUMBER(P_期初库存),P_期初库存,0))'),
+            # 只算建账月以后（建账以前的月份不调成本）
+            '变动': (f'=IF(AND({h("年月")}>={bm},{h("估了")}=1,OR({h("上次")}>0,ISNUMBER(P_期初库存))),'
+                   f'ROUND({h("上次估值")}-{h("估值")},2),0)'),
+            '折旧': f'=IF(AND({h("年月")}>={bm},{h("年月")}<=P_截止年月),P_月折旧,0)',
+            '建账前': f'=IF(AND({h("显示")}=1,{h("年月")}<{bm}),1,0)',
+            '以后': ('=ROUND(' + '+'.join(f'SUMIFS(资_支出额,资_归类,"{k}",资_所属年月,{h("年月")},资_日期,"<="&P_截止)'
+                                          for k in EXPENSE_KINDS) + ',2)'),
         }
         for k, val in f.items():
             ws[f'{PH[k]}{r}'] = val
@@ -211,8 +236,11 @@ def build_pl(wb):
     header(ws, PL_HDR, [('A', f'="项目（"&{y0}&" 年）"')] + [(c, f'{m}月') for m, c in enumerate(MCOL, 1)]
            + [(PL_LAST, '全年')], C_VIEW, height=24)
     grey_h = cf_fill('FFA6A6A6')
+    pre_h = cf_fill('FFA9D08E')
     for m, c in enumerate(MCOL, 1):
-        ws.conditional_formatting.add(f'{c}{PL_HDR}', FormulaRule(formula=[f'${PH["显示"]}${2 + m}=0'], fill=grey_h))
+        ws.conditional_formatting.add(f'{c}{PL_HDR}', FormulaRule(formula=[f'${PH["显示"]}${2 + m}=0'], fill=grey_h, stopIfTrue=True))
+        ws.conditional_formatting.add(f'{c}{PL_HDR}', FormulaRule(formula=[f'${PH["建账前"]}${2 + m}=1'], fill=pre_h,
+                                                                  font=Font(bold=True, color='FF1F3864')))
 
     # ── 表身 ──
     items = _pl_items()
@@ -248,9 +276,12 @@ def build_pl(wb):
             elif typ == 'pct':
                 a, b = spec
                 e = f'IF({c}{R[b]}=0,"",{c}{R[a]}/{c}{R[b]})'
+            elif typ == 'fut':   # 只在截止以后的月份显示（这些月份上面都是空的）
+                e = spec(y, m)
             else:   # stk
                 e = f'IF(${PH["估了"]}${2 + m}=1,"✓",IF({y}<{S("建账月")},"","没估"))'
-            put(ws, f'{c}{r}', f'=IF({show}=0,"",{e})', F_MEMO if memo else (F_AUTOB if bold else F_AUTO), fl, fmt,
+            cf = (f'=IF(OR({y}<=P_截止年月,{e}=0),"",{e})' if typ == 'fut' else f'=IF({show}=0,"",{e})')
+            put(ws, f'{c}{r}', cf, F_MEMO if memo else (F_AUTOB if bold else F_AUTO), fl, fmt,
                 AC if typ == 'stk' else AR)
         rng = f'{MCOL[0]}{r}:{MCOL[-1]}{r}'
         if typ == 'pct':
@@ -263,6 +294,8 @@ def build_pl(wb):
         put(ws, f'{PL_LAST}{r}', tot, F_MEMOL if memo else F_AUTOB, fl or (None if memo else FILL_AUTO), fmt,
             AC if typ == 'stk' else AR)
         ws.row_dimensions[r].height = 30 if len(lbl) > 19 else (20 if not memo else 17)
+        if typ == 'fut':
+            ws.row_dimensions[r].height = 30
     # 没估：橙色
     rs = R['估了']
     ws.conditional_formatting.add(f'B{rs}:M{rs}', FormulaRule(formula=[f'B{rs}="没估"'],
@@ -296,9 +329,9 @@ KC, KS = 'AE', 'AG'                                  # 客户键、供应商键
 KC_RNG, KS_RNG = f'${KC}${U0}:${KC}${U1}', f'${KS}${U0}:${KS}${U1}'
 FH = dict(段='AH', 行='AI', 类='AJ', 第几='AK', 源='AL')
 
-TIP_IV = ('💡 全自动（发票在【发票登记】里登）。黄格 B3 年份管 ① 各月（空着＝截止日期那年）；D3 月份管 ④ 清单（填 1～12，空着＝截止日期那个月；'
-          '填 2026-9 连年份一起认）。② ③ 是截至截止日期的数，跟选的年份、月份无关：未开票＝要开票的发货（含期初未开票）－已开出的发票；'
-          '欠票＝要票的到货（含期初欠票）－收到的发票。多开、多给一般是给建账以前的货开的票。① 最后一列只是参考，不是报税数。')
+TIP_IV = ('💡 全自动（发票在【发票登记】登）。B3 年份管 ①，空着＝截止日期那年；D3 月份管 ④：填 1～12 按 B3 的年份，'
+          '空着＝截止日期那个月，填 2026-9 连年份一起认。② ③ 是截至截止日期的数：未开票＝要开票的发货（含期初）－开出的发票，'
+          '欠票＝要票的到货（含期初）－收到的发票。')
 
 
 def build_inv(wb):
@@ -308,10 +341,9 @@ def build_inv(wb):
     title(ws, '发 票 跟 进', IV_LAST, C_WL, TIP_IV)
 
     # ── 第 3 行：年份、月份 ──
-    _year_selector(ws, '填年份，比如 2026；空着＝截止日期那年（管 ① 各月）')
-    selector(ws, 'C3', '月份\n（④ 清单）', 'D3', None, '"1,2,3,4,5,6,7,8,9,10,11,12"',
-             prompt='选 1～12；空着＝截止日期那个月；填 2026-9 或 202609 连年份一起认')
-    ws['C3'].alignment = ACW
+    _year_selector(ws, '填年份，比如 2026；空着＝截止日期那年（管 ① 各月；D3 填 1～12 时 ④ 也用这个年份）')
+    selector(ws, 'C3', '④ 月份', 'D3', None, '"1,2,3,4,5,6,7,8,9,10,11,12"',
+             prompt='选 1～12（按 B3 的年份）；空着＝截止日期那个月；填 2026-9 或 202609 连年份一起认')
     v, fy, fok = _year_parse('B3')
     mv = '$AB$6'
     okm = f'AND({mv}>=200001,{mv}<=209912,INT({mv})={mv},MOD({mv},100)>=1,MOD({mv},100)<=12)'
@@ -332,7 +364,7 @@ def build_inv(wb):
         '年份': fy(S('年份输入')),
         '年份认出': fok(S('年份输入')),
         '月份输入': '=IFERROR(--TRIM(D3&""),0)',
-        '清单年': f'=IF({okm},INT({mv}/100),IF({okd},YEAR({mv}),{S("年份")}))',
+        '清单年': f'=IF({okm},INT({mv}/100),IF({okd},YEAR({mv}),IF({ok1},{S("年份")},YEAR(P_截止))))',
         '清单月': f'=IF({ok1},{mv},IF({okm},MOD({mv},100),IF({okd},MONTH({mv}),MONTH(P_截止))))',
         '月份认出': f'=IF(TRIM(D3&"")="",1,IF(OR({ok1},{okm},{okd}),1,0))',
         '月初': f'=DATE({S("清单年")},{S("清单月")},1)',
@@ -381,16 +413,16 @@ def build_inv(wb):
                    f'&IF({S("月份认出")}=0,"　⚠ 月份没认出来（先按截止日期那个月）","")'), F_NOTE, align=ALW, border=False)
     ws.conditional_formatting.add('E3', FormulaRule(formula=[f'OR({S("年份认出")}=0,{S("月份认出")}=0)'], font=F_RED))
     home_link(ws, f'{IV_LAST}3')
-    ws.row_dimensions[3].height = 30
+    ws.row_dimensions[3].height = 26
 
     # ── 第 4、5 行：KPI（截至截止日） ──
     cust = '位_有效,1,位_是客户,1,位_未开票'
     supp = '位_有效,1,位_是供应商,1,位_欠票'
     kpis = [('A', 'A', '截至日期', '=P_截止', DATE),
             ('B', 'C', f'="客户没开票（"&COUNTIFS({cust},">0.005")&" 家）"', f'=ROUND(SUMIFS(位_未开票,{cust},">0.005"),2)', MONEY),
-            ('D', 'D', f'="客户多开（"&COUNTIFS({cust},"<-0.005")&" 家）"', f'=ROUND(-SUMIFS(位_未开票,{cust},"<-0.005"),2)', MONEY),
+            ('D', 'D', f'="多开给客户的票（"&COUNTIFS({cust},"<-0.005")&" 家）"', f'=ROUND(-SUMIFS(位_未开票,{cust},"<-0.005"),2)', MONEY),
             ('E', 'F', f'="供应商欠票（"&COUNTIFS({supp},">0.005")&" 家）"', f'=ROUND(SUMIFS(位_欠票,{supp},">0.005"),2)', MONEY),
-            ('G', 'H', f'="供应商多给（"&COUNTIFS({supp},"<-0.005")&" 家）"', f'=ROUND(-SUMIFS(位_欠票,{supp},"<-0.005"),2)', MONEY)]
+            ('G', 'H', f'="供应商多给的票（"&COUNTIFS({supp},"<-0.005")&" 家）"', f'=ROUND(-SUMIFS(位_欠票,{supp},"<-0.005"),2)', MONEY)]
     for c1, c2, lbl, val, fmt in kpis:
         if c1 != c2:
             ws.merge_cells(f'{c1}4:{c2}4')
@@ -401,7 +433,7 @@ def build_inv(wb):
             put(ws, f'{c2}4', None, F_KPI_L, LBL)
             put(ws, f'{c2}5', None, F_KPI_B, FILL_TOT)
     ws.merge_cells('I4:J5')
-    put(ws, 'I4', '多开、多给：开的票比发的货多，一般是给建账以前的货开的票', F_NOTE, align=ALW, border=False)
+    put(ws, 'I4', '多开、多给：票比货多，一般是给建账以前的货开的票', F_NOTE, align=ALW, border=False)
     ws.row_dimensions[4].height = 22
     ws.row_dimensions[5].height = 26
 
@@ -415,7 +447,7 @@ def build_inv(wb):
     header(ws, IV_H1, [('A', '月份'), ('B', '开出（开给客户的）'), ('C', None), ('D', None), ('E', '收到（供应商开来的）'),
                        ('F', None), ('G', None), ('H', None), ('I', '开出税额－收到专票税额\n（只供参考，不是报税数）')], C_WL, height=22)
     header(ws, IV_H2, [('A', None), ('B', '张数'), ('C', '价税合计'), ('D', '税额'), ('E', '张数'), ('F', '价税合计'), ('G', '税额'),
-                       ('H', '其中专票税额'), ('I', None)], C_WL, height=42)
+                       ('H', '其中专票税额\n（类型空着的算普票）'), ('I', None)], C_WL, height=42)
     base = '票_计入往来,1,票_年月,{y},票_日期,"<="&P_截止,票_方向,"{d}"'
     cols = {
         'B': lambda y: f'COUNTIFS({base.format(y=y, d="开出")})',
@@ -454,8 +486,11 @@ def build_inv(wb):
         ws[f'{c}{FLOW_R0 - 1}'] = k
         ws[f'{c}{FLOW_R0 - 1}'].font = F_HELP
     flow_cols = 'ABCDEFGHIJ'
-    fm = {'A': DATE, 'B': MONEY, 'C': MONEY, 'D': MONEY, 'E': MONEY, 'F': DATE, 'G': MONEY, 'H': MONEY, 'I': MONEY}
-    al = {'A': AL, 'F': AC, 'J': AL}
+    # 同一列在 ②③ 和 ④ 里有的是金额、有的是文字：金额用带「* 」填充的格式（数字总是靠右），文字按列的对齐
+    MONEY_R = '* #,##0.00;[Red]* -#,##0.00;* "-";@'
+    fm = {'A': DATE, 'B': MONEY_R, 'C': MONEY_R, 'D': MONEY_R, 'E': MONEY_R, 'F': DATE, 'G': MONEY_R, 'H': MONEY_R, 'I': MONEY_R}
+    al = {'A': 'left', 'B': 'center', 'C': 'center', 'D': 'center', 'E': 'center', 'F': 'center', 'G': 'center', 'H': 'center',
+          'I': 'center', 'J': 'center'}
     U = lambda nm, ix: f'INDEX({nm},{ix})'
     neg = lambda val, word, extra='': f'IF({val}<-0.005,"{word} "&TEXT(-{val},"#,##0.00")&"{extra}",{val})'
     cutoff = 'TEXT(P_截止,"yyyy-mm-dd")'
@@ -501,12 +536,13 @@ def build_inv(wb):
             'I': ('""', '""', '"不含税"'), 'J': ('""', '""', '"对应单号"'),
         }
         tot = {
-            'A': (f'"合计（"&{S("客户数")}&" 家）"', f'"合计（"&{S("供应商数")}&" 家）"', f'"开出合计（"&{S("开出张数")}&" 张）"'),
+            'A': (f'"合计（全部 "&{S("客户数")}&" 家）"', f'"合计（全部 "&{S("供应商数")}&" 家）"',
+                  f'"开出合计（全部 "&{S("开出张数")}&" 张）"'),
             'B': (S('客应开'), S('供应收'), '""'), 'C': (S('客已开'), S('供已收'), '""'),
             'D': (S('客未开'), S('供欠票'), '""'), 'E': (S('客欠款'), S('供欠他'), '""'),
             'G': ('""', '""', S('开价税')), 'H': ('""', '""', S('开税额')), 'I': ('""', '""', S('开不含税')),
         }
-        tot2 = {'A': f'"收到合计（"&{S("收到张数")}&" 张）"', 'G': S('收价税'), 'H': S('收税额'), 'I': S('收不含税')}
+        tot2 = {'A': f'"收到合计（全部 "&{S("收到张数")}&" 张）"', 'G': S('收价税'), 'H': S('收税额'), 'I': S('收不含税')}
         trail = {
             'A': (f'IF({S("客户数")}=0,"客户的票都开齐了","共 "&{S("客户数")}&" 家")',
                   f'IF({S("供应商数")}=0,"供应商的票都收齐了","共 "&{S("供应商数")}&" 家")',
@@ -538,22 +574,29 @@ def build_inv(wb):
             cell = ws[f'{c}{r}']
             cell.value = '=' + out
             cell.font = F_TXT
-            cell.alignment = Alignment(horizontal=al[c].horizontal if c in al else 'right', vertical='center',
-                                       shrink_to_fit=(c in 'DE'))
+            cell.alignment = Alignment(horizontal=al[c], vertical='center', shrink_to_fit=(c in 'CDE'))
             if c in fm:
                 cell.number_format = fm[c]
     r0, r1 = FLOW_R0, FLOW_R0 + FLOW_N - 1
     K = lambda: f'${FH["类"]}{r0}'
     SG = lambda: f'${FH["段"]}{r0}'
-    cf_blocks(ws, r0, r1, [
-        ('A', IV_LAST, lambda c: f'{K()}=1', dict(fill=cf_fill(C_WL), font=Font(bold=True, color='FFFFFFFF'))),
-        ('A', IV_LAST, lambda c: f'{K()}=2', dict(fill=cf_fill('FFF8CBAD'), font=Font(bold=True, color='FF000000'), border=CF_BD)),
-        ('A', IV_LAST, lambda c: f'OR({K()}=3,{K()}=4)', dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)),
+    st_title = dict(fill=cf_fill(C_WL), font=Font(bold=True, color='FFFFFFFF'))
+    st_head = dict(fill=cf_fill('FFF8CBAD'), font=Font(bold=True, color='FF000000'), border=CF_BD)
+    st_tot = dict(fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD)
+    seg4 = lambda cond: (lambda c: f'AND({cond},{SG()}=4)')
+    cf_blocks(ws, r0, r1, [       # ②③ 只用到 H 列，I、J 只给 ④
+        ('A', 'H', lambda c: f'{K()}=1', st_title),
+        ('I', IV_LAST, seg4(f'{K()}=1'), st_title),
+        ('A', 'H', lambda c: f'{K()}=2', st_head),
+        ('I', IV_LAST, seg4(f'{K()}=2'), st_head),
+        ('A', 'H', lambda c: f'OR({K()}=3,{K()}=4)', st_tot),
+        ('I', IV_LAST, seg4(f'OR({K()}=3,{K()}=4)'), st_tot),
         ('A', IV_LAST, lambda c: f'{K()}=6', dict(font=Font(color='FF808080'))),
         ('D', 'D', lambda c: f'AND({K()}=5,{SG()}<4,LEFT($D{r0},1)="多")', dict(font=Font(bold=True, color='FFC65911'), border=CF_BD)),
         ('E', 'E', lambda c: f'AND({K()}=5,{SG()}<4,LEFT($E{r0},1)="预")', dict(font=Font(bold=True, color='FF2F75B5'), border=CF_BD)),
         ('B', 'B', lambda c: f'AND({K()}=5,{SG()}=4,$B{r0}="收到")', dict(font=Font(color='FFC65911'), border=CF_BD)),
-        ('A', IV_LAST, lambda c: f'{K()}=5', dict(border=CF_BD)),
+        ('A', 'H', lambda c: f'{K()}=5', dict(border=CF_BD)),
+        ('I', IV_LAST, seg4(f'{K()}=5'), dict(border=CF_BD)),
     ])
 
     hide(ws, 'AA', 'AB', 'AC', 'AD', 'AE', 'AF', 'AG', *FH.values())

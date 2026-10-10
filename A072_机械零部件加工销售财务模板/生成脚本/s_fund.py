@@ -7,7 +7,8 @@
       合计：可用资金（账户_可用=1）、手上票据（账户_可用=0）、全公司当天实际收支（资_归类<>内部转账）。
    ② 当天每一笔（第 29 行起最多 80 笔）：按 资_排序键（同一天按录入顺序），本账户余额＝期初＋SUMIFS(净额, 账户, 排序键<=本笔)。
 【资金月报】黄格 B3 年月（2026-10 / 202610；空＝P_截止年月）。
-   第 4 行：B4 月末可用资金、D4 月末手上票据、F4 本月实际收入、H4 本月实际支出、J4 本月净现金流（后三个不含内部转账）。
+   第 4 行：B4 月末可用资金、D4 月末手上票据、F4 本月实际收入、H4 本月实际支出、J4 本月净现金流（后三个不含内部转账）；
+      选的月份在截止日以后：第 4 行和 ① 的金额空着（跟 ② 一样）。
    ① 各账户（第 7 行起）：月初余额（上月底，≤截止）、本月收入、支出（含内部转账，资_年月=m，≤截止）、月末余额（月底与截止日较早的）；合计：可用资金、手上票据。
    ② 全年各月（第 27～38 行＝1～12 月，第 39 行全年）：收客户货款、付供应商货款、费用支出、其他收入、买设备、不算收支（都按 资_年月）、
       本月净现金流（不含内部转账）、月末可用资金、月末手上票据（截止日以后的月份空着）。
@@ -18,11 +19,14 @@
       金额＝SUMIFS(资_支出额, 资_类别, 类别, 资_所属年月, m, 资_日期, "<="&P_截止)（按所属月份）。
    ② 右边 Q～W：黄格 R3 类别（空＝全部费用）、U3 月份（1～12，空＝全年）：这一年（按所属月份）每一笔，最多 150 笔，按日期。
       隐藏列 BX/BY（第 2 行起，每条资金一行）挑出符合条件的排序键，再 SMALL。
+   打印区域两块：A～O 的 ①、Q～W 的 ②（各自按内容变长，② 另起一页）。
+打印：资金日报 ②、资金月报 ② 前面强制分页（① 按 15 个账户占固定行数，免得下一块的表头和内容分在两页）。
 隐藏列：各表 AA 起（AA 名字、AB 值是标量）；counter() 的条件列从 CA 往右。"""
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font, PatternFill, Border, Side
 from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.pagebreak import Break
 from layout import *
 from common import *
 
@@ -112,13 +116,18 @@ def mhead(ws, row, c1, c2):
         ws.cell(row=row, column=i).border = BD
 
 
-def finish(ws, last, hdr_rows, end_cell, cap_row, freeze='A5'):
+def finish(ws, last, hdr_rows, end_cell, cap_row, freeze='A5', brk=None, extra=()):
+    """打印：横向 A4、一页宽、页脚；打印区域按内容变长（A1 到 last 列的 end_cell 行）。
+       brk：在这一行上面强制分页；extra：再加几块打印区域 (首列, 末列, 容量行, 末行格)，每块另起一页印"""
     ws.freeze_panes = freeze
     print_setup(ws, hdr_rows, landscape=True)
     ws.oddFooter.center.text = '第 &P 页 共 &N 页'
+    if brk:
+        ws.row_breaks.append(Break(id=brk - 1))
     q = f"'{ws.title}'"
-    ws.defined_names['Print_Area'] = DefinedName(
-        'Print_Area', attr_text=f'{q}!$A$1:INDEX({q}!${last}$1:${last}${cap_row},{q}!{end_cell})')
+    areas = [f'{q}!$A$1:INDEX({q}!${last}$1:${last}${cap_row},{q}!{end_cell})']
+    areas += [f'{q}!${c0}$1:INDEX({q}!${c1}$1:${c1}${cr},{q}!{ec})' for c0, c1, cr, ec in extra]
+    ws.defined_names['Print_Area'] = DefinedName('Print_Area', attr_text=','.join(areas))
 
 
 def acct_table(ws, r0, vals):
@@ -276,13 +285,15 @@ def build_day(ws):
     d0, d1 = D_L0, D_L0 + D_NL - 1
     t0 = f'$AS{d0}'
     rng = f'A{d0}:{LAST}{d1}'
+    # 超量提示的红字要先加（优先级高），不然被下面「共 N 笔」整行灰字（stopIfTrue）压住
+    cf.add(f'E{d0}:E{d1}', FormulaRule(formula=[f'AND({t0}=4,LEFT($E{d0},1)="⚠")'], font=Font(bold=True, color='FFC00000'),
+                                       stopIfTrue=True))
     cf.add(rng, FormulaRule(formula=[f'{t0}=3'], fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD, stopIfTrue=True))
     cf.add(rng, FormulaRule(formula=[f'{t0}=4'], font=Font(color='FF808080'), stopIfTrue=True))
     cf.add(rng, FormulaRule(formula=[f'AND({t0}=1,$I{d0}="内部转账")'], fill=cf_fill('FFEAF4FB'), border=CF_BD, stopIfTrue=True))
     cf.add(rng, FormulaRule(formula=[f'{t0}=1'], border=CF_BD))
-    cf.add(f'E{d0}:E{d1}', FormulaRule(formula=[f'AND({t0}=4,LEFT($E{d0},1)="⚠")'], font=Font(bold=True, color='FFC00000')))
     hide(ws, *[CL(i) for i in range(CI('J'), CI('AU') + 1)])
-    finish(ws, LAST, f'{D_H2}:{D_H2}', sc('末行'), d1)
+    finish(ws, LAST, f'{D_H2}:{D_H2}', sc('末行'), d1, brk=D_SEC2)          # ② 另起一页（① 是固定 18 行）
 
 
 # ═══════════════════════════════ 资金月报 ═══════════════════════════════
@@ -316,7 +327,7 @@ def build_mon(ws):
     ws.row_dimensions[3].height = 30
 
     keys = ['输入', '认出前', 'm', '认出', 'Y', 'mo', '月初', '月末', '起日', '末日', '年初月', '账户数', '类别数', '有没归类',
-            '显示行数', '末行', '全_收', '全_支', '全_净']
+            '显示行数', '末行', '全_收', '全_支', '全_净', '空月', '差月数']
     for p in ('可用', '票据'):
         keys += [f'{p}_{k}' for k in ('初', '收', '支', '末')]
     for p in ('合计', '内转', '全部', '没归类'):
@@ -334,6 +345,7 @@ def build_mon(ws):
     sc.set('起日', f'MIN({sc("月初")}-1,P_截止)')
     sc.set('末日', f'MIN({sc("月末")},P_截止)')
     sc.set('年初月', f'{Y}*100+1')
+    sc.set('空月', f'IF({sc("月初")}>P_截止,1,0)')          # 选的月份在截止日以后：① 和第 4 行空着（跟 ② 一样）
     upto = '资_日期,"<="&P_截止'
     inm = f'资_资金有效,1,资_年月,{m},{upto}'
     iny = f'资_资金有效,1,资_年月,">="&{sc("年初月")},资_年月,"<="&{m},{upto}'
@@ -362,11 +374,12 @@ def build_mon(ws):
                    f'&IF({sc("月初")}>P_截止,"　⚠ 这个月在截止日 "&TEXT(P_截止,"yyyy-mm-dd")&" 以后，还没有数","")'
                    f'&IF({sc("月末")}<P_建账日,"　⚠ 这个月在建账日以前，没有流水","")'),
         F_NOTE, align=ALW, border=False)
-    kpi(ws, 'A4', '月末可用资金', 'B4', sc('可用_末'))
-    kpi(ws, 'C4', '月末手上票据', 'D4', sc('票据_末'))
-    kpi(ws, 'E4', '本月实际收入', 'F4', sc('全_收'))
-    kpi(ws, 'G4', '本月实际支出', 'H4', sc('全_支'))
-    kpi(ws, 'I4', '本月净现金流', 'J4', sc('全_净'))
+    em = sc('空月')
+    kpi(ws, 'A4', '月末可用资金', 'B4', f'IF({em}=1,"",{sc("可用_末")})')
+    kpi(ws, 'C4', '月末手上票据', 'D4', f'IF({em}=1,"",{sc("票据_末")})')
+    kpi(ws, 'E4', '本月实际收入', 'F4', f'IF({em}=1,"",{sc("全_收")})')
+    kpi(ws, 'G4', '本月实际支出', 'H4', f'IF({em}=1,"",{sc("全_支")})')
+    kpi(ws, 'I4', '本月净现金流', 'J4', f'IF({em}=1,"",{sc("全_净")})')
     ws.row_dimensions[4].height = 22
     cf = ws.conditional_formatting
 
@@ -385,7 +398,8 @@ def build_mon(ws):
         cell(ws, f'A{r}', pick(ix, 'AD', MO_A0, N_ACC, ['"可用资金合计"', '"手上票据"']), align=AL)
         cell(ws, f'C{r}', pick(ix, 'AE', MO_A0, N_ACC, ['"不含票据"', '"承兑汇票"']), align=AL)
         for col, k_ in zip('DEFG', H):
-            cell(ws, f'{col}{r}', pick(ix, H[k_], MO_A0, N_ACC, [sc(f'可用_{k_}'), sc(f'票据_{k_}')]), fmt=MONEY, align=AR)
+            cell(ws, f'{col}{r}', f'IF({em}=1,"",{pick(ix, H[k_], MO_A0, N_ACC, [sc(f"可用_{k_}"), sc(f"票据_{k_}")])})',
+                 fmt=MONEY, align=AR)
         ws.merge_cells(f'H{r}:{LAST}{r}')
         cell(ws, f'H{r}', f'IF({ix}=0,"",IF(N(G{r})<-0.005,"⚠ 余额是负数：漏记了收入，还是记错了账户？",'
                           f'IF(ROUND(N(D{r})+N(E{r})-N(F{r})-N(G{r}),2)<>0,"⚠ 月初＋收入－支出≠月末","")))', F_NOTE, align=AL)
@@ -445,6 +459,8 @@ def build_mon(ws):
                 cell(ws, f'{col}{r}', f'IF({fu}=1,"",{R2(f)})', F_TXTB if col == 'H' else F_TXT, MONEY, AR)
         mr = f'${mat[0]}{r}:${mat[-1]}{r}'
         bold = F_TXTB if yr else F_TXT
+        if not yr:   # AW：净现金流－前面 6 列加减（≠0＝有类别没选、不在清单里、没填「算到哪」的钱）
+            hset(ws, f'AW{r}', f'ROUND(N(H{r})-(N(B{r})-N(C{r})-N(D{r})+N(E{r})-N(F{r})+N(G{r})),2)')
         cell(ws, f'I{r}', f'IF($AU{r}=0,"",ROUND(SUMPRODUCT({mr},{fu_rng_a}),2))', bold, MONEY, AR)
         cell(ws, f'J{r}', f'IF($AU{r}=0,"",ROUND(SUMPRODUCT({mr},{fu_rng_b}),2))', bold, MONEY, AR)
         for col in 'ABCDEFGHIJ':
@@ -454,10 +470,15 @@ def build_mon(ws):
     m0_, m1_ = MO_M0, MO_M0 + 11
     cf.add(f'A{m0_}:{LAST}{m1_}', FormulaRule(formula=[f'$AR{m0_}={m}'], fill=cf_fill('FFFFF2CC'), font=Font(bold=True)))
     cf.add(f'A{m0_}:{LAST}{m1_}', FormulaRule(formula=[f'$AV{m0_}=1'], font=Font(color='FFA6A6A6')))
+    sc.set('差月数', f'COUNTIF($AW${m0_}:$AW${m1_},"<>0")')
     note(ws, f'A{MO_NOTE2}', LAST,
          '="收客户货款、付供应商货款都是净额（退款已经减掉）；费用支出＝生产成本＋销售费用＋管理费用＋财务费用＋税金＋其他支出（按付款月份，'
-         '利润表、费用统计按所属月份）；不算收支＝借款、还借款、老板存取、保证金、还信用卡的净额（正数＝净进来）。'
-         '本月净现金流＝全部收入－全部支出（不含内部转账）；全年那行的月末＝年底或截止日。选的月份黄底。"', height=44)
+         '利润表、费用统计按所属月份）；不算收支＝借款、还借款、老板存取、保证金、还信用卡的净额（正数＝净进来）。"'
+         '&"本月净现金流＝全部收入－全部支出（不含内部转账）＝收货款－付货款－费用＋其他收入－买设备＋不算收支；'
+         '收支类别没选、不在清单里、没填「算到哪」的钱只算在净现金流里（③ 有单列的一行）。全年那行的月末＝年底或截止日。选的月份黄底。"'
+         f'&IF({sc("差月数")}>0,"　⚠ 有 "&{sc("差月数")}&" 个月的净现金流跟前面 6 列加减对不上，差的就是这种钱：到资金台帐看最右边的校验列","")',
+         height=58)
+    cf.add(f'A{MO_NOTE2}', FormulaRule(formula=[f'ISNUMBER(FIND("⚠",$A${MO_NOTE2}))'], font=Font(bold=True, color='FFC00000')))
 
     # ── ③ 按收支类别 ──
     section(ws, MO_SEC3, 'A', LAST, f'="③ 按收支类别（"&{Y}&" 年 "&{mo}&" 月；本年累计＝1 月～"&{mo}&" 月；只算截止日以前的）"', C_VIEW)
@@ -506,9 +527,11 @@ def build_mon(ws):
                  fmt=MONEY, align=AR)
         ws.merge_cells(f'H{r}:{LAST}{r}')
         dif = f'ROUND(N(D{r})-N(E{r}),2)'
-        cell(ws, f'H{r}', (f'IF({ix}=0,"",IF({ix}=-3,IF(AND({dif}=0,ROUND(N(F{r})-N(G{r}),2)=0),"✓ 转进＝转出",'
-                           f'"⚠ 本月转进比转出"&IF({dif}>=0,"多 ","少 ")&TEXT(ABS({dif}),"#,##0.00")'
-                           f'&IF(ROUND(N(F{r})-N(G{r}),2)<>0,"；本年差 "&TEXT(N(F{r})-N(G{r}),"#,##0.00;-#,##0.00"),"")&"（只记了一边？）"),'
+        ydif = f'ROUND(N(F{r})-N(G{r}),2)'
+        cell(ws, f'H{r}', (f'IF({ix}=0,"",IF({ix}=-3,IF(AND({dif}=0,{ydif}=0),"✓ 转进＝转出",'
+                           f'"⚠ "&IF({dif}<>0,"本月转进比转出"&IF({dif}>0,"多 ","少 ")&TEXT(ABS({dif}),"#,##0.00"),"")'
+                           f'&IF({ydif}<>0,IF({dif}<>0,"；","")&"1 月到本月转进比转出"&IF({ydif}>0,"多 ","少 ")'
+                           f'&TEXT(ABS({ydif}),"#,##0.00"),"")&"（只记了一边？）"),'
                            f'IF({ix}=-1,"⚠ 到资金台帐看最右边的校验列",IF({ix}=-2,"＝全部收支－内部转账",'
                            f'IF(C{r}="内部转账","不算在合计里","")))))'), F_NOTE, align=AL)
     c0, c1 = MO_C0, MO_C0 + MO_NC - 1
@@ -522,7 +545,7 @@ def build_mon(ws):
                             stopIfTrue=True))
     cf.add(rng, FormulaRule(formula=[f'{z0}>0'], border=CF_BD))
     hide(ws, *[CL(i) for i in range(CI('K'), CI(mat[-1]) + 1)])
-    finish(ws, LAST, f'{MO_H3}:{MO_H3}', sc('末行'), c1)
+    finish(ws, LAST, f'{MO_H3}:{MO_H3}', sc('末行'), c1, brk=MO_SEC2)     # ② 另起一页（① 是固定 17 行）
 
 
 # ═══════════════════════════════ 费用统计 ═══════════════════════════════
@@ -551,7 +574,8 @@ def build_fee(ws):
     put(ws, 'Q1', '② 明细', F_TITLE, fill(C_VIEW), align=AC, border=False)
     ws.merge_cells(f'Q2:{L2}2')
     put(ws, 'Q2', '💡 选一个收支类别（空着＝全部费用）、一个月份（1～12，空着＝全年），列出这一年（按所属月份）的每一笔，按日期排。'
-                  '金额＝支出－收入（退回来的钱是负数）。', F_TIP, FILL_TIP, align=ALW, border=False)
+                  '金额＝支出－收入（退回来的钱是负数）。打印时 ② 接在 ① 后面另起一页（没印出来：选中 ② 这块 → 打印 → 打印选定区域）。',
+        F_TIP, FILL_TIP, align=ALW, border=False)
     selector(ws, 'A3', '年份', 'B3', None, fmt='0')
     dv = DataValidation(type='whole', operator='between', formula1='2000', formula2='2099', allow_blank=True,
                         showErrorMessage=False, showInputMessage=True, promptTitle='提示', prompt='填年份，比如 2026；空着＝截止日那年')
@@ -565,7 +589,7 @@ def build_fee(ws):
     ws.row_dimensions[3].height = 26
 
     keys = ['输入', 'Y', '认出', '段行数', '末行', '超20', '选类别', '类别在', '类别归类', '月输入', '月', '月认出',
-            '起月', '止月', '笔数', '显示数', '明细合计']
+            '起月', '止月', '笔数', '显示数', '明细合计', '明细末行']
     sc = Sc(ws, keys)
     v, Y = sc('输入'), sc('Y')
     sc.set('输入', 'IF(ISNUMBER(B3),B3,IFERROR(--TRIM(B3&""),0))')
@@ -669,6 +693,7 @@ def build_fee(ws):
     KEYS = f'$BY${K0}:$BY${K1}'
     sc.set('笔数', f'COUNT({KEYS})')
     sc.set('显示数', f'MIN({sc("笔数")},{FEE_SHOW})')
+    sc.set('明细末行', f'{F_L0 - 1}+{sc("显示数")}+2')
     lo, hi = sc('起月'), sc('止月')
     per = f'资_所属年月,">="&{lo},资_所属年月,"<="&{hi},{upto}'
     all_fee = '+'.join(f'SUMIFS(资_支出额,资_归类,"{kd}",{per})' for kd in EXPENSE_KINDS)
@@ -715,14 +740,15 @@ def build_fee(ws):
     d0, d1 = F_L0, F_L0 + F_NL - 1
     t0 = f'$BN{d0}'
     rng = f'Q{d0}:{L2}{d1}'
+    cf.add(f'U{d0}:U{d1}', FormulaRule(formula=[f'AND({t0}=4,LEFT($U{d0},1)="⚠")'], font=Font(bold=True, color='FFC00000'),
+                                       stopIfTrue=True))                   # 先加：优先于整行灰字
     cf.add(rng, FormulaRule(formula=[f'{t0}=3'], fill=cf_fill('FFFCE4D6'), font=Font(bold=True), border=CF_BD, stopIfTrue=True))
     cf.add(rng, FormulaRule(formula=[f'{t0}=4'], font=Font(color='FF808080'), stopIfTrue=True))
     cf.add(rng, FormulaRule(formula=[f'{t0}=1'], border=CF_BD))
-    cf.add(f'U{d0}:U{d1}', FormulaRule(formula=[f'AND({t0}=4,LEFT($U{d0},1)="⚠")'], font=Font(bold=True, color='FFC00000')))
     cf.add('Q5', FormulaRule(formula=['ISNUMBER(FIND("⚠",$Q$5))'], font=Font(bold=True, color='FFFFFF00')))
     cf.add('V3', FormulaRule(formula=['ISNUMBER(FIND("⚠",$V$3))'], font=Font(bold=True, color='FFC00000')))
     hide(ws, *[CL(i) for i in range(CI('X'), CI('BY') + 1)])
-    finish(ws, LAST, '6:6', sc('末行'), r1, freeze='A7')
+    finish(ws, LAST, '6:6', sc('末行'), r1, freeze='A7', extra=[('Q', L2, d1, sc('明细末行'))])   # ② 另成一块打印区域
 
 
 def build(wb, ctx=None):
