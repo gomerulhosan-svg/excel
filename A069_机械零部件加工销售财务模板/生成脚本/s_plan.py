@@ -178,7 +178,7 @@ class Flow:
         """第 i 段（0 起）分界 ci 那一行的前一行（比如 ci=5：共几条那一行）"""
         return f'{self.r0}+{self.th(0, i)}+{self.th(ci, i)}-1'
 
-    def build(self, fmts, aligns, font=F_TXT, height=None, shrink=()):
+    def build(self, fmts, aligns, font=F_TXT, height=None, shrink=(), wrap=()):
         ws, S = self.ws, len(self.segs)
         self.n = n = sum(self.size(s) for s in self.segs)
         for ci, t in enumerate(('起', '标题止', '表头止', '明细止', '合计止', '共几条止', '附加止', '段长')):
@@ -227,7 +227,8 @@ class Flow:
                 cell.value = '=' + out
                 cell.font = font
                 al = aligns.get(c, AC)
-                cell.alignment = Alignment(horizontal=al.horizontal, vertical='center', shrink_to_fit=(c in shrink))
+                cell.alignment = Alignment(horizontal=al.horizontal, vertical='center', shrink_to_fit=(c in shrink),
+                                           wrap_text=(c in wrap))       # 长文字自动换行（缩小字体太长时看不清）
                 if c in fmts:
                     cell.number_format = fmts[c]
             if height:
@@ -525,7 +526,8 @@ def build_fplan(ws):
                       C=f'IF({sc("缓n")}>{SHOW_HOLD},"只列了前 {SHOW_HOLD} 单（合计是全部的）","")'),
            n_all=sc('缓n'), cap=SHOW_HOLD, src=lambda k: f'MOD(SMALL({K4},{k}),{M})', spacer=0)
     fl.build(fmts=dict(D=DATE, E=DATE, F=MONEY, G=MONEY, H=MONEY),
-             aligns=dict(A=AL, B=AL, C=AL, D=AC, E=AC, F=AR, G=AR, H=AR, I=AC, J=AC), shrink='CJ')
+             aligns=dict(A=AL, B=AL, C=AL, D=AC, E=AC, F=AR, G=AR, H=AR, I=AC, J=AC), wrap='CJ',
+             height=26)                        # 固定两行高：换了月份 Excel 不会自己调行高
     sc.set('尾', fl.end)
     sc.set('末行', f'{FP_R0}+{sc("尾")}-1')
     T, S0, r0 = fl.t(), fl.s(), FP_R0
@@ -573,9 +575,9 @@ def build_aprint(ws):
     sc.set('缓申请', R2('SUMIFS(批_申请金额,批_有效,1,批_状态码,5)'))
     sc.set('都批了还剩', R2(f'{sc("可用")}-{sc("固没付")}-{sc("已批未付")}-{sc("审申请")}'))
 
-    # 第 3 行：打印日期
+    # 第 3 行：截至日期（＝截止日期）
     ws.merge_cells('A3:B3')
-    put(ws, 'A3', '打印日期', F_KPI_L, LBL, align=AC)
+    put(ws, 'A3', '截至日期', F_KPI_L, LBL, align=AC)
     put(ws, 'B3', None, F_KPI_L, LBL)
     ws.merge_cells('C3:D3')
     put(ws, 'C3', '=TEXT(P_截止,"yyyy-mm-dd")', F_SEL, FILL_AUTO, align=AC)
@@ -639,7 +641,7 @@ def build_aprint(ws):
            n_all=sc('缓n'), cap=SHOW_HOLD, src=lambda k: f'MOD(SMALL({K2},{k}),{M})', spacer=0)
     fl.build(fmts=dict(C=DATE, G=MONEY, H=DATE, I=MONEY, J=MONEY, K=MONEY),
              aligns=dict(A=AC, B=AL, C=AC, D=AC, E=AL, F=AL, G=AR, H=AC, I=AR, J=AR, K=AR, L=AC, M=AR), height=24,
-             shrink='EFIKL')
+             wrap='EFI', shrink='KL')                  # 收款单位、付款内容、现在欠这家（文字）换行；金额列还是缩小
     sc.set('尾', fl.end)
     sc.set('末行', f'{AP_R0}+{sc("尾")}-1')
     T, r0 = fl.t(), AP_R0
