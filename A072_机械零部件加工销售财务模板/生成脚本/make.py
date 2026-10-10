@@ -11,7 +11,7 @@ from common import print_setup, link, F_HELP
 import data
 
 # 模块顺序：录入/基本信息 → 隐藏计算 → 各查看/报表（后面几个由各自的 s_*.py 提供 build(wb, ctx)）
-MODULES = ['s_input', 's_mirror', 's_list', 's_detail', 's_todo', 's_month', 's_pay', 's_flow', 's_check', 's_home']
+MODULES = ['s_input', 's_mirror', 's_fund', 's_pl', 's_wl', 's_plan', 's_check', 's_home']
 KEEP_OPEN = {'FFFFFF00', 'FFFFF7E0', 'FFEAF1FB'}        # 亮黄选择格、淡黄手填格、淡蓝粘贴格：保护时不锁
 
 BANNED = re.compile(r'(?<![A-Z0-9_.])(XLOOKUP|XMATCH|FILTER|UNIQUE|SORT|SORTBY|SEQUENCE|LET|LAMBDA|MAXIFS|MINIFS|IFS|SWITCH|'
