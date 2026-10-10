@@ -11,7 +11,7 @@ from common import print_setup, link, F_HELP
 import data
 
 # 模块顺序：录入/基本信息 → 隐藏计算 → 各查看/报表（后面几个由各自的 s_*.py 提供 build(wb, ctx)）
-MODULES = ['s_input', 's_mirror', 's_fund', 's_pl', 's_wl', 's_plan', 's_check', 's_home']
+MODULES = ['s_input', 's_mirror', 's_fund', 's_pl', 's_wl', 's_plan', 's_kgd', 's_check', 's_home']
 KEEP_OPEN = {'FFFFFF00', 'FFFFF7E0', 'FFEAF1FB'}        # 亮黄选择格、淡黄手填格、淡蓝粘贴格：保护时不锁
 
 BANNED = re.compile(r'(?<![A-Z0-9_.])(XLOOKUP|XMATCH|FILTER|UNIQUE|SORT|SORTBY|SEQUENCE|LET|LAMBDA|MAXIFS|MINIFS|IFS|SWITCH|'
@@ -42,6 +42,10 @@ def check_formulas(wb):
                     if hit or not _balanced(v) or len(v) > 8000:
                         bad.append(f'{ws.title}!{c.coordinate}: {hit} len={len(v)} {v[:160]}')
     assert not bad, '\n'.join(bad[:40])
+    for ws in wb.worksheets:                         # 有效性的提示、出错文字 Excel 最多 255 字
+        for dv in ws.data_validations.dataValidation:
+            for t in (dv.prompt, dv.error, dv.promptTitle, dv.errorTitle):
+                assert t is None or len(t) <= 255, f'{ws.title} 有效性文字超过 255 字：{t[:60]}…（{len(t)}）'
 
 
 def define_names(wb):

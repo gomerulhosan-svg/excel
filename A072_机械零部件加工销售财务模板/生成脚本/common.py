@@ -162,7 +162,7 @@ def dv_list(ws, sqref, formula, prompt=None, stop=True, blank=True):
         dv.promptTitle, dv.prompt = '提示', prompt
         dv.showInputMessage = True
     dv.errorTitle = '不在清单里'
-    dv.error = '请从下拉里选；清单里没有的，先到【基础资料】里加一行'
+    dv.error = '请从下拉里选。客户、供应商先到【往来单位】加一行；账户、收支类别、人员先到【基础资料】加一行'
     ws.add_data_validation(dv)
     dv.add(sqref)
     return dv

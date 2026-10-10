@@ -26,7 +26,7 @@ CF_BD = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
 LBL = fill('FFD9E1F2')
 F_MEMO = Font(name=YH, sz=9, color='FF808080')
 F_MEMOL = Font(name=YH, sz=9, bold=True, color='FF808080')
-F_KPI_B = Font(name=YH, sz=13, bold=True, color='FF1F3864')
+F_KPI_B = Font(name=YH, sz=11, bold=True, color='FF1F3864')
 C_MEMO = 'FFA6A6A6'
 
 
@@ -74,7 +74,7 @@ def _year_parse(cell):
 
 
 def _year_selector(ws, prompt):
-    selector(ws, 'A3', '年份', 'B3', None, fmt='0')
+    selector(ws, 'A3', '年份', 'B3', None)
     dv = DataValidation(type='whole', operator='between', formula1='2000', formula2='2099', allow_blank=True,
                         showErrorMessage=False, showInputMessage=True, promptTitle='提示', prompt=prompt)
     ws.add_data_validation(dv)
@@ -303,13 +303,13 @@ TIP_IV = ('💡 全自动（发票在【发票登记】里登）。黄格 B3 年
 
 def build_inv(wb):
     ws = wb[SH_INVS]
-    W = {'A': 24, 'B': 13.5, 'C': 14, 'D': 28, 'E': 17, 'F': 13.5, 'G': 13.5, 'H': 14, 'I': 14, 'J': 16}
+    W = {'A': 24, 'B': 13.5, 'C': 14, 'D': 28, 'E': 17, 'F': 13.5, 'G': 13.5, 'H': 14, 'I': 16, 'J': 16}
     widths(ws, W)
     title(ws, '发 票 跟 进', IV_LAST, C_WL, TIP_IV)
 
     # ── 第 3 行：年份、月份 ──
     _year_selector(ws, '填年份，比如 2026；空着＝截止日期那年（管 ① 各月）')
-    selector(ws, 'C3', '月份\n（④ 清单）', 'D3', None, '"1,2,3,4,5,6,7,8,9,10,11,12"', fmt='0',
+    selector(ws, 'C3', '月份\n（④ 清单）', 'D3', None, '"1,2,3,4,5,6,7,8,9,10,11,12"',
              prompt='选 1～12；空着＝截止日期那个月；填 2026-9 或 202609 连年份一起认')
     ws['C3'].alignment = ACW
     v, fy, fok = _year_parse('B3')
@@ -415,7 +415,7 @@ def build_inv(wb):
     header(ws, IV_H1, [('A', '月份'), ('B', '开出（开给客户的）'), ('C', None), ('D', None), ('E', '收到（供应商开来的）'),
                        ('F', None), ('G', None), ('H', None), ('I', '开出税额－收到专票税额\n（只供参考，不是报税数）')], C_WL, height=22)
     header(ws, IV_H2, [('A', None), ('B', '张数'), ('C', '价税合计'), ('D', '税额'), ('E', '张数'), ('F', '价税合计'), ('G', '税额'),
-                       ('H', '其中专票税额'), ('I', None)], C_WL, height=34)
+                       ('H', '其中专票税额'), ('I', None)], C_WL, height=42)
     base = '票_计入往来,1,票_年月,{y},票_日期,"<="&P_截止,票_方向,"{d}"'
     cols = {
         'B': lambda y: f'COUNTIFS({base.format(y=y, d="开出")})',

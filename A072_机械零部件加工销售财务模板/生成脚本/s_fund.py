@@ -34,7 +34,7 @@ F_KV = Font(name=YH, sz=10, bold=True, color='FFC00000')
 LBL = fill('FFD9E1F2')
 MONEY_B = '#,##0.00;[Red]-#,##0.00;""'
 YM_FMT = '[<100000]yyyy-mm;0'
-DAY_SHOW, MON_CAT_SHOW, FEE_SEG_MAX, FEE_SHOW = 80, N_CAT, 20, 150
+DAY_SHOW, FEE_SEG_MAX, FEE_SHOW = 80, 20, 150
 
 
 def cf_fill(rgb):
@@ -357,7 +357,7 @@ def build_mon(ws):
     ws.merge_cells('C3:I3')
     put(ws, 'C3', (f'="＝ "&{Y}&" 年 "&{mo}&" 月"&IF(TRIM(B3&"")="","（空着＝截止日那个月）","")'
                    f'&IF({sc("认出")}=0,"（⚠ 没认出来，先按截止日那个月）","")'
-                   f'&"；月初余额＝"&TEXT({sc("月初")}-1,"yyyy-mm-dd")&"，月末余额＝"&TEXT({sc("末日")},"yyyy-mm-dd")'
+                   f'&"；月初余额算到 "&TEXT({sc("起日")},"yyyy-mm-dd")&"，月末余额算到 "&TEXT({sc("末日")},"yyyy-mm-dd")'
                    f'&IF({sc("月末")}>P_截止,"（截止日；截止日以后的不算）","")'
                    f'&IF({sc("月初")}>P_截止,"　⚠ 这个月在截止日 "&TEXT(P_截止,"yyyy-mm-dd")&" 以后，还没有数","")'
                    f'&IF({sc("月末")}<P_建账日,"　⚠ 这个月在建账日以前，没有流水","")'),
@@ -564,14 +564,13 @@ def build_fee(ws):
              prompt='选 1～12 月；空着＝全年')
     ws.row_dimensions[3].height = 26
 
-    keys = ['输入', 'Y', '认出', '截止年月', '段行数', '末行', '超20', '选类别', '类别在', '类别归类', '月输入', '月', '月认出',
+    keys = ['输入', 'Y', '认出', '段行数', '末行', '超20', '选类别', '类别在', '类别归类', '月输入', '月', '月认出',
             '起月', '止月', '笔数', '显示数', '明细合计']
     sc = Sc(ws, keys)
     v, Y = sc('输入'), sc('Y')
     sc.set('输入', 'IF(ISNUMBER(B3),B3,IFERROR(--TRIM(B3&""),0))')
     sc.set('Y', f'IF(TRIM(B3&"")="",P_年度,IF(AND({v}>=2000,{v}<=2099),INT({v}),IF(AND({v}>=36526,{v}<73051),YEAR({v}),P_年度)))')
     sc.set('认出', f'IF(TRIM(B3&"")="",1,IF(OR(AND({v}>=2000,{v}<=2099),AND({v}>=36526,{v}<73051)),1,0))')
-    sc.set('截止年月', 'P_截止年月')
     upto = '资_日期,"<="&P_截止'
 
     # ── 隐藏 6 类表：AD 类名、AE 类别个数、AF 显示个数、AG 段前行数、AH 全年、AI～AT 1～12 月；第 9 行合计 ──
@@ -685,9 +684,9 @@ def build_fee(ws):
                             f'{x("资_日期")}<=P_截止,{ok_cat}),{x("资_排序键")},""))'))
     N, NN = sc('笔数'), sc('显示数')
     ws.merge_cells(f'V3:{L2}3')
-    put(ws, 'V3', (f'=IF({mo}=0,"全年","")&IF({sc("月认出")}=0,"⚠ 月份填 1～12","")'
+    put(ws, 'V3', (f'=IF({sc("月认出")}=0,"⚠ 月份填 1～12（先按全年）",IF({mo}=0,"＝全年","＝"&{mo}&" 月"))'
                    f'&IF({sc("类别在")}=0,"　⚠ 类别不在清单里","")'), F_NOTE, align=ALW, border=False)
-    section(ws, 5, 'Q', L2, (f'="② "&{Y}&" 年"&IF({mo}=0,"全年",{mo}&" 月")&"　"&IF({sel}="","全部费用","「"&{sel}&"」")'
+    section(ws, 5, 'Q', L2, (f'="② "&{Y}&" 年"&IF({mo}=0,"全年"," "&{mo}&" 月")&"　"&IF({sel}="","全部费用","「"&{sel}&"」")'
                              f'&"（按所属月份）共 "&{N}&" 笔"&IF({N}>{FEE_SHOW},"，⚠ 只列前 {FEE_SHOW} 笔","")'), C_VIEW)
     ws.merge_cells(f'Q4:{L2}4')
     put(ws, 'Q4', (f'=IF(AND({sel}<>"",{sc("类别归类")}<>"",NOT(ISNUMBER(MATCH({sc("类别归类")},{KR},0)))),'
