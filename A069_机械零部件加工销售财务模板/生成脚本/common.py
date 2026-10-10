@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""A072 机械零部件加工销售财务模板 · 通用样式和小工具（跟 A070 一个样：微软雅黑，彩色标题带 ＋ 💡提示）。
+"""A069 机械零部件加工销售财务模板（内部曾叫 A072） · 通用样式和小工具（跟 A070 一个样：微软雅黑，彩色标题带 ＋ 💡提示）。
    各表的行列地址在 layout.py。"""
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter as CL, column_index_from_string as CI

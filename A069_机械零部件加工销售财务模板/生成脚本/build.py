@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""A072 机械零部件加工销售财务模板 · 生成脚本
+"""A069 机械零部件加工销售财务模板（内部曾叫 A072） · 生成脚本
 
 跑法：python3 build.py [--only s_base,s_regs] [--out 路径] [--keep]
-输出：../A072_机械零部件加工销售财务模板.xlsx（预置清单和示例行在 data.py）
+输出：../A069_机械零部件加工销售财务模板.xlsx（预置清单和示例行在 data.py）
 
 做法：openpyxl 生成 → 一整列同样的公式改成共享公式（文件小、打开快）→ 复制一份（把隐藏列都显示出来，LibreOffice 才不会漏算隐藏列尾巴上的公式）
       让 LibreOffice 整本重算、数报错、核对公式个数 → 把算出来的数写回成品当缓存（手机、微信预览也能看到数；Excel/WPS 打开会再算）。
@@ -25,7 +25,7 @@ from inject_cache import inject
 import make
 
 ROOT = os.path.dirname(HERE)
-OUT = os.path.join(ROOT, 'A072_机械零部件加工销售财务模板.xlsx')
+OUT = os.path.join(ROOT, 'A069_机械零部件加工销售财务模板.xlsx')
 CALC = os.path.join(HERE, '_calc')
 
 
