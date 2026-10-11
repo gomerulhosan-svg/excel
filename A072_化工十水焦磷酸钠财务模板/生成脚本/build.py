@@ -64,27 +64,48 @@ def unhide_cols(path):
     shutil.move(tmp, path)
 
 
-def count_formulas(path):
-    """成品里每个公式格（含共享公式的子格）都数一遍"""
+def count_formulas(path, per_sheet=False):
+    """成品里每个公式格（含共享公式的子格）都数一遍；per_sheet=True 时另给 {表名: 个数}"""
     from lxml import etree
     NS = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    RNS = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
     z = zipfile.ZipFile(path)
-    n = 0
+    names = {}
+    if per_sheet:
+        rel = {}
+        for _, el in etree.iterparse(z.open('xl/_rels/workbook.xml.rels')):
+            if el.tag.endswith('Relationship'):
+                rel[el.get('Id')] = el.get('Target').split('/')[-1]
+        for _, el in etree.iterparse(z.open('xl/workbook.xml'), tag=NS + 'sheet'):
+            names['xl/worksheets/' + rel[el.get(RNS + 'id')]] = el.get('name')
+    n, per = 0, {}
     for nm in z.namelist():
         if nm.startswith('xl/worksheets/sheet') and nm.endswith('.xml'):
+            k = 0
             for _, el in etree.iterparse(z.open(nm), tag=NS + 'f'):
-                n += 1
+                k += 1
                 el.clear()
+            n += k
+            per[names.get(nm, nm)] = k
     z.close()
-    return n
+    return (n, per) if per_sheet else n
 
 
 def main(out=OUT, only=None, scenario=None, keep=False, timeout=3000):
+    from layout import SMALL, FORMULA_BUDGET
+    if SMALL and os.path.abspath(out) == os.path.abspath(OUT):
+        print('✗ 现在是小容量（A072HG_SMALL=1），不准写正式成品；用 --out 另存')
+        return 3, None
     wb = make.build(only=only, scenario=scenario)
     wb.save(out)
     s = share(out)
-    nf = count_formulas(out)
+    nf, per = count_formulas(out, per_sheet=True)
     print(f'① 生成 {os.path.basename(out)}：公式 {nf} 个（共享公式 {sum(s.values())} 格）')
+    top = sorted(per.items(), key=lambda kv: -kv[1])[:12]
+    print('   公式最多的表：' + '、'.join(f'{k} {v}' for k, v in top))
+    over = (not SMALL) and nf > FORMULA_BUDGET
+    if over:
+        print(f'✗ 超过预算 {FORMULA_BUDGET}')
     os.makedirs(CALC, exist_ok=True)
     calc = os.path.join(CALC, os.path.basename(out).replace('.xlsx', '_算数.xlsx'))
     shutil.copy(out, calc)
@@ -104,7 +125,7 @@ def main(out=OUT, only=None, scenario=None, keep=False, timeout=3000):
     print(f'③ 写回缓存 {n} 格；{os.path.getsize(out) / 1e6:.1f} MB')
     if not keep:
         os.remove(calc)
-    ok = st['total_errors'] == 0 and st['total_formulas'] == nf
+    ok = st['total_errors'] == 0 and st['total_formulas'] == nf and not over
     return (0 if ok else 1), st
 
 
