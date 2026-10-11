@@ -157,6 +157,8 @@ def build(only=None, scenario=None, ctx=None):
             if not ws.print_title_rows and grp not in ('首页',):
                 print_setup(ws, None, landscape=True)
     _no_emoji(wb)
+    bad = [nm for nm in wb.defined_names if not re.fullmatch(r'[A-Za-z_\\\u4e00-\u9fff][\w.\u4e00-\u9fff]*', nm)]
+    assert not bad, f'名称里有 Excel 不认的字符：{bad[:10]}'
     check_formulas(wb)
     import cyclecheck                                  # 静态环检测（Excel 把 INDEX/SUMIF 的整片区域都当前驱）
     cyc = cyclecheck.find_cycles(wb)
