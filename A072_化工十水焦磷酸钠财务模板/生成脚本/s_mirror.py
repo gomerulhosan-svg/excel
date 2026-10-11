@@ -184,7 +184,7 @@ def build_par(ws):
         _lab(ws, f'C{r}', nm)
         ws[f'D{r}'] = f'=IFERROR(LARGE({nm},COUNTIF({nm},">"&{b("日期上限")})+1),0)'
         ws[f'E{r}'] = f'=IFERROR(LARGE({nm},COUNTIF({nm},">"&(MAX($D$2:$D$5)-32))+1),0)'
-        ws[f'F{r}'] = f'=COUNTIFS({nm},">"&(MAX($D$2:$D$5)-31),{nm},"<="&MAX($D$2:$D$5))'
+        ws[f'F{r}'] = f'=IF(MAX($D$2:$D$5)>0,COUNTIFS({nm},">"&(MAX($D$2:$D$5)-31),{nm},"<="&MAX($D$2:$D$5)),0)'   # 全空的新本＝0
     _lab(ws, 'G1', '投产年月')
     ws['G2'] = f'={ym_any(P("投产月份"))}'
     for i, (key, _t, _tr, hr, cap) in enumerate(BASE_BLOCKS):
@@ -334,6 +334,13 @@ def build_list(ws):
         ws[L('剩余月数')] = f'=IF({off},0,IF(ISNUMBER({v}),IF({v}>0,ROUND({v},0),0),0))'
         ws[L('摊进')] = f'=IF(TRIM({g("摊进")}&"")="管理",2,1)'
         f1 = f'INDEX(科目_一级号,MAX(1,{no}))'
+        # 1123（预付）行：摊进格 → 费用明细科目号（编码 / 「编码 名称」/ 全称 / 名称 / 收支类别名称→付钱科目）；不在费用明细清单＝0
+        tj = txt(g('摊进'))
+        cj = code_of(g('摊进'))
+        pj = (f'IFERROR(MATCH({esc(cj)},科目_编码,0),IFERROR(MATCH({esc(tj)},科目_全称,0),IFERROR(MATCH({esc(tj)},科目_名称,0),'
+              f'IFERROR(INDEX(类别_付号,MATCH({esc(tj)},类别_名称,0)),0))))')
+        ws[L('摊进号')] = (f'=IF(OR({off},{no}=0,{tj}="",{kh("1123")}=0),0,IF({f1}<>{kh("1123")},0,'
+                         f'IFERROR(INDEX(费用明细_号,MATCH({pj},费用明细_号,0)),0)))')
         bad = 'OR(' + ','.join([f'{f1}={kh(c)}' for c in fam] + [f'{no}={kh(c)}' for c in exact]) + ')'
         # 不认：② ⑦ 往来 物料 卡片 的科目（各有自己的来源）、4001 家族、310415（倒挤）、损益类（表结法：建账前的利润都在倒挤里）
         ws[L('有效')] = (f'=IF({no}=0,0,IF(AND(OR({L("借")}<>0,{L("贷")}<>0),INDEX(科目_有效,{no})=1,'

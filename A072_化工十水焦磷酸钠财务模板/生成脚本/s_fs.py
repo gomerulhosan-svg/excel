@@ -14,8 +14,10 @@
      W/X 第 2 行起：标量（输入、认出、选月、月末、逐家拆分合计）。
    利润表 Q/R 隐藏：不在固定代码里的科目 → 科目号；第 FS_PL_DIFF 行隐藏（净利润－损益类合计）。
    现金流量表 第 CF_H1..CF_H4 行隐藏：矩阵月初现金、矩阵月末现金、期末（数）、差。
+   「本年」列（利润表、现金流量表，含管理行、核对行）＝1 月～截止月（P_截止月）合计；截止月以后的月份列照样显示（灰字），不进本年
+     （那几个月月末的折旧、成本结转、计提都还没做，数不全）。
    名称：利润表_净利润 / 利润表_分后利润 / 利润表_均价 / 利润表_每吨成本 / 利润表_每吨毛利 / 利润表_产量 / 利润表_销量（各 12 格，第 m 个＝m 月）、
-     利润表_本年净利润 / 利润表_本年分后利润（1 格）、利润表_核对、资产负债表_平衡、资产负债表_往来核对、现金流量表_核对（文字，√ 开头＝对）、
+     利润表_本年净利润 / 利润表_本年分后利润（1 格，到截止月）、利润表_核对、资产负债表_平衡、资产负债表_往来核对、现金流量表_核对（文字，√ 开头＝对）、
      资产负债表_选月、资产负债表_货币资金（期末）。"""
 import re
 from openpyxl.formatting.rule import FormulaRule
@@ -47,6 +49,14 @@ def _grey_months(ws, rng):
     col = ''.join(ch for ch in c0 if ch.isalpha())
     ws.conditional_formatting.add(rng, FormulaRule(
         formula=[f'OR(COLUMN({col}$1)-2<P_建账月,COLUMN({col}$1)-2>P_截止月)'], font=Font(name=YH, sz=10, color='FFA6A6A6')))
+
+
+def ytd(r):
+    """本年＝1 月～截止月：C{r} 到第 P_截止月 列（P_截止月 恒为 1～12）"""
+    return f'SUM(INDEX(C{r}:N{r},1):INDEX(C{r}:N{r},P_截止月))'      # 不写 C{r}:INDEX(…)：openpyxl 读共享公式时会把 C{r} 推错
+
+
+YTD_HDR = '="本年累计（"&IF(P_建账月<P_截止月,P_建账月&"～","")&P_截止月&" 月）"'
 
 
 def _head3(ws, last, form):
@@ -375,15 +385,15 @@ def pl_amt(code, m, sign):
 def build_pl(wb, ws):
     widths(ws, {'A': 46, 'B': 5, **{c: 12.5 for c in MC}, YC: 14.5, 'P': 3})
     title(ws, '利 润 表', YC, C_RPT,
-          '★ 每个月一列，最后一列是本年合计。数全部来自记账凭证（损益类科目每个月的发生额；表结法，不出结转损益凭证）。'
-          '灰字的月份：建账以前没有数；截止日期以后月末的折旧、摊销、工资、利息、成本结转还没做，数不全。'
+          '★ 每个月一列，最后一列是本年累计（1 月到截止日期那个月）。数全部来自记账凭证（损益类科目每个月的发生额；表结法，不出结转损益凭证）。'
+          '灰字的月份：建账以前没有数；截止日期以后的月份照样列出已经记的业务，但月末的折旧、摊销、工资、利息、成本结转还没做，数不全，不算进本年累计。'
           '下面「管理口径」几行是老板看的：每吨均价、每吨成本、毛利率，以及「减：投资款利息」（合伙人投资款按约定算的「利息」记在利润分配，不进财务费用）。'
           '最下面核对：净利润＝损益类科目（5 开头）贷方－借方。')
     _head3(ws, YC, '会小企02表　单位：元')
-    put(ws, 'C3', '="截止日期 "&TEXT(P_截止,"yyyy-mm-dd")&"（"&P_截止月&" 月）；灰字的月份没有数或月末还没结转"',
+    put(ws, 'C3', '="截止日期 "&TEXT(P_截止,"yyyy-mm-dd")&"（"&P_截止月&" 月）；本年累计只加到 "&P_截止月&" 月，灰字的月份没有数或月末还没结转，不算进本年"',
         F_NOTE, align=AL, border=False)
     ws.merge_cells('C3:K3')
-    header(ws, 4, [('A', '项    目'), ('B', '行次')] + [(c, f'{m}月') for m, c in zip(MONTHS, MC)] + [(YC, '本年累计')],
+    header(ws, 4, [('A', '项    目'), ('B', '行次')] + [(c, f'{m}月') for m, c in zip(MONTHS, MC)] + [(YC, YTD_HDR)],
            C_RPT, height=26)
     for i, code in enumerate(PL_NONFIX):
         _lab(ws, f'{PL_LK["code"]}{2 + i}', code)
@@ -405,7 +415,7 @@ def build_pl(wb, ws):
                 parts = [pl_amt(c, m, -1) for c in rev] + [pl_amt(c, m, 1) for c in exp]
                 val = f'=ROUND({"+".join(parts)},2)'
             put(ws, f'{col}{r}', val, F_TXTB if tot else F_TXT, fl, MONEY, AR)
-        put(ws, f'{YC}{r}', f'=SUM(C{r}:N{r})', F_TXTB, fl or FILL_SUB, MONEY, AR)
+        put(ws, f'{YC}{r}', f'={ytd(r)}', F_TXTB, fl or FILL_SUB, MONEY, AR)
     # ── 管理口径 ──
     r = PL_MG
     section(ws, r, 'A', YC, '管理口径（老板看的，不是会小企 02 的行）', C_RPT)
@@ -420,7 +430,7 @@ def build_pl(wb, ws):
         for m, col in list(zip(MONTHS, MC)) + [(0, YC)]:
             c = lambda kk: f'{col}{R[kk]}'
             if k in ('产量', '销量', '主营收入', '主营成本', '投资利息') and m == 0:
-                val = f'=SUM(C{r}:N{r})'
+                val = f'={ytd(r)}'
             elif k == '产量':
                 val = f'=ROUND(SUM(INDEX(本_产量,0,{m})),3)'
             elif k == '销量':
@@ -449,11 +459,13 @@ def build_pl(wb, ws):
     for m, col in zip(MONTHS, MC):
         put(ws, f'{col}{PL_CHK}', f'=ROUND(SUMIF({d1},5,INDEX(矩_贷,0,{m}))-SUMIF({d1},5,INDEX(矩_借,0,{m})),2)',
             F_NOTE, fmt=MONEY, align=AR, border=False)
-    put(ws, f'{YC}{PL_CHK}', f'=SUM(C{PL_CHK}:N{PL_CHK})', F_NOTE, fmt=MONEY, align=AR, border=False)
+    put(ws, f'{YC}{PL_CHK}', f'={ytd(PL_CHK)}', F_NOTE, fmt=MONEY, align=AR, border=False)
     for col in MC + [YC]:
         put(ws, f'{col}{PL_DIFF}', f'=ROUND({col}{PL_NET}-{col}{PL_CHK},2)', F_HELP, fmt=MONEY, align=AR, border=False)
+    late = f'ROUND(SUM(C{PL_DIFF}:N{PL_DIFF})-{ytd(PL_DIFF)},2)'      # 截止月以后的月份差（本年不含）
     put(ws, f'A{PL_CHKT}', (f'=IF(COUNTIF(C{PL_DIFF}:{YC}{PL_DIFF},"<>0")=0,"√ 净利润＝损益类科目贷方－借方（每个月、本年）",'
-                            f'"✗ 净利润跟损益类科目对不上（有损益科目没列进报表）：本年差 "&FIXED({YC}{PL_DIFF},2))'),
+                            f'"✗ 净利润跟损益类科目对不上（有损益科目没列进报表）：本年差 "&FIXED({YC}{PL_DIFF},2)'
+                            f'&IF({late}<>0,"；截止月以后的月份差 "&FIXED({late},2),""))'),
         F_RED, align=AL, border=False)
     ws.merge_cells(f'A{PL_CHKT}:{YC}{PL_CHKT}')
     ws.conditional_formatting.add(f'A{PL_CHKT}', FormulaRule(formula=[f'LEFT($A${PL_CHKT},1)="√"'],
@@ -522,16 +534,20 @@ CF_SIGN = CF_CHKT + 2
 CF_H1, CF_H2, CF_H3, CF_H4 = CF_SIGN + 2, CF_SIGN + 3, CF_SIGN + 4, CF_SIGN + 5
 CF_CHKA = f'$C${CF_H4 + 1}'                  # 期末现金－资产负债表货币资金
 CASH_CODES = ['1001', '1002', '1012']
+CF_NOTE3 = ('="截止日期 "&TEXT(P_截止,"yyyy-mm-dd")&"（"&P_截止月&" 月）；本年累计只加到 "&P_截止月&" 月，'
+            '期末现金＝"&P_截止月&" 月末；灰字的月份不算进本年"')
 
 
 def build_cf(wb, ws):
     widths(ws, {'A': 50, 'B': 5, **{c: 12.5 for c in MC}, YC: 14.5})
     title(ws, '现 金 流 量 表', YC, C_RPT,
-          '★ 直接法，每个月一列＋本年。现金＝现金、银行、微信支付宝账户（承兑汇票、老板垫付、备用金不是现金）。每一笔按收支类别'
+          '★ 直接法，每个月一列＋本年累计（1 月到截止日期那个月；截止日期以后的月份灰字，照样列出，不算进本年）。现金＝现金、银行、微信支付宝账户（承兑汇票、老板垫付、备用金不是现金）。每一笔按收支类别'
           '（员工报销按报销项目）在【基础资料】里设的「现金流量收/付」归到 1～18 行；内部转账（现金账户之间倒钱）不算流入流出，'
           '两行没在同一个月的、类别没设现金流量项目的显示在「资金账户间在途」。期末现金＝期初＋净增加额＋在途，跟资产负债表的货币资金核对。')
     _head3(ws, YC, '会小企03表　单位：元')
-    header(ws, 4, [('A', '项    目'), ('B', '行次')] + [(c, f'{m}月') for m, c in zip(MONTHS, MC)] + [(YC, '本年累计')],
+    put(ws, 'C3', CF_NOTE3, F_NOTE, align=AL, border=False)
+    ws.merge_cells('C3:K3')
+    header(ws, 4, [('A', '项    目'), ('B', '行次')] + [(c, f'{m}月') for m, c in zip(MONTHS, MC)] + [(YC, YTD_HDR)],
            C_RPT, height=26)
     R = CF_ROW
     for i, (name, no, typ) in enumerate(CF_LAYOUT):
@@ -547,12 +563,12 @@ def build_cf(wb, ws):
                 val = None
             elif isinstance(typ, tuple):
                 sg = '' if typ[0] == 'in' else '-'
-                val = (f'={sg}ROUND(SUMIFS(资_现流额,资_现流号,{typ[1]},资_月,{m}),2)' if m else f'=SUM(C{r}:N{r})')
+                val = (f'={sg}ROUND(SUMIFS(资_现流额,资_现流号,{typ[1]},资_月,{m}),2)' if m else f'={ytd(r)}')
             elif typ.startswith('sum:'):
                 val = '=' + ''.join(f'{t[0]}{col}{R[int(t[1:])]}' for t in typ[4:].split(','))
                 val = val.replace('=+', '=')
             elif typ == 'transit':
-                val = (f'=ROUND(SUMIFS(资_净额,资_现金,1,资_现流号,0,资_月,{m}),2)' if m else f'=SUM(C{r}:N{r})')
+                val = (f'=ROUND(SUMIFS(资_净额,资_现金,1,资_现流号,0,资_月,{m}),2)' if m else f'={ytd(r)}')
             elif typ == 'open':
                 val = f'=IF({m}<P_建账月,"",{col}{CF_H1})' if m else f'=C{CF_H1}'
             else:                                                   # close
