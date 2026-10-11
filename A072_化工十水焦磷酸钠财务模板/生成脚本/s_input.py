@@ -306,8 +306,8 @@ def build_cash(ws, ctx):
     acct = 'INDEX(资_原对方号,{n})'
     _show(ws, N_CASH, {
         S['余额']: f'IF(OR({end},INDEX(资_余额,{{n}})&""=""),"",INDEX(资_余额,{{n}}))',
-        S['单位类型']: (f'IF({end},"",IF({uno}>0,INDEX(位_类型,{uno})&"",IF(OR(INDEX(资_报销人号,{{n}})>0,{person}),"员工",'
-                     f'IF({unit}="","","没建档"))))'),
+        S['单位类型']: (f'IF(OR({end},{unit}=""),"",IF({uno}>0,INDEX(位_类型,{uno})&"",IF(OR(INDEX(资_报销人号,{{n}})>0,{person}),"员工",'
+                     f'"没建档")))'),
         S['算到哪']: f'IF({end},"",IF(AND(INDEX(资_报销项目号,{{n}})>0,{k1}>0),{re_kind},{kind}))',
         S['记到']: (f'IF(OR({end},{acct}<=0),"",INDEX(科目_全称,{acct})'
                   f'&IF(INDEX(资_跨月,{{n}})=1,"（归"&INDEX(资_所属月,{{n}})&"月）",IF(INDEX(资_跨月,{{n}})=2,"（建账前的）",""))'

@@ -228,9 +228,10 @@ def build_zi(ws):
             (f'AND({is1122},{J}>0)', '"ℹ 记在支出栏：算退给客户的钱"'),
             (f'AND({is2202},{I}>0)', '"ℹ 记在收入栏：算供应商退回的钱"'),
         ])
-        for k in ('日期',):
-            ws[c(k)].number_format = DATE
+        ws[B].number_format = DATE
         ws[c('余额')].number_format = MONEY
+        for a in (c('排序键'), c('回款键'), c('付款键'), c('本金×日'), key):
+            ws[a].number_format = '0'
     # 块表：第 b 块（第 b+1 行）每个账户的块内净额、块前累计、块内最晚日期、块前最晚日期（现金、票据账户才有日期键）
     D_, U_, KY = ZI['账户号'], ZI['净额'], ZI_PRIV['账户日期键']
     for bi in range(N_BLK):
