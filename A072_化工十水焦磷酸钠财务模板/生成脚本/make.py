@@ -154,7 +154,7 @@ def build(only=None, scenario=None, ctx=None):
                             c.protection = Protection(locked=False)
                 ws.protection = SheetProtection(sheet=True, autoFilter=False, sort=False, formatColumns=False, formatRows=False,
                                                 formatCells=False, selectLockedCells=False, selectUnlockedCells=False)
-            if not ws.print_title_rows and grp not in ('首页',):
+            if not ws.print_title_rows and grp not in ('首页',) and not getattr(ws, '_keep_print', False):
                 print_setup(ws, None, landscape=True)
     _no_emoji(wb)
     bad = [nm for nm in wb.defined_names if not re.fullmatch(r'[A-Za-z_\\\u4e00-\u9fff][\w.\u4e00-\u9fff]*', nm)]
