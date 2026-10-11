@@ -5,7 +5,7 @@
    私有列（别的模块不要引用）：_表 CE..CG（⑦ 单位号、银行、息净）；_科 T、U（费用/制费明细累计数）、W..Y（期初来源小表）；
    _物 AL2（原料块行数）；_固 U、V（开始/结束年月）；_卡 Q（处置日）、AD（本年合计）；_参 C..H（截止日、投产月的辅助格）。"""
 from layout import *
-from common import F_HELP
+from common import F_HELP, DATE
 
 M = SORT_M
 
@@ -19,6 +19,11 @@ def _hdr(ws, cols):
 def _lab(ws, cell, text):
     ws[cell] = text
     ws[cell].font = F_HELP
+
+
+def _fmt(ws, cells, fmt):
+    for a in cells:
+        ws[a].number_format = fmt
 
 
 def chain(pairs, default='""'):
@@ -204,6 +209,8 @@ def build_par(ws):
         r = int(cell[1:])
         ws[f'A{r}'] = k
         ws[cell] = rows[k]
+    _fmt(ws, [PAR[k] for k in ('建账日', '最后日期', '挡后日期', '截止', '月初', '日期上限', '年末')], DATE)
+    _fmt(ws, [f'{c}{r}' for c in 'DE' for r in range(2, 6)], DATE)
 
 
 # ───────────────────────── _表 ─────────────────────────
@@ -299,6 +306,7 @@ def build_list(ws):
         off = f'{n}>P_借期位'
         ws[L('出借人号')] = f'=IF({off},0,{unit_match(norm(g("出借人")), "出借人号")})'
         ws[L('日期')] = f'=IF({off},0,{vdate(g("日期"))})'
+        ws[L('日期')].number_format = DATE
         ws[L('金额')] = f'=IF({off},0,ROUND({numv(g("金额"))},2))'
         ws[L('性质')] = f'=IF({off},0,{idx_of(LO_KINDS, txt(g("性质")), 0)})'
         ws[L('已付息')] = f'=IF({off},0,ROUND({numv(g("已付利息"))},2))'
@@ -327,7 +335,9 @@ def build_list(ws):
         ws[L('摊进')] = f'=IF(TRIM({g("摊进")}&"")="管理",2,1)'
         f1 = f'INDEX(科目_一级号,MAX(1,{no}))'
         bad = 'OR(' + ','.join([f'{f1}={kh(c)}' for c in fam] + [f'{no}={kh(c)}' for c in exact]) + ')'
-        ws[L('有效')] = (f'=IF({no}=0,0,IF(AND(OR({L("借")}<>0,{L("贷")}<>0),INDEX(科目_有效,{no})=1,NOT({bad})),1,0))')
+        # 不认：② ⑦ 往来 物料 卡片 的科目（各有自己的来源）、4001 家族、310415（倒挤）、损益类（表结法：建账前的利润都在倒挤里）
+        ws[L('有效')] = (f'=IF({no}=0,0,IF(AND(OR({L("借")}<>0,{L("贷")}<>0),INDEX(科目_有效,{no})=1,'
+                       f'INDEX(科目_类别号,{no})<>5,NOT({bad})),1,0))')
     # 压紧的清单（下拉用）：第 1 行＝条数
     for key, (out, src, cap) in COMPACT.items():
         cnt = COMPACT_CNT[key]
@@ -671,6 +681,7 @@ def build_ka(ws):
                                f'MAX(0,MIN(${K["月折旧"]}{r},ROUND(${K["应提总额"]}{r}-${K["建账前已提"]}{r}'
                                f'-${K["月折旧"]}{r}*({m}-{s}),2))),0)')
         ws[f'{tot}{r}'] = f'=SUM({KA_MON}{r}:{CL(CI(KA_MON) + 11)}{r})'
+        _fmt(ws, [c('取得日'), dd], DATE)
 
 
 # ───────────────────────── _位：往来单位逐家＋往来余额 ─────────────────────────
@@ -770,6 +781,8 @@ def build_wei(ws):
         ])
         ws[c('录入行')] = f'=ROW({SH_UNIT}!$A${HDR})+$A{r}'
         ws[c('末行')] = f'=IF({has},{c("录入行")},0)'
+        _fmt(ws, [c(k) for k in ('到期日', '最后发货', '最后回款', '最后到货', '最后付款', '首次发货')], DATE)
+        _fmt(ws, [c('没回款天数')], '0')
 
 
 BUILDERS = {H_PAR: build_par, H_TAB: build_list, H_KM: build_km, H_WU: build_wu, H_GU: build_gu, H_KA: build_ka,

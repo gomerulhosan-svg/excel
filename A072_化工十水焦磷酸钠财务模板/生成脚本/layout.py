@@ -587,7 +587,7 @@ def esc(x):
 
 def norm(x):
     """名字、单号规范写法：去半角/全角/不换行空格，半角括号改全角"""
-    return (f'SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(TRIM({x}&"")," ",""),"　","")," ",""),'
+    return (f'SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(TRIM({x}&"")," ",""),"　","")," ",""),'
             f'"(","（"),")","）")')
 
 

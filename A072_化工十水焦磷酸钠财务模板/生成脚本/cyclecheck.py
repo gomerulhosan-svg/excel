@@ -138,6 +138,125 @@ def _name_table(wb):
     return look
 
 
+def _scc(adj):
+    """强连通分量（Tarjan，非递归）"""
+    n = len(adj)
+    index = [-1] * n
+    low = [0] * n
+    onst = [False] * n
+    st = []
+    comps = []
+    idx = 0
+    for root in range(n):
+        if index[root] >= 0:
+            continue
+        work = [(root, 0)]
+        index[root] = low[root] = idx
+        idx += 1
+        st.append(root)
+        onst[root] = True
+        while work:
+            v, i = work[-1]
+            sv = adj[v]
+            if i < len(sv):
+                work[-1] = (v, i + 1)
+                w = sv[i]
+                if index[w] < 0:
+                    index[w] = low[w] = idx
+                    idx += 1
+                    st.append(w)
+                    onst[w] = True
+                    work.append((w, 0))
+                elif onst[w] and index[w] < low[v]:
+                    low[v] = index[w]
+            else:
+                work.pop()
+                if work:
+                    u = work[-1][0]
+                    if low[v] < low[u]:
+                        low[u] = low[v]
+                if low[v] == index[v]:
+                    comp = []
+                    while True:
+                        w = st.pop()
+                        onst[w] = False
+                        comp.append(w)
+                        if w == v:
+                            break
+                    comps.append(comp)
+    return comps
+
+
+def _cell_cycle(comp, nodes, brefs, wb, cap=300000):
+    """段级的一个环，按格子细查：格子之间真有环才算（区域用线段树压缩：区域 → O(log n) 个树节点 → 公式格）"""
+    cols = defaultdict(list)
+    for b in comp:
+        sh, c, r0, r1, _f = nodes[b]
+        cols[(sh, c)].extend(range(r0, r1 + 1))
+    if sum(len(v) for v in cols.values()) > cap:
+        return True                                     # 太大不细查，照段级的报
+    base, nid = {}, 0
+    for key, rows in cols.items():
+        rows.sort()
+        base[key] = nid
+        nid += len(rows)
+    ncell = nid
+    adj = [[] for _ in range(ncell)]
+    tree = {}
+    for key, rows in cols.items():                      # 每列一棵线段树（自底向上：叶子＝格子，边 子 → 父）
+        size = 1
+        while size < len(rows):
+            size *= 2
+        ids = [None] * (2 * size)
+        for i in range(len(rows)):
+            ids[size + i] = base[key] + i
+        for t in range(size - 1, 0, -1):
+            a, b = ids[2 * t], ids[2 * t + 1]
+            if a is None and b is None:
+                continue
+            ids[t] = len(adj)
+            adj.append([])
+            for ch in (a, b):
+                if ch is not None:
+                    adj[ch].append(ids[t])
+        tree[key] = (size, ids)
+    for b in comp:
+        sh, c, r0, r1, _f = nodes[b]
+        cells = wb[sh]._cells
+        rows = cols[(sh, c)]
+        for r in range(r0, r1 + 1):
+            x = base[(sh, c)] + bisect_left(rows, r)
+            dig = _DIGC.split(cells[(r, c)]._value)[1::2]
+            for (sh2, c1, c2, q1, q2, s1, s2) in brefs[b]:
+                if s1 is not None:
+                    q1, q2 = int(dig[s1]), int(dig[s2])
+                    if q1 > q2:
+                        q1, q2 = q2, q1
+                for key in cols:
+                    if key[0] != sh2 or not (c1 <= key[1] <= c2):
+                        continue
+                    rr = cols[key]
+                    lo, hi = bisect_left(rr, q1), bisect_right(rr, q2)
+                    if lo >= hi:
+                        continue
+                    size, ids = tree[key]
+                    lo += size
+                    hi += size
+                    while lo < hi:
+                        if lo & 1:
+                            adj[ids[lo]].append(x)
+                            lo += 1
+                        if hi & 1:
+                            hi -= 1
+                            adj[ids[hi]].append(x)
+                        lo >>= 1
+                        hi >>= 1
+    for cp in _scc(adj):
+        if sum(1 for v in cp if v < ncell) >= 2:
+            return True
+    return False
+
+
 def find_cycles(wb, limit=200):
     look = _name_table(wb)
     rcache = {}
@@ -153,6 +272,7 @@ def find_cycles(wb, limit=200):
     nodes = []          # (表, 列, 起行, 止行, 第一格公式)
     hulls = []          # 每段：[(表, c1, c2, r1, r2)]
     selfrefs = []
+    brefs = []          # 每段：第一格解析出来的引用（带「第几串数字」，细查用）
     colband = {}        # (表, 列) → (起行列表, 止行列表, 节点号列表)
     for ws in wb.worksheets:
         sheet = ws.title
@@ -175,7 +295,9 @@ def find_cycles(wb, limit=200):
                 rN = band[-1][0]
                 nodes.append((sheet, c, r0, rN, f0))
                 hull = []
-                for (sh, c1, c2, r1, r2, s1, s2) in _parse(_mask(f0), f0, sheet, resolve):
+                refs = _parse(_mask(f0), f0, sheet, resolve)
+                brefs.append(refs)
+                for (sh, c1, c2, r1, r2, s1, s2) in refs:
                     if s1 is None or len(band) == 1:
                         hull.append((sh, c1, c2, r1, r2))
                         if sh == sheet and c1 <= c <= c2 and r1 <= rN and r0 <= r2:
@@ -241,52 +363,9 @@ def find_cycles(wb, limit=200):
                     seen.add(t)
                     succ[t].append(b)
 
-    # ③ 强连通分量（Tarjan，非递归）
-    n = len(nodes)
-    index = [-1] * n
-    low = [0] * n
-    onst = [False] * n
-    st = []
-    comps = []
-    idx = 0
-    for root in range(n):
-        if index[root] >= 0:
-            continue
-        work = [(root, 0)]
-        index[root] = low[root] = idx
-        idx += 1
-        st.append(root)
-        onst[root] = True
-        while work:
-            v, i = work[-1]
-            sv = succ[v]
-            if i < len(sv):
-                work[-1] = (v, i + 1)
-                w = sv[i]
-                if index[w] < 0:
-                    index[w] = low[w] = idx
-                    idx += 1
-                    st.append(w)
-                    onst[w] = True
-                    work.append((w, 0))
-                elif onst[w] and index[w] < low[v]:
-                    low[v] = index[w]
-            else:
-                work.pop()
-                if work:
-                    u = work[-1][0]
-                    if low[v] < low[u]:
-                        low[u] = low[v]
-                if low[v] == index[v]:
-                    comp = []
-                    while True:
-                        w = st.pop()
-                        onst[w] = False
-                        comp.append(w)
-                        if w == v:
-                            break
-                    if len(comp) >= 2:
-                        comps.append(comp)
+    # ③ 强连通分量；段级的环再按格子细查一遍（排除「同一段里不同行」造成的假环）
+    comps = [cp for cp in _scc(succ) if len(cp) >= 2]
+    comps = [cp for cp in comps if _cell_cycle(cp, nodes, brefs, wb)]
 
     def label(i):
         sh, c, r0, r1, _f = nodes[i]
