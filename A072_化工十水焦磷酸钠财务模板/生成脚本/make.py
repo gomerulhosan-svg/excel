@@ -158,6 +158,11 @@ def build(only=None, scenario=None, ctx=None):
                 print_setup(ws, None, landscape=True)
     _no_emoji(wb)
     check_formulas(wb)
+    import cyclecheck                                  # 静态环检测（Excel 把 INDEX/SUMIF 的整片区域都当前驱）
+    cyc = cyclecheck.find_cycles(wb)
+    if cyc:
+        print(f'✗ 公式有环 {len(cyc)} 处（Excel 打开会报循环引用），前 10 个：\n' + cyclecheck.fmt(cyc[:10]))
+    assert not cyc, f'公式有环 {len(cyc)} 处（见上面打印的前 10 个）'
     _fit_widths(wb)
     for ws in wb.worksheets:
         ws.sheet_view.tabSelected = False
