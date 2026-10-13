@@ -48,7 +48,7 @@ def share(path, min_run=4):
             cols = {}
             for c in root.iter(f'{{{NS}}}c'):
                 f = c.find(f'{{{NS}}}f')
-                if f is None or f.get('t') or not f.text or '[' in f.text:
+                if f is None or f.get('t') or not f.text or '[' in f.text or '{' in f.text:   # 带数组常量的不压：LibreOffice 插行时共享公式里的引用会挪错
                     continue
                 m = CELL.match(c.get('r'))
                 col, row = m.group(1), int(m.group(2))
