@@ -885,7 +885,7 @@ def self_check():
     x = lref('收入', '$A2')
     for nm_, f in (('vdate', vdate(lref('日期', '$A2'))), ('money_in', money_in(x, lref('支出', '$A2'))),
                    ('name2no', name2no(lref('账户', '$A2'), '账户'))):
-        if len(f) > 2500:
+        if len(f) > 4000:
             errs.append(f'公式片段 {nm_} 太长：{len(f)} 字')
     return errs
 

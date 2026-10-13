@@ -207,7 +207,7 @@ def build_home(ws, ctx):
         '余额窗末': win_last('P_截止月码'),
         '开账月码': 'YEAR(P_开账日)*100+MONTH(P_开账日)',
         '最后月码': lym,
-        '跳期笔数': 'COUNTIFS(流_有效,1,流_正常日,0)',
+        '跳期笔数': 'COUNTIF(流_问题,"※ 比前面最晚的一笔*")',
         '没记账户数': f'COUNTIFS({hrng("状态号")},1,{hrng("天数")},">"&{STALE_WARN})',
     }
     for k, f in sc.items():

@@ -5,10 +5,13 @@
   _流  资金台帐逐条（第 n 条在第 n+1 行）＋块表（每 BLK 行一块：各账户净额/块前累计/最晚日期，窗口用的月统计）＋规则推断自检格
 
 防环（设计 §9.1，make/cyclecheck 查）：
-  _流「原始」列（B..L，到 月码）只看本行台帐格、_表、PAR_SAFE；正常日 N 只引用本块「前最晚」那一格（直接写格子）；
+  _流「原始」列（B..L，到 月码）只看本行台帐格、_表、PAR_SAFE；正常日 N 只引用本块「前最晚」那一格（直接写格子）、
+  本块上面各行的正常日、下面 JUMP_LOOK 行的原始日期（B 列，不引用下面的正常日）；
   块表只引用 _流 的 C、L、M、N、V；余额、问题、配对、提醒 可以引用块表（它们是叶子）。
 性能（设计 §8.4）：块表区域直接写 $M$bs:$M$be；规则推断只在收费项/收付人空着时算，各自只扫自己那张压紧表的条数；
   贵的检查（重复粘贴的文字比较、「好几种收费项」的 LOOKUP、本块日期顺序）都用 IF 挡在便宜条件后面（AND/OR 不短路）。
+  问题、提醒里要用「上面正常行最晚的日期」时也直接写本块「前最晚」那一格（每块一段公式），不写 INDEX(块_前最晚/流_正常日,…)：
+  后者整片区域都是前驱，正常日一动全表的问题、提醒都得重算。
 """
 from openpyxl.utils import get_column_letter as CL, column_index_from_string as CI
 from layout import (
@@ -32,6 +35,12 @@ Q_CAP = 100
 _q0 = CI(_TAB_NEXT) + 1
 QPRIV = dict(计数=CL(_q0), 源=CL(_q0 + 2), 词=CL(_q0 + 3), 向=CL(_q0 + 4), 范围=CL(_q0 + 5), 项号=CL(_q0 + 6))
 Q_N = f"{H_TAB}!${QPRIV['源']}$1"                         # 小表条数（不封顶；>Q_CAP 时退回整表）
+# 跳期只抓「孤立的」那一笔（典型：10 月的账里夹一笔敲成 12 月、或年份敲错）：比上面所有正常行里最晚的晚 JUMP_DAYS 天以上，
+# 而且「下一笔」又比它早 JUMP_DAYS 天以上 → ※。下一笔＝往下 JUMP_LOOK 行里第一个有日期、日期跟它不一样的（空行、同一天拆的几行跳过：
+# Ctrl+D 复制出来的几行同一个错日期一起报）；只看这几行的原始日期（相邻引用，不引用下面的正常日，不成环）。
+# 往下 JUMP_LOOK 行里找不到（它是最后几笔）：先报 △「日期没写错吧？」，照样不算进最后日期；后面接着录了正常日期的就变成 ※。
+# 全表真有一段 60 天以上没流水（1/5 之后下一笔 3/20，再接着录）：下一笔不早回去 → 不算跳期，后面也不会一路连下去。
+JUMP_LOOK = 10
 
 
 def _bref(block, field):
@@ -270,18 +279,36 @@ def _blk_cols(k):
     return lambda a: CL(CI(FLOW_BLK[k]) + a - 1)
 
 
+def _next_day(r):
+    """第 r 行往下 JUMP_LOOK 行里第一个「有日期、跟本行日期不一样」的原始日期（B 列，相邻引用）；没有＝0"""
+    B = FLOW['日期']
+    out = '0'
+    for k in range(JUMP_LOOK, 0, -1):
+        out = f'IF(AND({B}{r + k}>0,{B}{r + k}<>{B}{r}),{B}{r + k},{out})'
+    return out
+
+
+def _prev_late(r):
+    """第 r 行上面所有正常行里最晚的日期＝MAX(本块「前最晚」那一格, 本块上面各行正常日)（块首行只取前者）。
+    直接写本块的格子（跟正常日一样，每块一段公式）：问题、提醒也这样写，改一格时上面的行不跟着重算
+    （写成 INDEX(块_前最晚,…)、INDEX(流_正常日,…) 的话整片区域都是前驱，正常日一动全表的问题、提醒都要重算）。"""
+    b = (r - R1) // BLK + 1
+    bs = (b - 1) * BLK + R1
+    cell = f'${FLOW_BLK["前最晚"]}${b + 1}'
+    N = FLOW['正常日']
+    return cell if r == bs else f'MAX({cell},MAX({N}${bs}:{N}{r - 1}))'
+
+
 def build_flow(ws, ctx):
     F = FLOW
     for c, f, _d in FLOW_COLS:
         ws[f'{c}1'] = f
-    pre_late = FLOW_BLK['前最晚']
     RI = _rng('规项', 'P_项规则数')
     RP = _rng('规人', 'P_人规则数')
     for r in range(R1, RN + 1):
         n = r - 1
         b = (n - 1) // BLK + 1                  # 第几块
         bs = (b - 1) * BLK + 2                  # 本块首行
-        first = (r == bs)
         A = f'$A{r}'
         x = lambda f: lref(f, A)
         c = lambda k: f'{F[k]}{r}'
@@ -314,8 +341,9 @@ def build_flow(ws, ctx):
         ws[L_] = f'=IF({F_}=1,YEAR({B_})*100+MONTH({B_}),0)'
         # ── 往下可以引用块表（叶子）──
         ws[M_] = f'=IF({F_}=1,ROUND({D_}-{E_},2),0)'
-        prev = f'${pre_late}${b + 1}' if first else f'MAX(${pre_late}${b + 1},MAX({F["正常日"]}${bs}:{F["正常日"]}{r - 1}))'
-        ws[N_] = f'=IF({F_}<>1,0,IF(AND({prev}>=P_开账日,{B_}>{prev}+{JUMP_DAYS}),0,{B_}))'
+        prev = _prev_late(r)
+        # 跳期：比 prev 晚 JUMP_DAYS 天以上，而且下一笔早回去 JUMP_DAYS 天以上；下一笔＝0（后面没有）时 B>0+JUMP_DAYS 恒成立 → 也是 0（△）
+        ws[N_] = (f'=IF({F_}<>1,0,IF(AND({prev}>=P_开账日,{B_}>{prev}+{JUMP_DAYS},{B_}>{_next_day(r)}+{JUMP_DAYS}),0,{B_}))')
         ws[O_] = (f'=IF({F_}<>1,"",ROUND(INDEX(账户_期初,{C_})+INDEX(块_前,{b},{C_})'
                   f'+SUMIFS({F["净"]}${bs}:{F["净"]}{r},{F["账户号"]}${bs}:{F["账户号"]}{r},{C_}),2))')
         yr, mo = f'YEAR({B_})', f'MONTH({B_})'
@@ -375,17 +403,16 @@ def _problem(r, A, x, c):
     """※ 链（只报第一个；没有 ※ 就等于 △ 提醒）"""
     B_, C_, D_, E_, F_, G_, I_, K_, N_ = (c(k) for k in ('日期', '账户号', '收', '支', '有效', '对方号', '项号', '属性号', '正常日'))
     nm = lambda f: f'TRIM({x(f)}&"")'
-    bno = f'(INT(({A}-1)/{BLK})+1)'
-    inblk = (f'IF(MOD({A}-1,{BLK})=0,0,MAX(INDEX(流_正常日,{A}-MOD({A}-1,{BLK})):INDEX(流_正常日,{A}-1)))')
-    prev = f'MAX(INDEX(块_前最晚,{bno}),{inblk})'
-    jump = f'"※ 比前面最晚的一笔（"&MONTH({prev})&"/"&DAY({prev})&"）晚 "&({B_}-{prev})&" 天：年份写错了？"'
+    prev = _prev_late(r)
+    jump = (f'"※ 比前面最晚的一笔（"&MONTH({prev})&"/"&DAY({prev})&"）晚 "&({B_}-{prev})&" 天，下一笔又早回去：'
+            f'年份、月份写错了？"')
     xin, xout = x('收入'), x('支出')
     pairs = [
         (f'NOT({raw(x("日期"))})', '"※ 没填日期"'),
         (f'{B_}=0', '"※ 日期看不懂：要写 2026/9/1 这样的日期"'),
         (f'{B_}<P_开账日', '"※ 早于开账日：上一年的账记在上一本"'),
         (f'{B_}>P_日期上限', '"※ 日期晚于 "&YEAR(P_日期上限)&" 年底：年份写错了？"'),
-        (f'AND({F_}=1,{N_}=0)', jump),
+        (f'IF(AND({F_}=1,{N_}=0),{_next_day(r)}>0,FALSE)', jump),       # 正常日＝0、下一笔找得到 → ※（找不到是 △，在提醒里）
         (f'NOT({raw(x("账户"))})', '"※ 没选账户"'),
         (f'{C_}=0', f'"※ 账户「"&{nm("账户")}&"」不在基础资料③：改了名就把旧名加进别名"'),
         (f'OR({numv_bad(xin)},{numv_bad(xout)})', '"※ 金额看不懂：10000+200 要写成 =10000+200"'),
@@ -403,8 +430,8 @@ def _problem(r, A, x, c):
 
 def _remind(r, A, x, c, RI):
     """△ 链（只报第一个；无效行＝""）。贵的检查都用 IF 挡在便宜条件后面"""
-    B_, C_, D_, E_, F_, G_, I_, J_, K_, O_, V_, Z_ = (c(k) for k in (
-        '日期', '账户号', '收', '支', '有效', '对方号', '项号', '人号', '属性号', '余额', '账日键', '配对'))
+    B_, C_, D_, E_, F_, G_, I_, J_, K_, N_, O_, V_, Z_ = (c(k) for k in (
+        '日期', '账户号', '收', '支', '有效', '对方号', '项号', '人号', '属性号', '正常日', '余额', '账日键', '配对'))
     lo, hi = f'MAX(1,{A}-{DUP_WIN})', f'MIN({N_LEDGER},{A}+{DUP_WIN})'
     wf = lambda nm_: f'INDEX({nm_},{lo}):INDEX({nm_},{hi})'
     wl = lambda f: f'INDEX({inref(SH_LEDGER, LEDGER_COLS[f])},{lo}+1):INDEX({inref(SH_LEDGER, LEDGER_COLS[f])},{hi}+1)'
@@ -424,7 +451,9 @@ def _remind(r, A, x, c, RI):
     me = f'{x("摘要")}&{x("备注")}'
     refund = f'OR(ISNUMBER(SEARCH("退",{me})),ISNUMBER(SEARCH("冲",{me})),ISNUMBER(SEARCH("返还",{me})))'
     paused = (f'AND(INDEX(账户_状态号,{C_})>1,OR(INDEX(账户_停用日,{C_})=0,{B_}>INDEX(账户_停用日,{C_})))')
+    prev = _prev_late(r)
     pairs = [
+        (f'IF({N_}=0,{_next_day(r)}=0,FALSE)', f'"△ 比前面最晚的一笔晚 "&({B_}-{prev})&" 天，日期没写错吧？"'),   # 跳期但后面没有了
         (f'{Z_}=1', '"△ 内部转账没配上：漏录一头、金额或日期对不上"'),
         (dup, f'"△ 重复粘贴了？前后 {DUP_WIN} 行有一笔一模一样的"'),
         (order, '"△ 本账户上面有日期更晚的：按日期排一下序"'),
