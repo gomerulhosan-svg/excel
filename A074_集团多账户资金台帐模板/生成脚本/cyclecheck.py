@@ -6,9 +6,10 @@ LibreOffice 算得出来、0 报错，不代表 Excel 打开时不报「循环�
 每个环：{'环': ['表!列起行:列止行', …], '例子': '表!格: =公式…', '种类': '环' 或 '自己引用自己'}
 
 做法（正则一遍扫，几十万公式几秒）：
-- 节点＝「表!列」里连续、写法一样（数字不算，字符串里的字不算）的一段公式：一整列同样的公式是一个节点，
+- 节点＝「表!列」里连续、写法一样（数字不算，字符串里的字不算；名称里的数字算，v3.1 每段的名称 台k_字段 不同）的一段公式：一整列同样的公式是一个节点，
   _参 这种一格一个写法的就是一格一个节点（所以 _参 里互相引用的不同参数不会被当成环）。
-- 引用：A1、$A$1、A1:B9、整列 A:A、整行 4:4、表名!、带引号的 '表 名'!、定义名称（工作簿级、表级，展开成区域，名称套名称也展开）。
+- 引用：A1、$A$1、A1:B9、整列 A:A、整行 4:4、表名!、带引号的 '表 名'!、定义名称（工作簿级、表级，展开成区域，名称套名称也展开；
+  「公式名称」如 规项R_词＝INDEX(规项_词,1):INDEX(规项_词,P_项规则数) 展开成 规项_词 和 P_项规则数 两处的并集）。
   ROW( ) / COLUMN( ) / ROWS( ) / COLUMNS( ) 括号里的引用不算前驱（Excel 不因它们报循环）。
 - 边：被引用区域碰到的公式段 → 公式所在的段（同一段自己指自己的忽略）；一段里各行的引用取并集（相对引用按行滑动）。
 - 强连通分量里节点数 ≥2 的就是环（报一条最短的回路＋一个例子公式）。
@@ -20,6 +21,8 @@ from collections import defaultdict, deque
 
 _DIG = re.compile(r'\d+')
 _DIGC = re.compile(r'(\d+)')
+_NAMEDIG = re.compile(r'(?<=[^\W\dA-Z])\d')          # 名称里的数字（台37_摘要、项_序数1）：前面是汉字、小写、下划线
+_IDENT = re.compile(r'[^\W\d][\w.]*')
 _ROWFN = re.compile(r'(?<![\w.])(?:ROWS?|COLUMNS?)\(([^()]*)\)')
 _REF = re.compile(
     r"(?<![\w.$'])"
@@ -42,6 +45,18 @@ def _ci(s):
             v = v * 26 + ord(ch) - 64
         _CI[s] = v
     return v
+
+
+def _shape(f, sp):
+    """一段公式的「写法」：非数字部分连起来；名称里的数字（台37_摘要 的 37）也算写法（不然第 37、38 段的 _流 公式
+       会并成一段，只按第一格展开名称，别的段的名称就漏了）"""
+    t = '\x00'.join(sp[::2])
+    if _NAMEDIG.search(f):
+        o = ''.join(f.split('"')[0::2]) if '"' in f else f
+        nd = [m.group() for m in _IDENT.finditer(o) if _NAMEDIG.search(m.group())]
+        if nd:
+            t += '\x01' + '\x02'.join(nd)
+    return t
 
 
 def _cl(i):
@@ -323,7 +338,7 @@ def find_cycles(wb, limit=200):
             prev_r, prev_t = -9, None
             for r, f in lst:
                 sp = _DIGC.split(f)                     # 非数字、数字、非数字…：写法＝非数字部分连起来，数字另存
-                t = '\x00'.join(sp[::2])
+                t = _shape(f, sp)
                 if not (r == prev_r + 1 and t == prev_t):
                     flush()
                     band = []

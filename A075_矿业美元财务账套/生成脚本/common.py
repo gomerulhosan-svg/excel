@@ -52,6 +52,7 @@ SH_VIDX  = '_凭证索引'
 SH_AUX   = '_辅助'
 
 SH_CLOSE = '_结转损益'                # 10/08 加的（p1008.py 建）
+SH_CMP   = '_分录精简'                # 提速加的（p_opt.py 建）：记账分录里有凭证的行挤在一起
 
 SHEET_ORDER = [SH_HOME, SH_HELP, SH_BASE, SH_RULE, SH_RATE, SH_ACC,
                SH_CASH, SH_BUY, SH_ISS, SH_PROD, SH_SALE, SH_PAY, SH_FA, SH_MAN,

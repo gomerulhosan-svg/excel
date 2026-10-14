@@ -13,7 +13,9 @@
   entries.json    [{"序号","日期":"2026-01-05","账户","收费项","属性","收付人","摘要","收入","支出","余额","对方账户","归属公司","备注",
                     "原表位置","来源标记","账户内序号"}]   已按 日期 → 账户顺序 → 原表行序 排好；收入、支出只填一个（0＝空）
   changes.json    [{"原表位置","字段","原值","新值","依据","类别"}]                                 数据整理记录·修改明细
-  questions.md    「## 1. 标题」＋「涉及金额：…　　涉及：…」＋「- 说明」                          数据整理记录·待确认（有 pending.json 就用它）
+  pending.json    [{"问题","涉及金额"(数或"—"),"涉及","说明","清单":[{"原表位置","日期","账户","收入","支出","摘要","收费项","说明"}]}]
+                  数据整理记录·待确认（v3.1：清洗直接写结构化的；「清单」＝这一条要逐行列出来的行，按原表位置在台帐 P 列能筛到）
+  questions.md    「## 1. 标题」＋「涉及金额：…　　涉及：…」＋「- 说明」（给人看；没有 pending.json 时才解析它）
   check.md        第一张表：每个账户 原表/修正后/新总表 的期初、收、支、期末                        数据整理记录·账户对照（有 acct_check.json 就用它）
   params.json     {"集团名称","管理年度","开账日"}（可没有；开账日默认取 accounts 的开账日期，再没有＝2026-01-01）
 读不到（清洗还没产出）时用下面的示例：26 个账户＋二十几个收费项＋三十几笔示例流水（备注「示例」）。
@@ -36,6 +38,7 @@ from layout import (SUB_SHEETS, SUB_NAMES, SMALL, N_LEDGER, N_CO, N_ACC, N_ITEM,
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMPORT_DIR = os.path.join(HERE, '导入', 'out')
 SMALL_PER_ACC = 15
+LOG_FILE = 'A074_数据整理记录.xlsx'     # v3.1 §15.5：修改明细单独一本（跟成品同一文件夹）；主本数据整理记录写「五、修改明细 N 条在《…》」
 EX = '示例'
 
 
@@ -228,12 +231,37 @@ CLEAN_RULES = [  # 数据整理记录 · 一、整理口径（给用户看的话
              '「原表位置」写同一格加 -1、-2；拆完余额跟原来一致。毛收入/手续费/净收入式的表同理。'),
     ('内部转账', '两头都在本册、配上对的转账，两边收费项都改成「内部转账」，对方账户填对方的新账户名；原来的收费项和摘要留在摘要/备注里。'
              '对方不在本册的单边转账不算内部转账，按性质记借款转入、还款、往来款、押金等「往来」类收费项。'),
-    ('收费项', '以原「付费项」77 项为底，加场馆营业收入、投资款、内部转账、银行手续费等；每项定属性（收入/支出/往来/内部转账）和大类。'
-            '写法不统一的按对照表改；填错的逐行改；空的按分栏、摘要关键词补；补不出来的写「待定」，列在待确认里。'),
+    ('收费项', '以原「付费项」77 项为底，加场馆营业收入、投资款、内部转账、待定 4 项；导入时每项定属性（收入/支出/往来/内部转账）和大类'
+            '{OVR}。写法不统一的统一成清单里的写法（旧写法记在【基础资料】④⑤的「别名」里）；填错的逐行改；空的按分栏、摘要关键词补；'
+            '补不出来的写「待定」，列在待确认里。'),
     ('收付人', '同一个人/单位的不同写法统一；空的按规则补（铺位号、停车品牌、地摊、银行、税务…）；补不出来的留空。'),
     ('日期和顺序', '原表只有月、日，年份一律 2026；缺日的按对方账户或前后行定。总表按日期排，同一天按账户顺序，同一账户按原表行序；'
                '每个账户的余额按这个顺序重算，期末跟原表（修正后的银行口径）一致。'),
 ]
+
+
+def _ovr_text():
+    """模板对属性的调整（ITEM_ATTR_OVERRIDE）写成一句话；总负责人撤掉调整（§12.1）就是空的"""
+    parts = [f'大类「{v}」的项算「{new}」' if k == '大类' else f'「{v}」算「{new}」' for (k, v), new in ITEM_ATTR_OVERRIDE]
+    return ('模板又把' + '、'.join(parts) + '，都单列、不算经营收支（一共 %d 种属性，见第四部分）' % len(ITEM_ATTRS[:-1])) if parts else ''
+
+
+def _clean_rules():
+    ovr = _ovr_text()
+    return [(t, x.replace('{OVR}', '；' + ovr if ovr else '')) for t, x in CLEAN_RULES]
+
+
+def _fix_pending(pend):
+    """清单的日期换成 date；「收费项口径」那一条补一句模板对属性的调整（导入时是四种属性）"""
+    ovr = _ovr_text()
+    out = []
+    for p in pend or []:
+        p = dict(p)
+        p['清单'] = [dict(x, 日期=day(x.get('日期'))) for x in (p.get('清单') or [])]
+        if ovr and p.get('问题', '').startswith('收费项口径') and ovr not in (p.get('说明') or ''):
+            p['说明'] = (p.get('说明') or '') + '\n' + ovr + '。'
+        out.append(p)
+    return out
 
 
 # ───────────────────────── 读 ─────────────────────────
@@ -273,7 +301,8 @@ def _item_fix(items):
         for (k, v), attr in ITEM_ATTR_OVERRIDE:
             if (k == '大类' and it['大类'] == v) or (k == '收费项' and it['收费项'] == v):
                 if it['属性'] != attr:
-                    it['说明'] = (it['说明'] + '；' if it['说明'] else '') + f'属性原为「{it["属性"]}」，模板改为「{attr}」'
+                    it['说明'] = ((it['说明'] + '；' if it['说明'] else '') +
+                                f'属性原为「{it["属性"]}」，模板改为「{attr}」（单列、不算经营收支）')   # s_check 按这句话找第四部分
                     it['属性'] = attr
     if not any(it['收费项'] == ITEM_OPEN for it in items):
         items.append({'收费项': ITEM_OPEN, '属性': '往来', '大类': '账户并入', '别名': '', '说明': '年中新开的账户：期初填 0，开户那天的余额录一笔这个',
@@ -444,9 +473,9 @@ def build_ctx():
     chk = _read('acct_check.json')
     ctx = dict(params=_load_params(accounts), companies=_load_companies(), accounts=accounts, items=_load_items(),
                parties=_load_parties(), rules=_load_rules(), entries=entries[:N_LEDGER], cleanlog=_load_cleanlog(),
-               pending=pend if pend is not None else _parse_questions(_read('questions.md')),
+               pending=_fix_pending(pend if pend is not None else _parse_questions(_read('questions.md'))),
                acct_check=chk if chk is not None else _parse_first_table(_read('check.md')),
-               clean_rules=CLEAN_RULES, source='导入/out' if from_json else '示例')
+               clean_rules=_clean_rules(), source='导入/out' if from_json else '示例', log_file=LOG_FILE)
     if not from_json:
         print('   （导入/out/entries.json 还没有，用示例流水）')
     ctx['warnings'] = _warn(ctx)

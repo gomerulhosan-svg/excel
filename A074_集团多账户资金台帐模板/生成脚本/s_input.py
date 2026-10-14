@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
-"""录入（s_input）：【资金台帐】（录入列＋有效性＋输入提示、条件格式、显示列 H/L/M/N/O、自动筛选、第 3 行汇总条、导入的流水）
-   和【基础资料】（① 参数 ② 公司 ③ 账户 ④ 收费项 ⑤ 收付人 ⑥ 摘要关键词规则：序号、核对列、有效性、预置数据）。设计见 设计.md §3、§4。
+"""录入（s_input）：【资金台帐】（录入列＋有效性＋输入提示、条件格式、显示列 H/L/M/N/O、自动筛选、第 1 行报警、第 3 行汇总条、锚列 Q、导入的流水）
+   和【基础资料】（① 参数（含「录入模式」）② 公司 ③ 账户 ④ 收费项 ⑤ 收付人 ⑥ 摘要关键词规则：序号、核对列、有效性、预置数据）。
+   设计见 设计.md §3、§4，v3.1 改动见 §15（以 §15 为准）。
 
-   资金台帐只放录入列＋5 个显示列（余额 H、问题 L、属性 M、收费项认 N、收付人认 O）。显示列只是 INDEX(流_xx, 第几条) 给人看，
-   别的公式不引用它们（核对表「显示列被盖掉」除外）。第 n 条＝ROW()-ROW($A$4)，插行、删行、排序都对得上。
-   12,000 行的录入格用「列样式」（<col style>）上色，只有写了值的格子逐格设样式（文件小）。"""
+   v3.1：
+   - 显示列取 _流 的位置用 流_反查（layout.show_pos()；台帐第 n 条 ≠ _流 第 n 个位置），读不到的有字行 L 列写「※ 这一行没算进来」（§15.1.6）。
+   - 锚列 Q（LEDGER_ANCHOR）：不隐藏、窄、灰、表头「勿删」、有效性不让填，不在筛选区；本模块只在第 4 行写表头「勿删」，别的格子不写（段表只看它的行号）。
+   - 第 1 行标题右边（LEDGER_ALERT）红字：分段报警（锚坏＞错位＞没算＞满了/快满）＞录入模式提示（§15.1.5）；第 3 行「已用 / 能录（还能录约 x 行）」。
+   - 基础资料①「报表暂停」改成「录入模式」（P_录入模式）；台帐、基础资料不停算。
+   - 公式里只用名称（流_xx、P_xx、项_名称…）和本表格子，不直接写「别的表!」、不写往下撑的区域（资金台帐在 WPS_STRICT 里）。
+   容量内的录入格用「列样式」（<col style>）上色，只有写了值的格子逐格设样式（文件小）。"""
 import datetime as dt
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Font
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.dimensions import SheetFormatProperties
@@ -94,15 +100,16 @@ def _any_raw(cells):
 
 # ═════════════════════════════ 资金台帐 ═════════════════════════════
 LED_TIP = (
-    '★ 所有账户的流水都录在这一张表，一笔一行，日期、账户必填（淡黄）。收入、支出只填一个；网银导出的「交易金额 −5000」照样粘进收入栏，会自动当支出。'
-    '内部转账（集团里两个账户互转）记两行：转出那户记支出、转入那户记收入，两行的「转账的另一户」都填对方账户，收费项空着会自动当内部转账。'
-    '收费项空着会按摘要里的关键词去认（N 列琥珀色斜体就是认出来的）；一笔钱拆成几行的一定要自己选。'
-    '例：C118 交 1 月租金 1,500＋物业 150＋水电 105.6＝1,755.6，录 3 行（选中上一行 A:E 按 Ctrl+D 复制，再改收费项和金额），'
-    '银行回单上的 1,755.6 对的是这 3 行合计；手续费另起一行选「银行手续费」。'
-    '粘网银流水用「选择性粘贴→数值」，只粘到 A～G、I～K 列，文字日期、带逗号的金额都认。'
-    '灰色几列（H、L～O）是自动算的，别动。L 列 ※ 必须改，△ 看一眼。排序点日期列的筛选箭头。'
-    '月底核对完可以「固化」：先把 ※ 改完，再把 N 列复制、选择性粘贴数值到 C 列（O 列同样粘到 D 列）。'
-    '一次录很多时，去【基础资料】①把「报表暂停」填「是」，录完清空。')
+    '★ 一笔一行，日期、账户必填（淡黄）；收入、支出只填一个（网银的「−5000」照样粘进收入栏，会自动当支出）。'
+    '内部转账（集团里两个账户互转）记两行：转出那户记支出、转入那户记收入，两行的「转账的另一户」都填对方，收费项空着会自动当内部转账。'
+    '收费项空着会按摘要认（N 列琥珀色斜体）；一笔钱拆成几行的一定要自己选。'
+    '拆行例：C118 交 1 月租金 1,500＋物业 150＋水电 105.6＝1,755.6，录 3 行（夹在中间的，先点左边行号插 2 整行）：'
+    '在新的那一行选中 A～E 按 Ctrl+D（抄下上一行），再改收费项和金额；手续费另起一行选「银行手续费」。'
+    '粘网银用「选择性粘贴→数值」，只粘 A～G、I～K 列。灰色几列（H、L～O）自动算，别动；L 列 ※ 必须改，△ 看一眼。'
+    '插行、删行一律点左边行号选整行（别只选格子插删）；中间插了行，选中上一行的 H、L～O 往下拖一格。'
+    '挪行用日期列的筛选箭头排序；空行别删，按 Delete 清内容；别用「删除重复项」、别转成「表格」；右边 Q 列（勿删）别填、别删。'
+    '月底 ※ 改完可以「固化」：先取消筛选，选中 N5 到最后一笔那一行复制，点 C5「选择性粘贴→数值」（O 列同样粘到 D5）。'
+    '一次录很多时，去【基础资料】①把「录入模式」填「是」（子表、报表、核对表、首页先不算），录完清空。')
 
 # 日期列：真日期照 yyyy/mm/dd 显示；网银粘进来的 8 位数（20261001）照原样显示，不显示成 ######
 DATE_IN = '[<73051]yyyy/mm/dd;0'
@@ -116,25 +123,57 @@ _LEDGER_STYLE = {
     '余额': (F_AUTO, FILL_AUTO, MONEY, AR), '问题': (F_AUTO, FILL_AUTO, None, AL), '属性': (F_AUTO, FILL_AUTO, None, AC),
     '收费项认': (F_AUTO, FILL_AUTO, None, AL), '收付人认': (F_AUTO, FILL_AUTO, None, AL),
 }
-_N = f'ROW()-ROW($A${HDR})'                         # 这一行是第几条
+_ANCHOR_STYLE = (F_NOTE, FILL_AUTO, None, AC)        # 锚列 Q：窄、灰、不隐藏
 _ATTR_NAMES = {v: k for k, v in ATTR_NO.items()}
+# 台帐 L 列的两句固定文字（核对、首页、测试 chk_seg 都按这两句认）
+L_MISS = '※ 这一行没算进来（看首页提示）'
+L_PAIR = '△ 内部转账没配上：漏录一头、金额或日期对不上'
+GATE_FIELDS = ('日期', '账户', '收费项', '收付人', '摘要', '收入', '支出', '对方账户', '归属公司')   # 跟 _流 取数号门控同一组（备注、原表位置不算）
 
 
-def ledger_show_formulas():
-    """显示列公式（每行一样：相对位置只有 ROW()，排序、插行都不坏）"""
-    n = _N
-    choose = ','.join(f'"{_ATTR_NAMES.get(p, "")}"' for p in range(1, max(ATTR_NO.values()) + 1))
+def ledger_show_formulas(r):
+    """第 r 行的显示列公式（设计 §15.1.6）：p＝INDEX(流_反查,ROW()-ROW($A$4))＝这一行在 _流 的位置（读不到＝−1，INDEX 出错再 IFERROR）。
+       每行一样（R1C1 相同，share 压得成共享公式）；只引用名称和本行（WPS 存盘照样共享）。
+       L：※ 优先，其次「内部转账没配上」（配对，录入模式停算），再其次 _流 问题；读不到、这一行又有字 → 「没算进来」（门控跟 _流 取数号同一判法）。
+       N/O：认出来的规范名；认不出（项号/人号＝0）就照抄本行 C/D 的原字——「固化」（N→C、O→D 粘数值）不会把没认出来的名字抹掉。"""
+    p = show_pos()
+    C, S = LEDGER_COLS, LEDGER_SHOW
+    choose = ','.join(f'"{_ATTR_NAMES.get(i, "")}"' for i in range(1, max(ATTR_NO.values()) + 1))
+    gate = 'ISERROR(1/(LEN(TRIM(' + '&'.join(f'${C[f]}{r}' for f in GATE_FIELDS) + '))=0))'
+    q = f'INDEX(流_问题,{p})'
     return {
-        '余额': f'=IFERROR(INDEX(流_余额,{n}),"")',
-        '问题': f'=IFERROR(INDEX(流_问题,{n})&"","")',
-        '属性': f'=IFERROR(IF(INDEX(流_有效,{n})<>1,"",CHOOSE(INDEX(流_属性号,{n}),{choose})),"")',
-        '收费项认': f'=IFERROR(IF(INDEX(流_项号,{n})>0,INDEX(项_名称,INDEX(流_项号,{n})),""),"")',
-        '收付人认': f'=IFERROR(IF(INDEX(流_人号,{n})>0,INDEX(人_名称,INDEX(流_人号,{n})),""),"")',
+        '余额': f'=IFERROR(INDEX(流_余额,{p}),"")',
+        '问题': (f'=IFERROR(IF(LEFT({q},1)="※",{q},IF(INDEX(流_配对,{p})=1,"{L_PAIR}",{q}&"")),'
+               f'IF({gate},"{L_MISS}",""))'),
+        '属性': f'=IFERROR(IF(INDEX(流_有效,{p})<>1,"",CHOOSE(INDEX(流_属性号,{p}),{choose})),"")',
+        '收费项认': f'=IFERROR(IF(INDEX(流_项号,{p})>0,INDEX(项_名称,INDEX(流_项号,{p})),TRIM(${C["收费项"]}{r}&"")),"")',
+        '收付人认': f'=IFERROR(IF(INDEX(流_人号,{p})>0,INDEX(人_名称,INDEX(流_人号,{p})),TRIM(${C["收付人"]}{r}&"")),"")',
     }
 
 
+ALERT_ANCHOR = '※ 台帐的表头或右边的 Q 列（勿删）被删了：所有数都没算。马上撤销（Ctrl+Z）；已经存盘了找我们'
+ALERT_SHIFT = '※ 台帐被插/删了单元格（不是整行），后面的数全乱了：马上撤销；插删一律点左边行号选整行'
+ALERT_FULL = '※ 台帐满了：年底开新本；年中满了找我们放大'
+ALERT_ENTRY = '【录入模式】子表、报表、核对表、首页先不算，录完去基础资料①清空'
+ALERT_NEAR = N_LEDGER // 10                                  # 还能录不到容量的 10% → △ 快满
+
+
+def ledger_alert_formula():
+    """台帐第 1 行标题右边（LEDGER_ALERT，合并到最后一列）红字：只显示最要紧的一条（设计 §15.1.5 先后；录入模式也算）：
+       锚坏 ＞ 错位/读了两遍 ＞ 没算进来 ＞ 满了/快满 ＞ 录入模式。只引用 _参 的 P_xx（PAR_SEGCHK 准用），不引用别的表格子"""
+    chain_ = chain([
+        ('P_锚坏=1', f'"{ALERT_ANCHOR}"'),
+        ('OR(P_错位>0,P_笔数差<0)', f'"{ALERT_SHIFT}"'),
+        ('P_没算>0', '"※ 台帐有 "&P_没算&" 行没算进来（看核对表「台帐分段」）"'),
+        ('P_可录<=0', f'"{ALERT_FULL}"'),
+        (f'P_可录<{ALERT_NEAR}', '"△ 台帐还能录约 "&P_可录&" 行：年底开新本；年中满了找我们放大"'),
+        ('P_录入模式=1', f'"{ALERT_ENTRY}"'),
+    ], '""')
+    return f'=IFERROR({chain_},"{ALERT_ANCHOR}")'
+
+
 def ledger_kpi_formulas():
-    """第 3 行汇总条（本年＝管理年度；经营收入＝属性「收入」的行 Σ 净，经营支出＝属性「支出」的行 −Σ 净）"""
+    """第 3 行汇总条（本年＝管理年度；经营收入＝属性「收入」的行 Σ 净，经营支出＝属性「支出」的行 −Σ 净）。录入模式照算"""
     y = 'P_管理年度'
     yr = f'流_月码,">="&({y}*100+1),流_月码,"<="&({y}*100+12)'
     return {
@@ -144,9 +183,30 @@ def ledger_kpi_formulas():
         '本年经营净额': None,           # ＝收入格－支出格（下面按格子拼）
         '内部转账净额': f'=ROUND(SUMIFS(流_净,{yr},流_属性号,{A_INT}),2)',
         '资金总额': '=ROUND(P_期初合计+SUM(流_净),2)',
-        '已用行数': f'=P_已用行数&" / {N_LEDGER}"&IF(P_已用行数>={int(N_LEDGER * 0.9)},"  △ 快满了：开新本","")',
+        '已用行数': '=P_已用行数&" / "&P_台帐容量&CHAR(10)&"还能录约 "&P_可录&" 行"',
         '※ / △': '=IFERROR("※ "&N(核对_问题)&" 行　△ "&N(核对_提醒)&" 行","")',
     }
+
+
+def _ledger_title(ws):
+    """第 1 行：标题 LEDGER_TITLE（合并）＋右边 LEDGER_ALERT 红字（合并到最后一列）；第 2 行说明（合并到最后一列）"""
+    t0, t1 = LEDGER_TITLE.split(':')
+    width = sum((ws.column_dimensions[CL(i)].width or 9) for i in range(1, CI(LEDGER_LAST) + 1))
+    per_line = max(20, int(width / 1.9))
+    h2 = max(24, 14 * (-(-len(LED_TIP) // per_line)) + 8)
+    ws.merge_cells(LEDGER_TITLE)
+    put(ws, t0, '=IF(P_集团名称="","集团",P_集团名称)&" 资金台帐（"&P_开账年&" 年，开账 "&YEAR(P_开账日)&"/"&MONTH(P_开账日)'
+                '&"/"&DAY(P_开账日)&"）"', F_TITLE, FILL_TITLE, align=AC, border=False)
+    a = LEDGER_ALERT
+    ws.merge_cells(f'{a}:{LEDGER_LAST}1')
+    put(ws, a, ledger_alert_formula(), Font(name=YH, sz=11, bold=True, color=RGB_ERR_FONT), FILL_TITLE, align=ALW, border=False)
+    ws.conditional_formatting.add(f'{a}:{LEDGER_LAST}1', FormulaRule(
+        formula=[f'LEN(${a[0]}$1)>0'], font=Font(name=YH, sz=11, bold=True, color=RGB_ERR_FONT), fill=cf_bg(RGB_ERR_FILL)))
+    ws.row_dimensions[1].height = 30
+    ws.merge_cells(f'A2:{LEDGER_LAST}2')
+    put(ws, 'A2', LED_TIP, F_TIP, FILL_TIP, align=ALW, border=False)
+    ws.row_dimensions[2].height = h2
+    ws.sheet_view.showGridLines = False
 
 
 def build_ledger(ws, ctx):
@@ -154,28 +214,31 @@ def build_ledger(ws, ctx):
     allc = {**C, **S}
     last = LEDGER_LAST_ROW
     widths(ws, LEDGER_WIDTH)
-    title(ws, '=IF(P_集团名称="","集团",P_集团名称)&" 资金台帐（"&P_开账年&" 年，开账 "&YEAR(P_开账日)&"/"&MONTH(P_开账日)'
-              '&"/"&DAY(P_开账日)&"）"', LEDGER_LAST, LED_TIP)
+    ws.column_dimensions[LEDGER_ANCHOR].width = LEDGER_ANCHOR_WIDTH
+    _ledger_title(ws)
     # 第 3 行汇总条
     kf = ledger_kpi_formulas()
-    lbl = {'内部转账净额': '本年内部转账净额\n（应该是 0）', '已用行数': '已用行数 / 容量', '※ / △': '※ / △\n（看 L 列）'}
+    lbl = {'内部转账净额': '本年内部转账净额\n（应该是 0）', '已用行数': '已用 / 能录\n（行）', '※ / △': '※ / △\n（看 L 列）'}
     cells = {k: (a, b) for a, b, k in LEDGER_KPI}
     for a, b, k in LEDGER_KPI:
         f = kf[k]
         if k == '本年经营净额':
             f = f'={cells["本年经营收入"][1]}-{cells["本年经营支出"][1]}'
-        fmt = FMT_YEAR if k == '管理年度' else (MONEY if k not in ('已用行数', '※ / △') else '@')
+        fmt = FMT_YEAR if k == '管理年度' else (MONEY if k not in ('已用行数', '※ / △') else 'General')
         kpi(ws, a, b, lbl.get(k, k), f, fmt=fmt)
         if k in ('已用行数', '※ / △'):
             ws[b].font = Font(name=YH, sz=10, bold=True, color='FFC00000')
             ws[b].alignment = ACW
     ws.row_dimensions[3].height = 35
     cf_neg_red(ws, f'{cells["本年经营净额"][1]}', cells['本年经营净额'][1])
-    # 第 4 行表头（录入列、自动列同一个底色；自动列表头写「自动」）
+    # 第 4 行表头（录入列、自动列同一个底色；自动列表头写「自动」）；锚列 Q 灰底「勿删」
     header(ws, HDR, [(allc[k], LEDGER_HEAD[k]) for k in allc], '录入', height=36)
-    # 列样式（12,000 行的空格子不逐格写）
+    put(ws, f'{LEDGER_ANCHOR}{HDR}', LEDGER_ANCHOR_HEAD, Font(name=YH, sz=9, bold=True, color='FFFFFFFF'), fill('FF808080'),
+        align=ACW)
+    # 列样式（容量内的空格子不逐格写）；锚列 Q 整列灰底
     for k, col in allc.items():
         _col_style(ws, col, _LEDGER_STYLE[k])
+    _col_style(ws, LEDGER_ANCHOR, _ANCHOR_STYLE)
     ws.sheet_format = SheetFormatProperties(defaultRowHeight=16.5, customHeight=True)
     # 导入的流水：照 entries 顺序写进录入列（日期写真日期、金额写数，0 写空）
     entries = ctx.get('entries') or []
@@ -189,8 +252,8 @@ def build_ledger(ws, ctx):
                 v = None
             _set(ws, r, CI(C[k]), v, _LEDGER_STYLE[k])
     # 显示列（每行一样的公式，share.py 会压成共享公式）
-    sf = ledger_show_formulas()
     for r in range(R0, last + 1):
+        sf = ledger_show_formulas(r)
         for k, col in S.items():
             c = ws.cell(row=r, column=CI(col), value=sf[k])
             _apply(c, _LEDGER_STYLE[k])
@@ -220,6 +283,10 @@ def build_ledger(ws, ctx):
     dv_add(ws, rng('原表位置'), prompt='导入时记的原日记账位置（表名!格子）；新录的不用填')
     for k in S:
         dv_add(ws, rng(k), prompt='灰色是自动算的，别在这里打字、粘贴。中间插了行就选中上一行的 H、L～O 往下拖一格')
+    # 锚列 Q：有效性不让填（粘贴绕得过去，但不会算错，只是变慢）；不加条件格式、不在筛选区
+    dv_add(ws, f'{LEDGER_ANCHOR}{HDR}:{LEDGER_ANCHOR}{REF_END}', type='custom', formula1='FALSE', stop=True,
+           prompt='勿删：这一列是公式定位用的，别填、别删、别隐藏',
+           err_title='勿删', err='Q 列是公式定位用的：别填、别删')
     # 条件格式（同表引用；先加的优先）
     cf_neg_red(ws, rng('余额'), f'{S["余额"]}{R0}')
     cf_flags(ws, rng('问题'), f'{S["问题"]}{R0}')
@@ -234,10 +301,13 @@ def build_ledger(ws, ctx):
 # ═════════════════════════════ 基础资料 ═════════════════════════════
 BASE_TIP = (
     '★ 全书的名单和参数都在这里：① 参数 ② 公司 ③ 账户 ④ 收费项 ⑤ 收付人 ⑥ 摘要关键词规则（点第 3 行跳过去）。'
-    '淡黄格可以改，灰色是自动的（序号、核对）。名单往各块下面的空行接着加；③可以插行、排序（子表靠「子表名」认账户，那一列别改）。'
+    '淡黄格可以改，灰色是自动的（序号、核对）。名单往各块下面的空行接着加；③可以排序（子表靠「子表名」认账户，那一列别改）。'
+    '要在中间插：点左边行号插整行，再选中上一行的序号格（A 列）往下拖一格、上一行的核对格（最右边一列）往下拖一格，把公式带下来（忘了的话核对表会报）。'
     '账户、收费项、收付人改名时，把旧名字加进「别名」（用「、」隔开），台帐里旧的写法照样认。'
     '不用的账户把状态改成「销户」、填停用日，别删行。年中新开的账户期初余额填 0，开户那天的余额在台帐录一笔「账户转入」。'
     '核对列 ※ 必须改，△ 看一眼。')
+# 表头改字（layout.BASE_HEAD 之外本模块自己的说法；复核 F6：「规则号」是导入时编的号，数据整理记录里的「规则 S08」就指它）
+_HEAD_FIX = {('规则', '规则号'): '规则号\n（新加的不用填）'}
 
 def _block_rows(k):
     h = BASE_HDR[k]
@@ -361,8 +431,8 @@ def _param_now(key):
     if key == '开账日':
         d = 'YEAR(P_开账日)&"/"&MONTH(P_开账日)&"/"&DAY(P_开账日)'
         return f'=IF({dsel_bad(b)},"※ 看不懂，按 "&{d}&" 算","现在按 "&{d}&IF({raw(b)},"","（空着）"))'
-    if key == '报表暂停':
-        return '=IF(P_报表暂停=1,"七张报表暂停中（清空就恢复）","照常算")'
+    if key == '录入模式':
+        return '=IF(P_录入模式=1,"△ 录入模式中：子表、报表、核对表、首页先不算；录完把 B 格清空","照常算（子表、报表、核对表、首页都算）")'
     return None
 
 
@@ -386,6 +456,8 @@ def build_base(ws, ctx):
     for key, label, default, note in PARAMS:
         r = PAR_ROW[key]
         v = pvals.get(key)
+        if key == '录入模式' and v in (None, ''):
+            v = pvals.get('报表暂停')                              # v2 的键（stub 场景）照认
         if key == '开账日' and v in (None, ''):
             v = dt.datetime.strptime(default, '%Y-%m-%d')           # 用户给的值（哪怕是文字）照写，公式 dsel 会认
         put(ws, f'A{r}', label, F_TXTB, fill('FFF3EAFB'), align=AC)
@@ -405,8 +477,9 @@ def build_base(ws, ctx):
     dv_add(ws, f'B{PAR_ROW["开账日"]}', type='date', operator='between', formula1='36526', formula2='73050', stop=True,
            prompt='本本从这一天开始（一年一本，填 1 月 1 日）。③的期初余额是这一天开始前的余额',
            err_title='开账日', err='要填真正的日期，像 2026/1/1')
-    dv_fixed(ws, f'B{PAR_ROW["报表暂停"]}', '是', stop=False,
-             prompt='一次录很多时填「是」：七张报表先不算，打字不卡；首页、子表、台帐照常算。录完记得清空')
+    dv_fixed(ws, f'B{PAR_ROW["录入模式"]}', '是', stop=False,
+             prompt='一次录很多时填「是」：子表、报表、核对表、首页先不算，台帐的余额和 ※△ 照算，打字不卡。'
+                    '录完清空（清空那一下要整本算几秒）。别用「手动计算」代替')
     # ②～⑥ 各块
     for k, ttl, tr, h, cap in BASE_BLOCKS:
         cols = BASE_COLS[k]
@@ -414,7 +487,7 @@ def build_base(ws, ctx):
         section(ws, tr, 'A', lastc, ttl, group='基础')
         put(ws, f'{CL(CI(lastc) + 1)}{tr}', '↑ 回顶上', F_LINK, align=AC, border=False)
         link(ws[f'{CL(CI(lastc) + 1)}{tr}'], SH_BASE, 'A1')
-        header(ws, h, [(col, BASE_HEAD[k][f]) for f, col in cols.items()], '基础', height=44)
+        header(ws, h, [(col, _HEAD_FIX.get((k, f), BASE_HEAD[k][f])) for f, col in cols.items()], '基础', height=44)
         r0, r1 = _block_rows(k)
         rows = _preset_rows(k, ctx)
         if len(rows) > cap:
@@ -425,7 +498,7 @@ def build_base(ws, ctx):
             x = rows[i] if i < len(rows) else {}
             for f, col in cols.items():
                 if f == '序号':
-                    c = ws.cell(row=r, column=CI(col), value=f'=IF(TRIM($B{r}&"")="","",ROW()-ROW($A${h}))')
+                    c = ws.cell(row=r, column=CI(col), value=f'=IF($B{r}&""="","",ROW()-ROW($A${h}))')
                     _apply(c, _ST_SEQ)
                 elif f == '核对':
                     c = ws.cell(row=r, column=CI(col), value=_check_formula(k, r))
@@ -463,6 +536,7 @@ def build_base(ws, ctx):
             dv_add(ws, rg('适用范围'), prompt='只对某家公司（②的简称）或某个账户（③的名称）起作用；空＝全部')
             dv_list(ws, rg('收费项'), '收费项列表', stop=False, prompt='命中后认成这个收费项（不填＝这条只认收付人）')
             dv_list(ws, rg('收付人'), '收付人列表', stop=False, prompt='命中后认成这个收付人（不填＝这条只认收费项）')
+            dv_add(ws, rg('规则号'), prompt='导入时给每条规则编的号：数据整理记录里写的「规则 S08」就是这一条。新加的规则不用填')
     put(ws, f'A{BASE_END_ROW}', BASE_END_TEXT, F_NOTE, align=AL, border=False)
     ws.freeze_panes = 'A4'
     print_setup(ws, None, landscape=True)

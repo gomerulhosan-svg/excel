@@ -4,11 +4,14 @@
 
    判断「同一个公式」：把公式里相对的行号换成「比本行差几行」（字符串里的内容不动、$ 锁定的行号不动），
    换完一样的就是同一个公式——Excel 就是这么往下推共享公式的。
-   含跨工作簿链接（[1]…）的公式不共享（保守起见）。"""
+   含跨工作簿链接（[1]…）的公式不共享（保守起见）。
+   v3.1：_流 每段取数用本段的名称（台k_字段），名称每段不同 → 每段一组共享公式（_流 约 1,800 个主公式），正常。
+   另有 WPS 存盘体检的小工具（wps_split / wps_estimate，make、build 用）。"""
 import re
 import sys
 import zipfile
 import shutil
+from collections import defaultdict
 from lxml import etree
 
 NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
@@ -84,6 +87,51 @@ def share(path, min_run=4):
     zin.close()
     shutil.move(tmp, path)
     return stats
+
+
+# ─────────── WPS 存盘规矩（v3.1，设计 §15.1.9；规则同评审 t/perf_gain/wps_est.py 的 cls() R1 口径） ───────────
+# WPS 12.1 存 xlsx 时，同一列连续同写法的公式只要直接写了「别的表!格子」或往下撑的区域（一端绝对行、一端相对行：$X$3:X3、X$3:X3），
+# 就一格一条全文写盘；只用名称（名称指向别的表也行）、同表引用的照样共享。
+MIXED = re.compile(r'(?<![\w.$])\$?[A-Z]{1,3}(\$?)\d+:\$?[A-Z]{1,3}(\$?)\d+(?![\w(])')
+
+
+def wps_split(f):
+    """公式（文字）→ (直接跨表, 往下撑的区域)：任一为真，WPS 存盘就把这一列同写法的公式拆成一格一条"""
+    out = ''.join(f.split('"')[0::2])
+    mixed = any(bool(m.group(1)) != bool(m.group(2)) for m in MIXED.finditer(out))
+    return '!' in out, mixed
+
+
+def xml_bytes(f):
+    """公式写进 sheet XML 的字节数（中文 3 字节；& < > " 转义）"""
+    return len(f.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').encode())
+
+
+def wps_estimate(path):
+    """成品（已压共享）→ {表名: (现在 XML 字节, WPS 存后估计字节, 会被拆的子格数)}。
+       估法同评审 wps_est.v2()：共享组的主公式会被 WPS 拆的，每个子格按主公式全文写（每格多 xml_bytes−20 字节）"""
+    z = zipfile.ZipFile(path)
+    parts = sheet_parts(z)
+    out = {}
+    for part, name in parts.items():
+        size = z.getinfo(part).file_size
+        master, kids = {}, defaultdict(int)
+        for _ev, el in etree.iterparse(z.open(part), tag=f'{{{NS}}}f'):
+            if el.get('t') == 'shared':
+                if el.get('ref'):
+                    master[el.get('si')] = el.text or ''
+                else:
+                    kids[el.get('si')] += 1
+            el.clear()
+        add = n = 0
+        for si, k in kids.items():
+            f = master.get(si, '')
+            if any(wps_split(f)):
+                add += k * max(0, xml_bytes(f) - 20)
+                n += k
+        out[name] = (size, size + add, n)
+    z.close()
+    return out
 
 
 if __name__ == '__main__':

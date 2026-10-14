@@ -20,7 +20,7 @@ sys.path.insert(0, HERE)
 
 from conf import (COMPANIES, ACCOUNTS, ACCOUNT_HOLDER, LAYOUT, CAT_ITEM, ITEMS, ITEM_SRC, NOT_IMPORT,  # noqa: E402
                   MISSING_DAY, NONCASH_OFFSET, ADD_ROWS, MANUAL_ITEM, PARTY_ALIAS_FIX, MEMO_SPLIT, MEMO_FEE,
-                  MEMO_FEE_RE, STRAY_COLS)
+                  MEMO_FEE_RE, STRAY_COLS, ITEM_FIX_BASIS)
 from rules_kw import RULES, PARTY_RULES  # noqa: E402
 from extract import read_journal, read_guwan_bank_opening, read_stray  # noqa: E402
 import report  # noqa: E402
@@ -39,6 +39,8 @@ ITEM_ATTR = {n: a for n, a, *_ in ITEMS}
 ITEM_HINT = {n: h for n, a, g, h, s in ITEMS}
 
 CH = []          # 整理记录
+PARTY_ALIAS_TXT = '统一写法（旧写法记在【基础资料】⑤收付人的「别名」里）'
+PARTY_SAME = '去掉首尾空格/换行'
 
 
 def r2(x):
@@ -100,12 +102,13 @@ def build_internal(dups):
 
 
 # ============================================================ 规则
-def match_rule(direction, company, memo, party):
+def match_rule(direction, company, memo, party, account=''):
+    """适用范围（comp）空＝全部；公司简称或账户名（v3.1，跟基础资料⑥一样）"""
     mu, pu = (memo or '').upper(), (party or '').upper()
     for rid, rdir, comp, where, kws, item, rparty, note in RULES:
         if rdir != '都' and rdir != direction:
             continue
-        if comp and comp != company:
+        if comp and comp not in (company, account):
             continue
         text = mu if where == '摘要' else pu
         if not text:
@@ -116,12 +119,12 @@ def match_rule(direction, company, memo, party):
     return None
 
 
-def match_party_rule(direction, company, memo):
+def match_party_rule(direction, company, memo, account=''):
     mu = (memo or '').upper()
     for rid, rdir, comp, kws, party in PARTY_RULES:
         if rdir != '都' and rdir != direction:
             continue
-        if comp and comp != company:
+        if comp and comp not in (company, account):
             continue
         for kw in kws:
             if kw.upper() in mu:
@@ -134,7 +137,7 @@ CHANNEL_RE = r'收单|过渡户|清算|财付通|支付|备付金|结算中心|�
 PROV = '京津沪渝冀晋蒙辽吉黑苏浙皖闽赣鲁豫鄂湘粤桂琼川贵云藏陕甘青宁新'
 SHOP_RE = re.compile(r'(?<![A-Za-z0-9%s])([A-Da-d])\s?-?(\d{3})(?![\dA-Za-z])' % PROV)
 PLATE_RE = re.compile(r'[%s][A-Z][0-9A-Z]{4,6}' % PROV)
-TEMP_PARK_RE = r'临时|临停|停车券'
+TEMP_PARK_RE = r'临时车|临时停车|临停|停车券'     # 跟 rules_kw.PARTY_RULES 的 P07 一样
 MONTH_PARK_RE = r'包月|月租|期间|年度缴费|年缴|\d{1,2}\.\d{1,2}\s*[-－至]\s*\d{1,2}\.\d{1,2}'
 
 
@@ -323,11 +326,11 @@ def main():
         for k in (p0, p, p2):
             if k in PARTY_ALIAS_FIX:
                 v = PARTY_ALIAS_FIX[k][0]
-                return v, (None if v == p0 else '对照表（更正：%s）' % PARTY_ALIAS_FIX[k][1])
+                return v, (None if v == p0 else PARTY_SAME if v == p else '统一写法（更正：%s）' % PARTY_ALIAS_FIX[k][1])
         for k in (p0, p, p2):
             if k in party_alias:
                 v = party_alias[k]
-                return v, (None if v == p0 else '对照表')
+                return v, (None if v == p0 else PARTY_SAME if v == p else PARTY_ALIAS_TXT)
         if p == '银行':
             return SHEET_BANK[sheet], '「银行」按本账户开户行'
         if p != p0:
@@ -391,7 +394,8 @@ def main():
         memo = clean_text(r['memo_raw'])
         if x['kind'] != 'add' and (not sub or sub == 1) and memo != (r['memo_raw'] or ''):
             stat['摘要去空格'] += 1
-            log(P0, '摘要', r['memo_raw'], memo, '去掉首尾空格、换行和连续空格（&quot; 还原成引号）', '摘要')
+            log(P0, '摘要', r['memo_raw'], memo, '去掉首尾空格、换行和连续空格' + (
+                '；原表摘要里的引号是网页代码的写法（原来那一栏能看到），换回了普通引号' if re.search(r'&quot;|&amp;', r['memo_raw'] or '') else ''), '摘要')
         orig_item = r['item']
         notes = []
         if (sheet, row) in NONCASH_OFFSET:
@@ -476,12 +480,12 @@ def main():
             key = (sheet, row)
             if key in fix and fix[key]['old'] == use_orig:
                 item, src = fix[key]['new'], '逐行改'
-                basis = fix[key]['basis'] + '（把握：%s）' % fix[key]['confidence']
+                basis = ITEM_FIX_BASIS.get(key, fix[key]['basis']) + '（把握：%s）' % fix[key]['confidence']
                 log(P, '收费项', use_orig, item, basis, '收费项-逐行改')
             elif use_orig in alias:
                 item, src = alias[use_orig], '统一写法'
-                basis = '写法对照表：' + im['item_alias'][use_orig]['basis']
-                log(P, '收费项', use_orig, item, '写法对照表', '收费项-统一写法')
+                basis = '统一成清单里的写法（旧写法记在【基础资料】④收费项的「别名」里）：' + im['item_alias'][use_orig]['basis']
+                log(P, '收费项', use_orig, item, basis, '收费项-统一写法')
             else:
                 item, src, basis = use_orig, '原有', ''
                 h = ITEM_HINT.get(item)
@@ -497,7 +501,7 @@ def main():
                 '收费项-待定' if item == '待定' else '收费项-逐行改')
         if item is None:
             # 分栏表里没分栏的收入、毛收入式里的毛收入、其他空项 → 摘要规则
-            mr = match_rule(x['dir'], co, memo, party)
+            mr = match_rule(x['dir'], co, memo, party, SHEET_ACC[sheet])
             if mr:
                 item, src = mr['item'], '摘要规则'
                 basis = '规则 %s：%s含「%s」' % (mr['rid'], mr['where'], mr['kw'])
@@ -521,25 +525,25 @@ def main():
                 ps = x['peers'][0][0]
                 fill = (ACCOUNT_HOLDER[ps], '内部转账，按对方账户的户名')
             if not fill:
-                mm = match_party_rule(x['dir'], co, memo)
+                mm = match_party_rule(x['dir'], co, memo, SHEET_ACC[sheet])
                 if mm and mm[0] == 'P07c':
                     defer = mm
                 elif mm:
                     fill = (mm[2], '规则 %s：摘要含「%s」' % (mm[0], mm[1]))
             if not fill and re.search(r'利息', memo):
                 fill = ('财付通（微信）' if '微信' in memo else ('招商银行' if '招行' in memo else SHEET_BANK[sheet]),
-                        '规则 P02：利息收入，填开户行')
+                        '利息收入，收付人填开户行')
             if not fill and re.search(r'手续费|短信(通)?服务费|回单|网银', memo) and '中国移动' not in memo:
-                fill = (SHEET_BANK[sheet], '规则 P03：银行收费，填开户行')
+                fill = (SHEET_BANK[sheet], '银行收费，收付人填开户行')
             if not fill:
                 sp = shop_party(r)
                 if sp:
-                    fill = (sp[1], '规则 P06：' + sp[2])
+                    fill = (sp[1], sp[2])
                     defer = None
             if not fill and not defer and sheet.startswith('易佰兴') and x['dir'] == '收' and PLATE_RE.search(memo):
                 defer = ('P07', '车牌', '')
             if not fill and not defer and sheet.startswith('古玩城') and x['dir'] == '支':
-                fill = ('林淑琴', '规则 P08：古玩城支出的经办人，沿用原表写法')
+                fill = ('林淑琴', '古玩城支出的经办人，沿用原表写法')
             if fill:
                 party = fill[0]
                 if not sub or sub == 1 or item == '内部转账':
@@ -592,15 +596,15 @@ def main():
                 unknown.append(pl + ('（有 %d 个收付人）' % len(d) if d else ''))
         if len(found) == 1:
             nm, why = next(iter(found.items()))
-            party, why = nm, '规则 P07a：同一车牌在别的行只有这一个收付人（%s）' % '；'.join(why) + (
+            party, why = nm, '同一车牌在别的行只有这一个收付人（%s）' % '；'.join(why) + (
                 '；另 %s 查不到' % '、'.join(unknown) if unknown else '')
         elif re.search(TEMP_PARK_RE, memo):
-            party, why = '临时停车散客', '规则 P07：摘要写临时/临停/停车券，车牌查不到车主'
+            party, why = '临时停车散客', '规则 P07：摘要写临时车/临时停车/临停/停车券，车牌查不到车主'
         elif re.search(MONTH_PARK_RE, memo):
             party, why = '月租车散户', '规则 P07c：月租/包月/按期间交的停车费，车牌%s查不到车主（不叫「临时」）' % (
                 '、'.join(unknown) if unknown else '')
         else:
-            party, why = '临时停车散客', '规则 P07：摘要只有车牌，车牌查不到车主'
+            party, why = '临时停车散客', '摘要只有车牌，车牌查不到车主，按临时停车记'
         e['收付人'] = party
         e['_p07'] = why
         if e['_sub'] <= 1:
@@ -625,7 +629,8 @@ def main():
         if 'offset' in kinds:
             why.append('以押抵租，钱没过银行（原表余额公式不含这笔收入）：租金等收入照记，押金冲抵另记一行退押金，余额不变')
         if 'msplit' in kinds:
-            why.append('按摘要逐项金额拆（押金抵租金、物业、水电的，抵掉的部分照记收入，押金冲抵另记退押金），余额不变')
+            why.append(MEMO_SPLIT[(sh, rw)].get('why') or
+                       '按摘要逐项金额拆（押金抵租金、物业、水电的，抵掉的部分照记收入，押金冲抵另记退押金），余额不变')
         if (len({('收' if e['收入'] else '支') for e in es}) > 1 and 'offset' not in kinds and 'fee' not in kinds
                 and 'msplit' not in kinds):
             why.append('同一行既有收入又有支出（以押抵租/押金冲抵），一行只能记一个方向')
