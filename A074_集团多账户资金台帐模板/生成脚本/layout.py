@@ -1,5 +1,17 @@
 # -*- coding: utf-8 -*-
-"""A074 集团多账户资金台帐模板 · 全书地址契约 v2（设计见 设计.md；v1→v2 的改动见 设计.md 末尾「评审意见处理」）。
+"""A074 集团多账户资金台帐模板 · 全书地址契约 v3.1（提速；设计见 设计.md §15，v3→v3.1 的改动见 §15.10）。v2 的规矩照旧有效，v3 改了下面这些（以本文件为准）：
+- _流 分段取数（v3.1「滚动接力」）：台帐每 SEG_ROWS 行一段（地盘），_流 每段 SEG_SLOTS 个位置（＝块表的一块）。
+  第 k 段的读数区＝上一段地盘＋本段地盘；每段从上一段「读到」的下一行接着读，最多 SEG_SLOTS 行（单段多插 ≤120 行不漏）。
+  _流 第 z 个位置（第 z+1 行）≠ 台帐第 z 条：取数只用本段读数区的名称（sref → 台k_字段），台帐行号用 z_row(z)，
+  台帐原文用 lref_z(字段, z)；台帐 → _流 位置用 流_反查。最后一段的地盘一直到第 REF_END 行（删光尾部空行也还能录）。
+- 段表（FLOW_SEG，名称 段_xx）的「链」只看台帐锚列 LEDGER_ANCHOR（不填、不删），改数据时永远不脏；段_错位、段_有字是叶子（查插删单元格、数没算进来的笔数）。
+- WPS 存盘规矩（v3.1）：_流、_表、资金台帐、子表类里不准直接写「别的表!格子」（一律用名称），不准写往下撑的区域（$X$3:X3），
+  例外：段表（直接引用锚列）、_流 第 1 段。WPS 会把这两类公式一格一条写盘（文件涨到几十 MB）。
+- 录入模式（基础资料①，代替 v2 的「报表暂停」）：PAUSE_SHEETS 里每个公式格最外层套 pause()/pause0()（make 查）。
+- _流 新列：反查、日期原、收值、支值、文字键、项推、顺序、问本、提本、段号（常数）；问题/提醒是短的合并列（设计 §15.3）。
+- 容量：台帐 10,000 行（100 段×100 行，_流 100 段×110 位＝11,000 行）、子表按 2026 全年预计×1.3（合计 12,000）、备用 2 张、账户查询 600。
+"""
+_V2_DOC = """A074 集团多账户资金台帐模板 · 全书地址契约 v2（设计见 设计.md；v1→v2 的改动见 设计.md 末尾「评审意见处理」）。
 所有模块只从这里拿：表名、行列、容量、定义名称、颜色、数字格式、子表清单、公式片段。模块之间只通过这里列出的名称/格子取数。
 
 规矩（照 A069/A072：插行删行排序不出错、Excel 2010 / WPS 能算）：
@@ -14,7 +26,7 @@
 - 只用 Excel 2010 / WPS 都有的函数（见 设计.md §9.3）；LOOKUP 只在 _流 的规则推断里用 LOOKUP(1,0/(条件…),结果) 这一种写法。
 - 防环：_流「原始」列（到 月码 为止）只看本行、_表、PAR_SAFE 里的 _参；别的 _参（最后日期、管理年度、截止、期起、期止）只给
   期人键 和报表用。正常日 只引用本块的「前最晚」那一格（直接写格子，不写 INDEX(块_前最晚,…)）。报表之间不互相引用（首页、核对表是叶子）。
-- 七张报表（PAUSE_SHEETS）每个公式格最外层套 rpt()：基础资料①「报表暂停」填了就不算。
+- 七张报表（v2）每个公式格最外层套 rpt()：基础资料①「报表暂停」填了就不算。（v3 改成「录入模式」，见文件开头）
 """
 import os
 import re
@@ -29,49 +41,54 @@ SH_DAY, SH_MON, SH_CO, SH_CLS, SH_ITEMCO, SH_IE, SH_SPAN, SH_YE = (
 SH_QRY = '账户查询'
 SH_CHK, SH_LOG, SH_HELP = '核对表', '数据整理记录', '使用说明'
 H_PAR, H_TAB, H_FLOW = '_参', '_表', '_流'
-PAUSE_SHEETS = [SH_DAY, SH_MON, SH_CO, SH_CLS, SH_ITEMCO, SH_IE, SH_SPAN]   # 「报表暂停」时不算的七张（年末余额很轻，不停）
+REPORT_SHEETS = [SH_DAY, SH_MON, SH_CO, SH_CLS, SH_ITEMCO, SH_IE, SH_SPAN]  # 七张报表（v2 的「报表暂停」只停这七张）
+# v3「录入模式」要停的表（PAUSE_SHEETS）在子表清单后面定义：七张报表＋年末余额＋账户查询＋26 张子表＋备用＋核对表＋首页
 
 # ═════════════════════════════ 子表 ═════════════════════════════
 # (子表名＝生成时的账户名称（≤20 字、不含 []:*?/\ 和空格；括号沿用清洗产出的半角）, 原表名, 容量)
 # 子表按「名字」认账户（v2）：隐藏格 Y2＝这里的子表名（常数），在基础资料③「子表名」列里找（再找名称、别名）；黄格 D3 填了就用 D3。
 #   所以③可以插行、排序，账户改名也不影响（③「子表名」列别改）。
 # 顺序＝清洗产出 accounts.json 的顺序（按公司分组：在用的在前，暂停的中策、四季快安放最后）；总表「同一天按账户顺序」也是这个顺序。
-# 容量 v2（脚本 scratchpad/a074/t/design/cap_v2.py）：max(在用天数折全年, 7～9 月笔数×4)×1.5，最小 200；暂停户 max(100, 笔数×1.5)；
-#   向上取整到 100。比 v1 多照顾了下半年变忙的户（艾泊烨农商 300→600、博烨基本户 300→700、易佰兴建行 1000→1500）。合计仍是 16,900。
+# 容量 v3（设计 §15.4；脚本 scratchpad/a074/pdesign/cap_v3 见 §15.4 的表）：「2026 全年预计」＝到 10/13 的笔数＋剩下 2.6 个月×7～9 月月均，
+#   ×1.3，向上取整到 100，最少 100。合计 16,900 → 12,000（古玩城 4,800→4,100、谢依俤 2,800→2,300、易佰兴建行 1,500→900）。
+#   一年一本：2027 年开新本时按上一年实际笔数重算（设计 §15.4）；某户超了，子表状态格 ※「本年 x 笔，本表只放得下 y 笔」、核对表 ✗。
 SUB_SHEETS = [
-    ('力喆实业-中国银行', '力喆实业中国银行', 200),
-    ('力喆实业-招商银行(徐洁私户)', '徐洁招商银行', 500),
+    ('力喆实业-中国银行', '力喆实业中国银行', 100),
+    ('力喆实业-招商银行(徐洁私户)', '徐洁招商银行', 400),
     ('力喆产业-农商银行(一般户)', '力喆产业农商银行', 200),
     ('力喆贸易-建设银行', '力喆贸易建设银行', 200),
-    ('力喆传媒-海峡银行', '力喆传媒海峡银行', 200),
-    ('元生万物-建设银行', '元生万物建设银行', 200),
-    ('言吾言-中国银行', '言吾言中国银行', 300),
-    ('古玩城-农商银行(吴海萍私户)', '古玩城农商银行', 4800),
-    ('古玩城-现金', '古玩城现金', 300),
-    ('艾泊烨-海峡银行(基本户)', '艾泊烨海峡银行', 600),
-    ('艾泊烨-招商银行(一般户)', '艾泊烨招商银行', 200),
-    ('艾泊烨-农商银行(一般户)', '艾泊烨农商银行', 600),
-    ('艾泊烨-农商银行(王晓华私户)', '艾泊烨私户银行', 400),
-    ('博烨-农商银行(基本户)', '博烨体育农商银行', 700),
-    ('博烨-农商银行146(篮球馆)', '博烨篮球馆', 800),
-    ('博烨-农商银行468(羽毛球馆)', '博烨羽毛球', 200),
-    ('博烨-民生银行751(健身房)', '博烨健身房', 600),
-    ('博烨-一般户847(匹克球)', '博烨匹克球', 200),
-    ('博烨-农商银行(谢海亮私户)', '博烨私户', 500),
-    ('易佰兴-农商银行(基本户)', '易佰兴农商银行外', 300),
-    ('易佰兴-建设银行(一般户)', '易佰兴建行', 1500),
-    ('易佰兴-农商银行(谢依俤私户)', '易佰兴私户', 2800),
-    ('易佰兴-现金', '易佰兴现金', 200),
-    ('趋势创投-民生银行', '易佰兴趋势民生银行', 200),
+    ('力喆传媒-海峡银行', '力喆传媒海峡银行', 100),
+    ('元生万物-建设银行', '元生万物建设银行', 100),
+    ('言吾言-中国银行', '言吾言中国银行', 200),
+    ('古玩城-农商银行(吴海萍私户)', '古玩城农商银行', 4100),
+    ('古玩城-现金', '古玩城现金', 200),
+    ('艾泊烨-海峡银行(基本户)', '艾泊烨海峡银行', 500),
+    ('艾泊烨-招商银行(一般户)', '艾泊烨招商银行', 100),
+    ('艾泊烨-农商银行(一般户)', '艾泊烨农商银行', 300),
+    ('艾泊烨-农商银行(王晓华私户)', '艾泊烨私户银行', 300),
+    ('博烨-农商银行(基本户)', '博烨体育农商银行', 400),
+    ('博烨-农商银行146(篮球馆)', '博烨篮球馆', 300),
+    ('博烨-农商银行468(羽毛球馆)', '博烨羽毛球', 100),
+    ('博烨-民生银行751(健身房)', '博烨健身房', 300),
+    ('博烨-一般户847(匹克球)', '博烨匹克球', 100),
+    ('博烨-农商银行(谢海亮私户)', '博烨私户', 200),
+    ('易佰兴-农商银行(基本户)', '易佰兴农商银行外', 200),
+    ('易佰兴-建设银行(一般户)', '易佰兴建行', 900),
+    ('易佰兴-农商银行(谢依俤私户)', '易佰兴私户', 2300),
+    ('易佰兴-现金', '易佰兴现金', 100),
+    ('趋势创投-民生银行', '易佰兴趋势民生银行', 100),
     ('中策-海峡银行', '中策管理海峡银行', 100),
     ('四季快安-兴业银行', '四季快安兴业银行', 100),
 ]
 SUB_NAMES = [s for s, _o, _c in SUB_SHEETS]
 N_SUB = len(SUB_SHEETS)
 # 备用子表：给以后新开的卡（王晓华建行、徐洁工行…）用。Y2＝""，黄格 D3 选了账户才有数；用上了把标签改成账户名。
-SPARE_SHEETS = [('备用1', 300), ('备用2', 300), ('备用3', 300), ('备用4', 300)]
+# v3：4 张 → 2 张（再要：复制任意一张子表、改 D3，使用说明写）
+SPARE_SHEETS = [('备用1', 300), ('备用2', 300)]
 SPARE_NAMES = [s for s, _c in SPARE_SHEETS]
 ALL_SUBS = SUB_NAMES + SPARE_NAMES                       # 核对表、首页导航都按这个清单
+# 录入模式（基础资料①「录入模式」＝是）要停的表：每个公式格最外层套 pause()/pause0()（make 查；例外见设计 §15.2.3）
+PAUSE_SHEETS = REPORT_SHEETS + [SH_YE, SH_QRY] + SUB_NAMES + SPARE_NAMES + [SH_CHK, SH_HOME]
 
 # ═════════════════════════════ 颜色（照参考模板的配色，template.md §1） ═════════════════════════════
 C_TITLE = 'FF1F3864'                                      # 每张表第 1 行标题底色
@@ -113,18 +130,31 @@ FMT_PCT = '0.0%;[Red]-0.0%;"-"'
 
 # ═════════════════════════════ 容量 ═════════════════════════════
 SMALL = os.environ.get('A074_SMALL') == '1'               # 测试用小容量；成品一律全容量（build.py 拦住小容量写正式成品）
-N_LEDGER = 800 if SMALL else 12000                         # 资金台帐：一年一本（7～9 月的速度约 9,900 笔/年，够一年＋次年 1 月）
-BLK = 50 if SMALL else 100                                 # 块表每块行数
-N_BLK = N_LEDGER // BLK
+# —— v3 分段（设计 §15.1；v3.1 滚动接力）——
+# 地盘 U_k（seg_area）＝台帐第 HDR+SEG_ROWS×(k−1) ～ HDR+SEG_ROWS×k 行（跟上一段共用一行）；最后一段的地盘一直到第 REF_END 行。
+# 读数区 W_k（read_area）＝上一段地盘＋本段地盘（第 1 段＝U_1）。_流 只通过名称 台k_字段（＝W_k 那一列）取数。
+# 归属：台帐第 t 行归第 k 段，当且仅当 段_尾(k−1) < t ≤ 段_尾(k)；读：第 k 段读 (段_前末(k), 段_读到(k)]，前末(k)＝读到(k−1)。
+SEG_ROWS = 50 if SMALL else 100
+SEG_SLOTS = 55 if SMALL else 110                           # 每段 10 个空位；接力以后一段净插 ≤ 2×SEG_SLOTS−SEG_ROWS（120）行都读得到（多的由后面几段接着读）
+N_LEDGER = 800 if SMALL else 10000                         # 资金台帐生成的行数（v3：12,000→10,000；2026 全年预计 7,928＋次年 1 月 748）
+N_SEG = N_LEDGER // SEG_ROWS                               # 段数（全容量 100）
+N_FLOW = N_SEG * SEG_SLOTS                                 # _流 位置数（全容量 11,000）：流_xx 名称的行数、链式 MATCH 的末位
+BLK = SEG_SLOTS                                            # 块表每块＝一段（报表窗口按块算，见 win_first）
+N_BLK = N_SEG
+JUMP_LOOK = SEG_SLOTS - SEG_ROWS + 20                      # 跳期「下一笔」往下看几个位置（跨过段尾空位还剩 20 行）
+LEDGER_ANCHOR = 'Q'                                        # 资金台帐锚列：不填、不删、不在筛选/排序区（A:P）里；段表的「链」只看它
+LEDGER_ANCHOR_HEAD, LEDGER_ANCHOR_WIDTH = '勿删', 3          # v3.1：不隐藏（隐藏了容易连着右边空列一起删），窄、灰底、表头「勿删」，有效性不让填
+SEG_GROW_MAX = 2 * SEG_SLOTS - SEG_ROWS                    # 一段里净插多少行以内都读得到（全容量 120）
 SUB_CAP = {s: (40 if SMALL else c) for s, _o, c in SUB_SHEETS}
 SUB_CAP.update({s: (40 if SMALL else c) for s, c in SPARE_SHEETS})
-N_QUERY = 40 if SMALL else 1000                            # 账户查询（全年超过的请选月份）
+N_QUERY = 40 if SMALL else 600                             # 账户查询（v3：1,000→600；古玩城最多一个月 365 笔，全年超过的请选月份）
 N_CO, N_ACC, N_ITEM, N_PARTY, N_RULE, N_RULE_P, N_GROUP = 30, 40, 150, 500, 600, 100, 40
+N_RULE_Q = 150                                             # 能在「收付人」里找的项规则（私有小表，v3 进 layout；超了核对 ※，不再退回整表写法）
 # 规则 600 条（清洗产出 收费项规则 454＋收付人规则 33）。_表 里拆成两张压紧表：项规则（≤600）、人规则（≤N_RULE_P）。
 N_YEARS = 2                                                # 日期上限＝开账年＋1 年 12 月 31 日（一年一本；次年 1 月的账先记在旧本也认）
 JUMP_DAYS = 60                                             # 比前面最晚的一笔晚 60 天以上 → ※「年份写错了？」，不算进最后日期
 STALE_WARN, STALE_RED = 7, 30                              # 首页：在用账户几天没记账 → 琥珀 / 红
-N_CLS = 400                                                # 收支分类报表、收支分项汇总的行位（段标题＋大类小计＋收费项×属性＋认不出）
+N_CLS = 250                                                # 收支分类报表、收支分项汇总的行位（v3：400→250；现在用 118 行，核对表查够不够）
 IE_TOP_IN, IE_TOP_OUT = 80, 40                             # 收支报表：收入按收付人前 80 名、支出按收付人前 40 名（其余进「其余」行）
 IE_ITEMS = 100                                             # 收支报表：支出按收费项 100 行
 SPAN_ITEMS, SPAN_TOP_IN, SPAN_TOP_OUT = 100, 80, 40        # 任意时间段：按收费项 100 行、按收付人前 80/40 名
@@ -132,7 +162,17 @@ CHK_LIST = 50                                              # 核对表：清单�
 PAIR_DAYS = 3                                              # 内部转账配对：同一对账户、前后 3 天内找金额相反的一笔
 DUP_WIN = 50                                               # 重复粘贴检查：前后 50 行里找同账户同日同金额同摘要
 REF_END = 1048576
-FORMULA_BUDGET = 720000                                    # 全书公式预算（build 超了退出码 1）；估算约 70 万，见 设计.md §8.3
+FORMULA_BUDGET = 720000                                    # 全书公式预算（build 超了退出码 1）；v3 估算约 70 万，见 设计.md §15.6
+FLOW_FMAX, FLOW_FMAX_EXC = 2500, {}                        # _流 每格公式原文上限（字；make 查）。v3.1：名称化以后 WPS 照样共享，长度只防 Excel 8,192 和看得懂（设计 §15.3）
+FLOW_MERGE_FMAX = 200                                      # 合并列（问题、提醒）只准是短的「挑一个」公式：它们挂在累计链上，改中间一行要跟着重算
+# 计时（v3.1，设计 §15.7）：lo_time 关多线程、量 soffice 的 CPU 秒（不是墙钟）；同一个 LO 进程里先量参照本（v2 成品 git 4575e4b，改台帐一格），
+#   报「占参照的百分比」。参照＝100%（空闲机器墙钟约 5 秒）。超了报警（不拦）
+TIME_WARN_NORMAL_PCT, TIME_WARN_ENTRY_PCT = 30, 12         # 正常模式 ≤30%（≈1.5 LO 秒）、录入模式 ≤12%（≈0.6 LO 秒）
+XML_WARN_MB = 25                                           # build 打印各表 XML，合计超了报警（不拦；v3.1 估约 46 MB，见 §15.6）
+# WPS 存盘体检（v3.1，设计 §15.1.9）：WPS 存 xlsx 时，同一列连续几格同样写法的公式，只要直接写了「别的表!格子」或往下撑的区域
+#   （$X$3:X3、X$3:X3），就拆成一格一条全文写盘；只用名称（名称指向别的表也行）、同表引用的照样共享。
+#   这几张表里出现就报错：WPS_STRICT；白名单：_流 段表各列（直接引用锚列，每段写法本来就不同）、_流 第 1 段（第 2～SEG_SLOTS+1 行，可以用往下撑的区域）
+WPS_STRICT = [H_FLOW, H_TAB, SH_LEDGER, SH_QRY] + ALL_SUBS
 
 # ═════════════════════════════ 属性（v2：六种；号码有空档，「不含内部」＝1～8 一个区间） ═════════════════════════════
 ATTR_NO = {'收入': 1, '支出': 2, '投资建设': 3, '往来': 4, '待分类': 5, '内部转账': 9}
@@ -161,6 +201,7 @@ LEDGER_KPI = [  # 第 3 行汇总条：(标签格, 数值格, 标签)
     ('I3', 'J3', '内部转账净额'), ('K3', 'L3', '资金总额'), ('M3', 'N3', '已用行数'), ('O3', 'P3', '※ / △'),
 ]
 LEDGER_FREEZE = 'C5'
+LEDGER_TITLE, LEDGER_ALERT = 'A1:E1', 'F1'                  # v3.1：标题 A1:E1 合并；F1（合并到 P1）红字＝最要紧的一条：锚坏＞错位＞没算/笔数差＞满了/快满＞录入模式（设计 §15.1.5）
 LEDGER_FILTER = f'A{HDR}:{LEDGER_LAST}{LEDGER_LAST_ROW}'    # 自动筛选（排序走筛选箭头，不碰第 1～3 行）
 
 # ═════════════════════════════ 基础资料（一张表，几块上下排） ═════════════════════════════
@@ -170,7 +211,8 @@ PARAMS = [  # (键, 项目, 默认值, 说明)
     ('集团名称', '集团名称', None, '首页、报表抬头用'),
     ('管理年度', '管理年度', None, '空＝最后一笔流水的年份。各报表、子表的「年份」空着就看这一年；填了上一年，首页也截到那年 12/31'),
     ('开账日', '开账日', '2026-01-01', '本本从这一天开始（一年一本，填 1 月 1 日）。各账户「期初余额」是这一天开始前的余额；早于这一天的流水 ※ 不算'),
-    ('报表暂停', '报表暂停', None, '填「是」：七张报表先不算（录很多时用，打字不卡）；首页、子表、台帐照常算。录完清空'),
+    ('录入模式', '录入模式', None, '录很多时填「是」：子表、报表、核对表、首页先不算，台帐的余额和 ※△ 照算，打字不卡。'
+                                '录完清空（清空那一下要整本算几秒）。别用「手动计算」代替'),
 ]
 PAR_ROW = {k: PAR_HDR + 1 + i for i, (k, *_r) in enumerate(PARAMS)}
 BASE_PAR_VAL = 'B'
@@ -225,10 +267,23 @@ ITEM_OPEN = '账户转入'                                          # 年中新�
 PAR_KEYS = [
     '集团名称', '开账日', '开账年', '日期上限', '最后日期', '管理年度', '截止', '截止年', '截止月码', '期起', '期止',
     '已用行数', '期初合计', '待定号', '内部号', '账户数', '公司数', '收费项数', '收付人数', '规则数', '项规则数', '人规则数',
-    '报表暂停', '自检',
+    '录入模式', '自检', '台帐容量', '台帐末', '漏行', 'Q规则数',
+    '错位', '笔数差', '没算', '锚坏', '可录',
 ]
 PAR = {k: f'B{i + 2}' for i, k in enumerate(PAR_KEYS)}
-PAR_SAFE = ('开账日', '日期上限', '内部号', '项规则数', '人规则数')   # _流 原始列可以引用的 _参（它们只依赖基础资料/_表）
+PAR_SAFE = ('开账日', '日期上限', '内部号', '项规则数', '人规则数', 'Q规则数')   # _流 原始列可以引用的 _参（只依赖基础资料/_表）
+PAR_SEGCHK = ('错位', '笔数差', '没算', '锚坏', '可录')       # v3.1 分段核对（叶子）：只给首页横幅、台帐汇总条、核对表用；_流、块表、段表的链都不准引用
+# v3：录入模式＝基础资料①「录入模式」填了「是/1/录入/暂停」→ 1（v2 的「报表暂停」并进来，「暂停」照认）
+#   v3.1（设计 §15.1.3、§15.1.5；这几格录入模式照算）：
+#   台帐末＝INDEX(段_读到,N_SEG)（读得到的最后一行；再往下有字＝容量外）；台帐容量＝IFERROR(P_台帐末−INDEX(段_首,1),0)
+#   漏行＝SUM(段_漏行)（读不到的行数，行数口径、含空行，只给核对说明定位用）
+#   错位＝IFERROR(SUM(段_错位),1)（>0：台帐被插/删了单元格而不是整行、只剪了 A:P、删了列 → 数全乱）
+#   笔数差＝SUM(段_有字)−COUNTIF(流_取数号,">0")（有字没读到的笔数 − 读了两遍的笔数；≠0 就 ※）
+#   没算＝MAX(0,P_笔数差)+IFERROR(SUM(段_夹缝),0)（「有 x 行没算进来」用这个数）
+#   锚坏＝IFERROR(IF(OR(ISERROR(INDEX(段_首,1)),COUNT(段_末)=0,NOT(ISTEXT(INDEX(台帐_日期,1)))),1,0),1)
+#     （锚列 Q 被删、表头行被删 → 全书或第一笔没算；表头那一格不是文字＝表头行被删了）
+#   可录＝MAX(0,P_台帐容量−P_已用行数)（还能录约几行；台帐汇总条、首页）
+#   Q规则数＝能在收付人里找的项规则条数（_表 规Q 小表；>N_RULE_Q 核对 ※）
 # 开账日：基础资料①（dsel，空＝2026-01-01）；开账年＝YEAR(开账日)；日期上限＝DATE(开账年+N_YEARS-1,12,31)
 # 最后日期＝MAX(开账日, MAX(块_最晚))（块_最晚＝块内 正常日 的最大值：只算有效、没「跳期」的行）
 # 管理年度：基础资料①填了（2000～2100）用填的，否则 YEAR(最后日期)
@@ -236,7 +291,7 @@ PAR_SAFE = ('开账日', '日期上限', '内部号', '项规则数', '人规则
 # 期起/期止：任意时间段 B3/B4（dsel；空：期起＝DATE(YEAR(最后日期),1,1)，期止＝最后日期）
 # 已用行数＝资金台帐 日期或账户有内容的行数（区域锚在表头）；期初合计＝SUM(账户_期初)
 # 待定号＝收费项「待定」是第几个；内部号＝第一个属性「内部转账」的收费项是第几个（对方账户填了、收费项空着时用它）；0＝没有
-# 项规则数/人规则数＝压紧后的条数；报表暂停＝基础资料①填了「是/1/暂停」→1；自检＝规则推断自检格不一致的个数（0＝正常）
+# 项规则数/人规则数＝压紧后的条数；录入模式＝基础资料①填了「是/1/录入/暂停」→1；自检＝规则推断自检格不一致的个数（0＝正常）
 
 # ═════════════════════════════ 隐藏表 _表（基础资料镜像，第 k 个在第 k+1 行） ═════════════════════════════
 def _alloc(start, specs, gap=1):
@@ -260,6 +315,7 @@ _TAB, _TAB_NEXT = _alloc('A', [
     ('规', ['词', '位', '向', '范围', '项号', '人号', '有效', '项计数', '人计数']),       # 用户顺序（基础资料⑥第 j 条在第 j+1 行）
     ('规项', ['源', '词', '位', '向', '范围', '项号']),                               # 压紧＋倒序：第 j 行＝第 (项规则数+1−j) 条项规则
     ('规人', ['源', '词', '位', '向', '范围', '人号']),                               # 同上（≤N_RULE_P 条）
+    ('规Q', ['计数', '源', '词', '向', '范围', '项号']),                              # v3：能在收付人里找的项规则（位≠1）压紧倒序；计数列对齐「规」
     ('下拉', ['账户', '公司', '收费项', '收付人']),
     ('下拉计数', ['账户', '公司', '收费项', '收付人']),
     ('分类候选', [f'p{p}' for p in ATTR_NO.values()]),
@@ -267,6 +323,7 @@ _TAB, _TAB_NEXT = _alloc('A', [
 ])
 LIST_CO, LIST_ACC, LIST_ITEM, LIST_GROUP, LIST_PARTY = _TAB['公司'], _TAB['账户'], _TAB['项'], _TAB['大类'], _TAB['人']
 LIST_RULE, LIST_RULE_I, LIST_RULE_P = _TAB['规'], _TAB['规项'], _TAB['规人']
+LIST_RULE_Q = _TAB['规Q']    # v3：计数列第 2..N_RULE+1 行（跟「规」对齐）；源/词/向/范围/项号第 2..N_RULE_Q+1 行；条数＝P_Q规则数
 DV_COLS, DV_CNT = _TAB['下拉'], _TAB['下拉计数']          # 下拉压紧：第 1 行＝个数，第 2 行起名字；计数列＝按源行累计
 CAND_CLS = (_TAB['分类候选'][f'p{A_IN}'], _TAB['分类候选'][f'p{A_INT}'])   # 收支分类候选键：属性 p 一列（6 列，按 ATTRS 顺序）
 CAND_ROWS = dict(段首=2, 项首=3, 组首=3 + N_ITEM, 认不出=3 + 2 * N_ITEM)   # 每列：段标题 1 格、收费项 N_ITEM 格、大类小计 N_ITEM 格、认不出 1 格
@@ -288,10 +345,13 @@ TWO_ORPHAN, TWO_PAUSED = 98, 99                             # 两级键里的「
 # 两级键：公司 c 有在用账户 → c×100；账户 a：在用且公司认得 → 公司号×100＋a；公司没认出 → 9800＋a；暂停/销户 → 9900＋a；
 #   段标题 9800（有孤儿户才有）、9900（有暂停户才有）
 
-# ═════════════════════════════ 隐藏表 _流：资金台帐逐条（第 n 条在第 n+1 行） ═════════════════════════════
-# 「原始」＝B..L（到 月码），只看本行、_表、PAR_SAFE。键列在无效行一律 0。
+# ═════════════════════════════ 隐藏表 _流：资金台帐逐条（v3：第 z 个位置在第 z+1 行；第 k 段＝第 (k−1)×SEG_SLOTS+2 ～ k×SEG_SLOTS+1 行） ═════════════════════════════
+# 位置 z 跟台帐行的对应：第 k 段第 j 位（z＝(k−1)×SEG_SLOTS＋j）＝台帐第「段_前末(k)＋j」行＝读数区第「段_偏移(k)＋j」格（j≤段_读数(k) 且 段_偏移(k)＋j≥1 才有）。
+# 位置顺序＝台帐上下顺序（中间夹着段尾空位），所以余额、子表链式 MATCH、块表照旧按位置算就是按台帐上下顺序。
+# 「原始」列（FLOW_RAW）只看本行（本段读数区名称 台k_字段 里的台帐格）、_表、PAR_SAFE、段表那一行的链；不引用块表。键列在无效行一律 0。
 FLOW_COLS = [
-    ('A', 'n', '常数'),
+    ('A', '取数号', 'v3.1：本段读数区里第几格（＝段_偏移＋j）；这一行没东西（9 个录入格连起来 TRIM 后是空；错误值算有东西，判法跟 段_有字 一样）、'
+                   '或在段尾空位、或读不到＝0。别的列都先判 $A=0'),
     ('B', '日期', 'vdate：真日期 2000～2099 取整；8 位数 20261001；文字「2026-10-01」「2026.10.1」「2026年10月1日」也认；认不出＝0'),
     ('C', '账户号', 'name2no(账户)：名称、别名都认；空或认不出＝0'),
     ('D', '收', '收入栏（numv：文字金额、「-」也认）归一：MAX(收,0)+MAX(-支,0)（负数当另一栏），ROUND 2'),
@@ -305,8 +365,8 @@ FLOW_COLS = [
     ('L', '月码', '有效：YEAR×100＋MONTH；0（原始到此为止）'),
     ('M', '净', '有效：收－支；0'),
     ('N', '正常日', '有效且不跳期：日期；跳期＝前最晚≥开账日 且 日期>前最晚+JUMP_DAYS；前最晚＝MAX(本块「前最晚」那一格, 本块上面各行正常日)；0'),
-    ('O', '余额', '有效：期初＋块前（本账户）＋本块到本行本账户净额（表里上下顺序的即时余额）；""'),
-    ('P', '问题', '※ 链（只报第一个）；没有 ※ 就等于 提醒'),
+    ('O', '余额', '有效：期初＋INDEX(本块那一行的 块_前,账户号)＋本块到本行本账户净额（表里上下顺序的即时余额）；""'),
+    ('P', '问题', 'v3 合并列：问本（※ 本行）＞顺序里的 ※（跳期）＞提醒；没东西＝""。不含「内部转账没配上」（台帐 L 列、核对表另外加）'),
     ('Q', '账年属月键', '有效：((账户号×10^4＋年)×10＋属性号)×100＋月；0'),
     ('R', '归年属月键', '有效：((归属号×10^4＋年)×10＋属性号)×100＋月；0'),
     ('S', '项年属月键', '有效：((项号×10^4＋年)×10＋属性号)×100＋月（项号 0＝认不出那一桶）；0'),
@@ -317,12 +377,35 @@ FLOW_COLS = [
     ('X', '账月键', '有效：账户号×10^6＋月码（账户查询选了月份时链式 MATCH）；0'),
     ('Y', '转账键', '有效、属性号＝9、对方号>0 且≠账户号：(MIN(账户号,对方号)×100＋MAX(…))×10^5＋日期；0'),
     ('Z', '配对', '转账键>0：窗口内同键净额合计＝0，或前后 PAIR_DAYS 天同一对账户「金额相反的笔数 ≥ 金额相同的笔数」→ 0；否则 1；不是内部转账＝""'),
-    ('AA', '期人键', '有效且 P_期起≤日期≤P_期止：人号×10＋属性号；0（任意时间段按收付人）'),
-    ('AB', '提醒', '△ 链（只报第一个）；""'),
+    ('AA', '期人键', '有效且 P_期起≤日期≤P_期止：人号×10＋属性号；0（任意时间段按收付人）。v3：录入模式时＝0（pause0）'),
+    ('AB', '提醒', 'v3.1 短合并列：IF(F<>1,"",IF(LEFT(顺序,1)="△",顺序,提本))；""。不含「内部转账没配上」'),
+    # —— v3 新列（设计 §15.1/§15.3）——
+    ('AC', '反查', '台帐第 n 条（n＝本行行号−1，＝台帐行号−表头行号）在 _流 的位置；读不到＝−1（显示列 IFERROR 成空）。只看段表的链，改数据不脏'),
+    ('AD', '日期原', '本行日期格：数字照拿；8 位文字 20261001 转成数；其余文字 TRIM；空＝""；错误值＝"#错"'),
+    ('AE', '收值', '收入栏 numv（数字 ROUND 2；文字去 , ¥；空、- 当 0）；认不出＝文字"坏"（D/E 用 N()）'),
+    ('AF', '支值', '支出栏，同上'),
+    ('AG', '文字键', '摘要 & "|" & 备注 & "|" & 原表位置（都 TRIM）：重复粘贴比文字、冲减找「退/冲/返还」用'),
+    ('AH', '项推', '收费项空、对方号不算内部、账户号>0、摘要或收付人有字：按⑥项规则推出来的项号；否则 0（核对「按摘要认」、子表琥珀色都看它）'),
+    ('AI', '顺序', '只放跟块表累计链有关的提示：跳期 ※/△、本账户上面有日期更晚的 △、余额负数 △；""'),
+    ('AJ', '问本', '※ 本行链（不含跳期）：没填日期…归属公司不在②；""'),
+    ('AK', '提本', 'v3.1 △ 本行链（只看本行和前后 ±50 位，不碰块表）：重复粘贴＞待定＞好几种收费项／按摘要认的＞收费项没填也认不出'
+                   '＞日期或金额是文字＞负数＞冲减×2＞收付人不在⑤＞收付人没填＞暂停户；""'),
+    ('AL', '段号', 'v3.1 常数（不是公式）：本行在第几段（＝块号）。余额的定长窗口 SUMIFS 用它挡住上一段的行（WPS 不拆定长窗口）'),
 ]
-FLOW_LAST = 'AB'
+FLOW_LAST = 'AL'
 FLOW = {f: c for c, f, _ in FLOW_COLS}
-FLOW_RAW_LAST = 'L'
+FLOW_RAW_LAST = 'L'                                         # v2 遗留（make 旧检查用）；v3 以 FLOW_RAW 为准
+FLOW_RAW = ('取数号', '日期原', '收值', '支值', '文字键', '日期', '账户号', '收', '支', '有效', '对方号', '归属号', '项推', '项号',
+            '人号', '属性号', '月码')                        # 原始列：只看本段读数区名称（台k_字段）里的台帐格、本行、_表、PAR_SAFE、段表那一行的链；不准引用块表/别的 P_/「资金台帐!」
+FLOW_STATIC = ('反查',)                                     # 只看段表的链（段_前末/读数/偏移/键/首），改数据永远不脏；不准引用 段_错位/有字/夹缝
+FLOW_CHAIN = ('正常日', '余额', '顺序')                       # 直接引用本块那一行的块表格（累计链）；问题/提醒只经过「顺序」间接跟着变
+FLOW_MERGE = ('问题', '提醒')                                # 短合并列（≤FLOW_MERGE_FMAX 字）：只准引用本行的 取数号/有效/问本/顺序/提本/提醒
+FLOW_GATED = ('配对', '期人键')                              # 录入模式时出空/0（pause/pause0 打头，make 查）
+FLOW_CONST = ('段号',)                                      # 写常数，不是公式
+# 定长窗口（v3.1，WPS 不拆）：第 2 段起（第 SEG_SLOTS+2 行起）
+#   余额  SUMIFS(M{r−S}:M{r},C{r−S}:C{r},C{r},段号{r−S}:段号{r},段号{r})（S＝SEG_SLOTS，窗口 S+1 行，段号挡住上一段）
+#   正常日 MAX(N{r−S}:N{r−1})、顺序 COUNTIFS(V{r−S}:V{r−1},…)：不用段号（上一段的行都 ≤ 本块「前最晚/账前最晚」那一格，多看几行结果一样）
+#   第 1 段（第 2～SEG_SLOTS+1 行）照 v3 写往下撑的区域（M$2:M{r}），WPS 拆也只有 110 行
 _blk0 = CI(FLOW_LAST) + 2                                   # 空一列再放块表
 FLOW_BLK = {}
 for _i, _k in enumerate(('净', '前', '账最晚', '账前最晚')):        # 各 N_ACC 列，第 a 列＝账户 a
@@ -338,8 +421,31 @@ FLOW_BLK_LAST = CL(_b1 + 5)
 #   最晚＝MAX(本块 正常日)；前最晚＝IF(b=1,0,MAX(上一行前最晚,上一行最晚))（正常日 引用本块这一格，所以不成环）
 #   最晚月＝MAX(本块 月码)；至最晚月＝MAX(上一行至最晚月, 本行最晚月)（第 1 块＝最晚月）
 #   最早月＝IFERROR(SMALL(本块 月码,COUNTIF(本块 月码,0)+1),999999)；后最早月＝MIN(本行最早月, 下一行后最早月)（最后一块＝最早月）
-# 规则推断自检（P8）：_流 块表右边一小块常数规则＋3 个用同一写法的 LOOKUP 格，期望值生成时写死；不一致个数 → P_自检
-FLOW_PROBE = dict(首列=CL(_b1 + 7), 行数=6, 结果='自检_结果')   # 首列起：词 位 向 范围 项号（6 行常数）；再右 3 列：摘要、方向、期望、结果
+#   v3：一块＝一段（BLK＝SEG_SLOTS）。余额、顺序要用本块的「前」「账前最晚」时直接写本块那一行：INDEX(blk_row('前',b),账户号)，
+#   别写 INDEX(块_前,b,账户号)（整片名称＝任何一块一变全表都脏）。layout.blk_row(组, b) 给出那一行的区域。
+# —— v3.1 段表（第 k 段在第 k+1 行，k＝1..N_SEG；公式原文见设计 §15.1.3）——
+# U＝seg_area('锚',k)（地盘，直接引用锚列）；W＝read_area('锚',k)（读数区）；S＝SEG_SLOTS；[上]＝同一列上一行
+#   首＝ROW(INDEX(U,1))；末＝ROW(INDEX(U,ROWS(U)))（整段删掉＝#REF!）；区首＝IFERROR(ROW(INDEX(W,1)),10^6)；区末＝IFERROR(ROW(INDEX(W,ROWS(W))),0)
+#   尾＝第 1 段 IFERROR(末,首)；其余 MAX(尾[上],IFERROR(末,尾[上]))（只往下走）；前末＝第 1 段 首；其余 读到[上]
+#   读到＝MAX(前末,MIN(前末+S,尾,区末))；读数＝读到−前末；偏移＝前末−区首+1；键＝前末＋k/1000（反查 MATCH 用，严格递增）
+#   漏行＝MAX(0,MIN(读到,区首−1)−前末)（该读却不在读数区的行数，含空行）
+#   夹缝＝MAX(0,MIN(尾,区首−1)−尾[上])（第 1 段写 首）（归本段却不在读数区的行：删整段后在接缝插行）
+#   状态：0 正常；1 借位（本段行多，下一段接着读；只提示）；2 有行读不到（漏行>0）；3 地盘整段删掉了。最后一段没有 1
+#   —— 上面这些是「链」：只引用锚列和段表自己，改数据永远不脏；_流 只准引用链 ——
+#   错位（叶子）：11 个 台k_字段 的首行、行数跟锚列读数区（区首、区末−区首+1）不一样的个数；锚列读数区出错时：数据名称也出错＝0，否则 1
+#   有字（叶子）：本段归属又在读数区里的行（第 MAX(1,尾[上]−区首+2) ～ 尾−区首+1 格；最后一段到 MIN(尾,读到+S)）里 9 个录入格有东西的行数
+#     ＝SUMPRODUCT(--(ISERROR(1/(LEN(TRIM(r日期&r账户&…&r归属公司))=0))+ISERROR(r日期)+…+ISERROR(r归属公司)>0))，
+#     r字段＝INDEX(台k_字段,首格):INDEX(台k_字段,末格)。错误值也算有东西；LO 的数组 & 会把错误值吞掉，所以错误值另外逐列数（pdesign/v31 实测）
+#   —— 取数号的门控要跟有字同一个判法：ISERROR(1/(LEN(TRIM(9 个 INDEX(台k_字段,i) 连起来))=0)) ——
+_s0 = _b1 + 7
+FLOW_SEG = {k: CL(_s0 + i) for i, k in enumerate(('首', '末', '区首', '区末', '尾', '前末', '读到', '读数', '偏移', '键', '漏行',
+                                                      '夹缝', '状态', '错位', '有字'))}
+SEG_CHAIN = ('首', '末', '区首', '区末', '尾', '前末', '读到', '读数', '偏移', '键', '漏行', '夹缝', '状态')
+SEG_LEAF = ('错位', '有字')                                  # 会被改数据弄脏：只准 _参 的 P_错位/P_笔数差 引用
+SEG_STATE = {0: '正常', 1: '借位（多的行由下一段接着读）', 2: '有行读不到', 3: '整段删掉了'}
+FLOW_SEG_LAST = CL(_s0 + len(FLOW_SEG) - 1)
+# 规则推断自检（P8）：_流 段表右边一小块常数规则＋3 个用同一写法的 LOOKUP 格，期望值生成时写死；不一致个数 → P_自检
+FLOW_PROBE = dict(首列=CL(_s0 + len(FLOW_SEG) + 1), 行数=6, 结果='自检_结果')   # 首列起：词 位 向 范围 项号（6 行常数）；再右：摘要、方向、期望、结果
 
 # 数字键的乘数（键都在 2^53 以内）
 K_Y, K_P, K_M = 10 ** 4, 10, 100                            # 年属月键＝((号×K_Y＋年)×K_P＋属性)×K_M＋月
@@ -353,6 +459,8 @@ K_PAIR = 100                                               # 转账键＝(小号
 # 第 4 行：B4:C4「年初余额」D4｜E4「本年收入」F4｜G4「本年支出」H4｜I4「年末余额/当前余额」J4｜K4「x 笔」
 # 第 5 行表头；第 6 行「年初余额」（账户查询选了月份＝「月初余额」）；第 7 行起逐笔
 SUB_HDR, SUB_OPEN, SUB_R0 = 5, 6, 7
+# v3.1（WPS 存盘）：A 序号写 IF($Z7=0,"",ROW()-SUB_R0+1)，不写 ROWS($Z$7:Z7)（往下撑的区域 WPS 一定拆）；子表有保护、不插行。
+#   摘要/备注/对方归属/收费项·收付人原文用 lref_z（整列名称 台帐_字段），公式里不准出现「资金台帐!」
 SUB_COLS = dict(序号='A', 月='B', 日='C', 收费项='D', 收付人='E', 摘要='F', 收入='G', 支出='H', 余额='I', 对方归属='J', 备注='K')
 SUB_HEAD = dict(序号='序号', 月='月', 日='日', 收费项='收费项', 收付人='收付人', 摘要='摘要', 收入='收入', 支出='支出', 余额='余额',
                 对方归属='对方账户/归属', 备注='备注')
@@ -488,15 +596,106 @@ def inref(sh, col, last=None, block=None, hdr=None):
     return f"{q(sh)}!${col}${hdr}:${col}${last}"
 
 
+def tref(field):
+    """v3.1：资金台帐某列从表头行到表底的名称（台帐_字段＝资金台帐!$X$4:$X$1048576）。子表、核对表要整列取台帐原文时用它，
+       公式里不直接写「资金台帐!」（WPS 会把直接跨表的同式公式一格一条写盘）。显示列也有（台帐_余额…，只给核对表数数用）"""
+    return f'台帐_{field}'
+
+
+def bref(block, field):
+    """v3.1：基础资料某块某列的名称（基_块_字段＝inref(基础资料, 列, block)：表头行 ～ 块尾）。_表 取基础资料一律用它"""
+    return f'基_{block}_{field}'
+
+
 def lref(field, n):
-    """资金台帐第 n 条（n 是公式片段）的某个录入格：INDEX(资金台帐!$X$4:$X$1048576,n+1)"""
-    return f'INDEX({inref(SH_LEDGER, LEDGER_COLS[field])},{n}+1)'
+    """资金台帐第 n 条（n＝台帐行号−表头行号，公式片段）的某个录入格：INDEX(台帐_字段,n+1)。
+       v3：_流 位置 z ≠ 第 n 条——拿 _流 位置取台帐原文一律用 lref_z(字段, z)；_流 自己取数用 sref(字段, 行)"""
+    return f'INDEX({tref(field)},{n}+1)'
 
 
 def lrange(field):
-    """资金台帐某列第 1..N_LEDGER 条（锚在表头，插删行不漏）：给核对表比对、计数用"""
-    r = inref(SH_LEDGER, {**LEDGER_COLS, **LEDGER_SHOW}[field])
-    return f'INDEX({r},2):INDEX({r},{N_LEDGER + 1})'
+    """资金台帐某列第 1..N_FLOW 条（锚在表头，插删行不漏；v3 多算到 N_FLOW 行，插行撑大的也数到）：只给核对表、已用行数做「台帐这边」的计数。
+       v3：台帐第 n 条跟 _流 第 n 个位置不再对齐，别拿它跟 流_xx 逐行比（显示列核对见设计 §15.1.6）。v3.1：用名称 台帐_字段"""
+    r = tref(field)
+    return f'INDEX({r},2):INDEX({r},{N_FLOW + 1})'
+
+
+# —— v3 分段取数（设计 §15.1；v3.1 滚动接力）——
+def seg_rows(k):
+    """第 k 段地盘 U_k 的首末行（生成时的行号）：(HDR+SEG_ROWS×(k−1), HDR+SEG_ROWS×k)。首行＝上一段的末行（第 1 段＝表头行）；
+       v3.1：最后一段到 REF_END（删光尾部空行、在最后一段下面录也读得到）"""
+    return HDR + SEG_ROWS * (k - 1), (REF_END if k == N_SEG else HDR + SEG_ROWS * k)
+
+
+def read_rows(k):
+    """第 k 段读数区 W_k 的首末行：上一段地盘＋本段地盘（第 1 段＝U_1）"""
+    return seg_rows(max(k - 1, 1))[0], seg_rows(k)[1]
+
+
+def _area(field, rows):
+    col = LEDGER_ANCHOR if field == '锚' else {**LEDGER_COLS, **LEDGER_SHOW}[field]
+    return f'{q(SH_LEDGER)}!${col}${rows[0]}:${col}${rows[1]}'
+
+
+def seg_area(field, k):
+    """第 k 段地盘 U_k：资金台帐!$X$a:$X$b。v3.1 公式里只有段表用（field＝'锚'）"""
+    return _area(field, seg_rows(k))
+
+
+def read_area(field, k):
+    """第 k 段读数区 W_k：资金台帐!$X$a':$X$b。段表直接写锚列的（'锚'）；录入列的只用来定义名称 台k_字段"""
+    return _area(field, read_rows(k))
+
+
+def seg_name(field, k):
+    """第 k 段读数区里某个录入列的名称（台k_字段＝read_area(字段,k)）。_流 取台帐格、段表 错位/有字 用它"""
+    return f'台{k}_{field}'
+
+
+def slot_of_row(r):
+    """_流 第 r 行（r≥2）→ (段 k, 段内第 j 位, 本段首行 bs, 本段末行 be)。位置 z＝r−1"""
+    k, j = (r - 2) // SEG_SLOTS + 1, (r - 2) % SEG_SLOTS + 1
+    bs = (k - 1) * SEG_SLOTS + 2
+    return k, j, bs, bs + SEG_SLOTS - 1
+
+
+def seg_cell(key, k):
+    """段表第 k 段那一格（绝对引用，_流 表内用）：如 seg_cell('读数', 37) → $HG$38"""
+    return f'${FLOW_SEG[key]}${k + 1}'
+
+
+def sref(field, r):
+    """_流 第 r 行取本段读数区里的台帐格：INDEX(台k_字段,$A{r})。只准在 $A{r}>0 的分支里用（$A=0 时名称可能是 #REF!）"""
+    k = slot_of_row(r)[0]
+    return f'INDEX({seg_name(field, k)},$A{r})'
+
+
+def win_row(col, r, back=None, inclusive=True):
+    """v3.1 定长窗口（第 2 段起用；WPS 不拆）：col{r−back}:col{r}（inclusive）或 col{r−back}:col{r−1}。back 默认 SEG_SLOTS"""
+    back = SEG_SLOTS if back is None else back
+    return f'{col}{r - back}:{col}{r if inclusive else r - 1}'
+
+
+def blk_row(grp, b):
+    """块表第 b 块那一行的一组（各 N_ACC 列）：$BR$b+1:$DE$b+1。余额、顺序用 INDEX(这一行,账户号)，别用整片 块_xx"""
+    c0 = CI(FLOW_BLK[grp])
+    return f'${FLOW_BLK[grp]}${b + 1}:${CL(c0 + N_ACC - 1)}${b + 1}'
+
+
+def z_row(z):
+    """_流 位置 z（公式片段，>0）→ 台帐行号（生成后插删行也对）。v3.1：读数区首行＋取数号−1"""
+    return f'(INDEX(段_区首,INT((({z})-1)/{SEG_SLOTS})+1)+INDEX(流_取数号,{z})-1)'
+
+
+def lref_z(field, z):
+    """_流 位置 z 那一笔在资金台帐的某个录入格（子表、核对表取摘要/备注/对方/归属原文用）：整列名称 台帐_字段，调用处自己挡 z=0。
+       INDEX(段_首,1)＝表头行（表头上面插行也对）"""
+    return f'INDEX({tref(field)},{z_row(z)}-INDEX(段_首,1)+1)'
+
+
+def show_pos():
+    """资金台帐显示列：这一行在 _流 的位置（读不到＝−1，INDEX 出错再由 IFERROR 变空）"""
+    return f'INDEX(流_反查,ROW()-ROW($A${HDR}))'
 
 
 def esc(x):
@@ -578,13 +777,22 @@ def chain(pairs, default='""'):
     return out
 
 
-def rpt(f):
-    """七张报表（PAUSE_SHEETS）每个公式格最外层套这个：报表暂停时显示空、不扫 _流（make.check_formulas 查）"""
+def pause(f):
+    """录入模式要停的表（PAUSE_SHEETS）每个公式格最外层套这个：录入模式时显示空、不扫 _流（make.check_formulas 查）"""
     f = f[1:] if f.startswith('=') else f
-    return f'=IF(P_报表暂停=1,"",{f})'
+    return f'=IF(P_录入模式=1,"",{f})'
 
 
-PAUSE_GUARD = '=IF(P_报表暂停=1,'
+def pause0(f):
+    """同 pause，但录入模式时给 0（子表链头 Z7、_流 期人键这类后面要拿来比数的格）"""
+    f = f[1:] if f.startswith('=') else f
+    return f'=IF(P_录入模式=1,0,{f})'
+
+
+rpt = pause                                                 # v2 的名字，报表模块照旧可以用 rpt()
+PAUSE_GUARDS = ('=IF(P_录入模式=1,"",', '=IF(P_录入模式=1,0,')
+PAUSE_GUARD = PAUSE_GUARDS[0]
+PAUSE_TITLE = '录入模式中：本表先不算（基础资料①「录入模式」清空就恢复）'   # 各停算表第 1 行标题在录入模式时换成这句（红字）
 
 
 def dsel(c, default):
@@ -624,8 +832,8 @@ def ym_of(d):
 
 # —— 报表扫描窗口（perf#2）：只扫可能有数的块。台帐乱序时窗口自动变大，结果照样对 ——
 def win_first(ym):
-    """可能有「月码 ≥ ym」的第一行（_流 第几条）"""
-    return f'MIN({N_LEDGER},COUNTIF(块_至最晚月,"<"&({ym}))*{BLK}+1)'
+    """可能有「月码 ≥ ym」的第一个 _流 位置（v3：块＝段，BLK＝SEG_SLOTS，末位 N_FLOW）"""
+    return f'MIN({N_FLOW},COUNTIF(块_至最晚月,"<"&({ym}))*{BLK}+1)'
 
 
 def win_last(ym, first='1'):
@@ -679,7 +887,7 @@ def sum_before_year(val, keyname, no, y):
 
 def next_pos(prev, key, keyname, n_last):
     """链式找下一条：从 prev（上一条在 _流 的位置，0＝从头）往后找第一个 键＝key 的位置；没有＝0。
-       keyname＝_流 的键列名称（如 流_账年键）；n_last＝该名称的行数（N_LEDGER）"""
+       keyname＝_流 的键列名称（如 流_账年键）；n_last＝该名称的行数（v3：N_FLOW）"""
     return (f'IFERROR(IF({prev}>={n_last},0,{prev}+MATCH({key},INDEX({keyname},{prev}+1):INDEX({keyname},{n_last}),0)),0)')
 
 
@@ -692,7 +900,9 @@ def last_day(a, d):
 # ═════════════════════════════ 定义名称 ═════════════════════════════
 NAMES = {}
 for _c, _f, _d in FLOW_COLS:
-    NAMES[f'流_{_f}'] = f'{H_FLOW}!${_c}$2:${_c}${N_LEDGER + 1}'
+    NAMES[f'流_{_f}'] = f'{H_FLOW}!${_c}$2:${_c}${N_FLOW + 1}'
+for _k, _c in FLOW_SEG.items():                              # v3 段表：第 k 段在第 k+1 行
+    NAMES[f'段_{_k}'] = f'{H_FLOW}!${_c}$2:${_c}${N_SEG + 1}'
 for _k in ('净', '前', '账最晚', '账前最晚'):
     NAMES[f'块_{_k}'] = f"{H_FLOW}!${FLOW_BLK[_k]}$2:${CL(CI(FLOW_BLK[_k]) + N_ACC - 1)}${N_BLK + 1}"
 for _k in ('最晚', '前最晚', '最晚月', '至最晚月', '最早月', '后最早月'):
@@ -702,6 +912,17 @@ for _lst, _pre, _n in ((LIST_CO, '公司', N_CO), (LIST_ACC, '账户', N_ACC), (
                        (LIST_RULE_P, '规人', N_RULE_P)):
     for _k, _c in _lst.items():
         NAMES[f'{_pre}_{_k}'] = f'{H_TAB}!${_c}$2:${_c}${_n + 1}'
+for _k, _c in LIST_RULE_Q.items():                           # v3：收付人那一半规则的小表（计数列对齐「规」600 行，其余 N_RULE_Q 行）
+    NAMES[f'规Q_{_k}'] = f'{H_TAB}!${_c}$2:${_c}${(N_RULE if _k == "计数" else N_RULE_Q) + 1}'
+# v3 规则区间名称（只给 _流 规则推断用，公式变短；P_xx规则数＝0 时公式外层 IF 已经挡住，别在挡之前用）：
+#   规项R_词＝INDEX(规项_词,1):INDEX(规项_词,P_项规则数) …；规人R_x 用 P_人规则数；规QR_x 用 P_Q规则数
+for _k in ('源', '词', '位', '向', '范围', '项号'):
+    NAMES[f'规项R_{_k}'] = f'INDEX(规项_{_k},1):INDEX(规项_{_k},P_项规则数)'
+for _k in ('词', '位', '向', '范围', '人号'):
+    NAMES[f'规人R_{_k}'] = f'INDEX(规人_{_k},1):INDEX(规人_{_k},P_人规则数)'
+for _k in ('源', '词', '向', '范围', '项号'):
+    NAMES[f'规QR_{_k}'] = f'INDEX(规Q_{_k},1):INDEX(规Q_{_k},P_Q规则数)'
+RULE_RANGE_NAMES = tuple(n for n in NAMES if re.match(r'规(项|人|Q)R_', n))   # cyclecheck/make 要能展开这几个「公式名称」
 NAMES['大类_名称'] = f"{H_TAB}!${LIST_GROUP['名称']}$2:${LIST_GROUP['名称']}${N_GROUP + 1}"
 NAMES['大类_数'] = f"{H_TAB}!${LIST_GROUP['名称']}$1"
 for _p in ATTR_NO.values():
@@ -710,8 +931,21 @@ NAMES['分类_候选键'] = f'{H_TAB}!${CAND_CLS[0]}$2:${CAND_CLS[1]}${CAND_LAST
 NAMES['账两级_候选键'] = f'{H_TAB}!${CAND_TWO}$2:${CAND_TWO}${CAND_TWO_LAST}'
 for _k, _cell in PAR.items():
     NAMES[f'P_{_k}'] = f'{H_PAR}!${_cell[0]}${_cell[1:]}'
-NAMES['台帐_收费项'] = inref(SH_LEDGER, LEDGER_COLS['收费项'])      # 只给条件格式用（子表把按摘要认的收费项标琥珀色）
-NAMES['台帐_收付人'] = inref(SH_LEDGER, LEDGER_COLS['收付人'])
+# v3.1 台帐整列名称（表头行 ～ 表底）：子表/核对表取原文（lref_z、lrange）、条件格式用；公式里不直接写「资金台帐!」
+for _f, _c in {**LEDGER_COLS, **LEDGER_SHOW}.items():
+    NAMES[tref(_f)] = inref(SH_LEDGER, _c)
+# v3.1 基础资料各块各列（表头行 ～ 块尾）：_表 取数用 bref(块, 字段)
+for _k, _cols in BASE_COLS.items():
+    for _f, _c in _cols.items():
+        NAMES[bref(_k, _f)] = inref(SH_BASE, _c, block=_k)
+# v3.1 分段读数区名称：每段每个录入列一个（台k_字段＝read_area(字段,k)；N_SEG×11 个）。只给 _流 取数和段表 错位/有字 用。
+#   一列一个（不是三列一组）：台帐中间插整列时每个名称各自跟着挪，读的还是那个字段（跟 v2 一样不怕插列）；只插/删半截格子时段_错位也看得出来
+SEG_NAMES = []
+for _k in range(1, N_SEG + 1):
+    for _f in LEDGER_COLS:
+        NAMES[seg_name(_f, _k)] = read_area(_f, _k)
+        SEG_NAMES.append(seg_name(_f, _k))
+NAMES_HIDDEN = set(SEG_NAMES)                               # make 写成隐藏名称（名称管理器里不显示，免得乱）
 
 
 def _ab(sh, cell):
@@ -765,7 +999,7 @@ for _nm, (_sh, _cell) in _RN.items():
 DV_NAMES = {f'{k}列表': f"OFFSET({H_TAB}!${c}$2,0,0,MAX(1,{H_TAB}!${c}$1),1)" for k, c in DV_COLS.items()}
 DV_FIXED = dict(属性=','.join(ITEM_ATTRS), 户别=','.join(ACC_KINDS), 状态=','.join(ACC_STATUS), 方向=','.join(RULE_DIRS),
                 查找位置=','.join(RULE_WHERE), 收付人类型=','.join(PARTY_TYPES), 指标=','.join(CO_METRICS),
-                是='是')   # 报表暂停、收支分项汇总「看全年」   # 有效性直接写 "a,b,c"
+                是='是')   # 录入模式、收支分项汇总「看全年」   # 有效性直接写 "a,b,c"
 
 
 # ═════════════════════════════ 自检（python3 layout.py；make.py 也会调） ═════════════════════════════
@@ -789,8 +1023,12 @@ def self_check():
             errs.append(f'子表名（账户名）要 ≤20 字、不带空格和 []:*?/\\：{s!r}')
         if SUB_CAP[s] < (40 if SMALL else 100):
             errs.append(f'子表容量太小：{s}')
-    if set(PAUSE_SHEETS) - {n for _g, _c, ns in GROUPS if _g == '报表' for n in ns}:
-        errs.append('PAUSE_SHEETS 不全是报表')
+    if set(REPORT_SHEETS) - {n for _g, _c, ns in GROUPS if _g == '报表' for n in ns}:
+        errs.append('REPORT_SHEETS 不全是报表')
+    if set(PAUSE_SHEETS) - set(all_sheets) or len(PAUSE_SHEETS) != len(set(PAUSE_SHEETS)):
+        errs.append('PAUSE_SHEETS 有不存在或重复的表')
+    if {SH_LEDGER, SH_BASE} & set(PAUSE_SHEETS):
+        errs.append('录入模式不能停资金台帐、基础资料')
 
     def nooverlap(tag, cols):
         vals = list(cols.values()) if isinstance(cols, dict) else list(cols)
@@ -805,7 +1043,7 @@ def self_check():
         errs.append('LEDGER_HEAD 跟列不一致')
     if set(LEDGER_WIDTH) != {CL(i) for i in range(1, CI(LEDGER_LAST) + 1)}:
         errs.append('LEDGER_WIDTH 跟列不一致')
-    kp = [c for a, b, _l in LEDGER_KPI for c in (a, b)]
+    kp = [c for a, b, _l in LEDGER_KPI for c in (a, b)] + [LEDGER_ALERT, LEDGER_TITLE.split(':')[1]]
     if max(CI(re.match(r'[A-Z]+', c).group()) for c in kp) > CI(LEDGER_LAST):
         errs.append('台帐汇总条超出最后一列')
     for k, cols in BASE_COLS.items():
@@ -829,12 +1067,51 @@ def self_check():
     nooverlap('_流', fl)
     if [CI(c) for c in fl] != list(range(1, len(fl) + 1)):
         errs.append('_流 列要从 A 起连续')
-    if CI(FLOW_BLK['净']) <= CI(FLOW_LAST) or CI(FLOW_PROBE['首列']) <= CI(FLOW_BLK_LAST):
+    if CI(FLOW_BLK['净']) <= CI(FLOW_LAST) or CI(FLOW_SEG['首']) <= CI(FLOW_BLK_LAST) \
+            or CI(FLOW_PROBE['首列']) <= CI(FLOW_SEG_LAST):
         errs.append('_流 块表/自检压到逐条列')
     if [f for _c, f, _d in FLOW_COLS].index('月码') != fl.index(FLOW_RAW_LAST):
         errs.append('FLOW_RAW_LAST 不是 月码')
-    if N_LEDGER % BLK:
-        errs.append('N_LEDGER 要是 BLK 的整数倍')
+    if (set(FLOW_RAW) | set(FLOW_STATIC) | set(FLOW_CHAIN) | set(FLOW_GATED) | set(FLOW_MERGE) | set(FLOW_CONST)) - set(FLOW):
+        errs.append('FLOW_RAW/STATIC/CHAIN/GATED/MERGE/CONST 里有 FLOW_COLS 没有的字段')
+    if set(FLOW_CONST) & (set(FLOW_RAW) | set(FLOW_STATIC) | set(FLOW_CHAIN) | set(FLOW_GATED) | set(FLOW_MERGE)):
+        errs.append('FLOW_CONST（常数列）不能同时是公式列')
+    # —— v3 分段 ——
+    if N_LEDGER % SEG_ROWS or SEG_SLOTS < SEG_ROWS or BLK != SEG_SLOTS or N_BLK != N_SEG or N_FLOW != N_SEG * SEG_SLOTS:
+        errs.append('分段常数不一致：N_LEDGER 要是 SEG_ROWS 的整数倍，SEG_SLOTS≥SEG_ROWS，BLK＝SEG_SLOTS')
+    if N_SEG >= 500:
+        errs.append('段数要 <500（段_键＝前末＋k/1000 要比 0.5 小）')
+    if JUMP_LOOK < SEG_SLOTS - SEG_ROWS + 10:
+        errs.append('JUMP_LOOK 要能跨过段尾空位')
+    if LEDGER_ANCHOR in {**LEDGER_COLS, **LEDGER_SHOW}.values() or CI(LEDGER_ANCHOR) <= CI(LEDGER_LAST):
+        errs.append('LEDGER_ANCHOR 要在台帐最后一列右边、不跟别的列重叠')
+    if seg_rows(1)[0] != HDR or seg_rows(2)[0] != seg_rows(1)[1] or seg_rows(N_SEG)[1] != REF_END \
+            or seg_rows(N_SEG)[0] != HDR + N_LEDGER - SEG_ROWS or seg_rows(N_SEG - 1)[1] != HDR + N_LEDGER - SEG_ROWS:
+        errs.append('地盘行号不对：第 1 段从表头行起，相邻段共用一行，最后一段从倒数第 SEG_ROWS 行到 REF_END')
+    if read_rows(1) != seg_rows(1) or any(read_rows(k) != (seg_rows(k - 1)[0], seg_rows(k)[1]) for k in range(2, N_SEG + 1)):
+        errs.append('读数区要＝上一段地盘＋本段地盘')
+    if SEG_GROW_MAX != 2 * SEG_SLOTS - SEG_ROWS or SEG_SLOTS - SEG_ROWS < 1:
+        errs.append('SEG_GROW_MAX 不对，或者每段没有空位')
+    if list(FLOW_SEG) != list(SEG_CHAIN) + list(SEG_LEAF) or set(SEG_STATE) != {0, 1, 2, 3}:
+        errs.append('段表列要＝链（SEG_CHAIN）＋叶子（SEG_LEAF），状态 0～3')
+    if len(SEG_NAMES) != N_SEG * len(LEDGER_COLS) or set(SEG_NAMES) - set(NAMES) or NAMES_HIDDEN - set(NAMES):
+        errs.append('分段读数区名称（台k_字段）数目不对')
+    if any(re.search(r'\$(' + '|'.join(LEDGER_SHOW.values()) + r')\$', NAMES[n]) for n in SEG_NAMES):
+        errs.append('台k_字段 不能包含显示列（显示列引用 流_xx，包进来就成环）')
+    if not sref('摘要', SEG_SLOTS * 3 + 7).startswith(f'INDEX({seg_name("摘要", 4)},') or '!' in sref('日期', 2):
+        errs.append('sref 要用本段读数区名称、不准直接写台帐')
+    if set(PAR_SEGCHK) - set(PAR_KEYS) or set(PAR_SEGCHK) & set(PAR_SAFE):
+        errs.append('PAR_SEGCHK 要在 PAR_KEYS 里、不能进 PAR_SAFE')
+    if set(WPS_STRICT) - set(all_sheets) or LEDGER_ANCHOR_WIDTH <= 0:
+        errs.append('WPS_STRICT 有不存在的表，或锚列宽度不对')
+    for nm in list(NAMES):
+        if len(nm) > 255:
+            errs.append(f'名称太长：{nm}')
+    if slot_of_row(2)[:3] != (1, 1, 2) or slot_of_row(N_FLOW + 1)[:2] != (N_SEG, SEG_SLOTS):
+        errs.append('slot_of_row 不对')
+    nooverlap('_流 段表', FLOW_SEG)
+    if N_RULE_Q > N_RULE or 'Q规则数' not in PAR_SAFE:
+        errs.append('规Q 小表容量或 PAR_SAFE 不对')
     tab = [c for grp in _TAB.values() for c in grp.values()]
     nooverlap('_表', tab)
     nooverlap('子表', {**SUB_COLS, **SUB_MON, **SUB_HELP, **SUB_MON_WIN})
@@ -881,23 +1158,25 @@ def self_check():
     for k in CHK_CNT.values():
         if CI(re.match(r'[A-Z]+', k).group()) <= CI(CHK['列']['说明']):
             errs.append('核对表计数格压到表格')
-    # 公式片段长度（_流 一格里会用好几次）
-    x = lref('收入', '$A2')
-    for nm_, f in (('vdate', vdate(lref('日期', '$A2'))), ('money_in', money_in(x, lref('支出', '$A2'))),
-                   ('name2no', name2no(lref('账户', '$A2'), '账户'))):
+    # 公式片段长度（_流 一格里会用好几次；v3.1 按 sref 量）
+    rr = SEG_SLOTS * (N_SEG // 2) + 50
+    x = sref('收入', rr)
+    for nm_, f in (('vdate', vdate(sref('日期', rr))), ('money_in', money_in(x, sref('支出', rr))),
+                   ('name2no', name2no(sref('账户', rr), '账户'))):
         if len(f) > 4000:
             errs.append(f'公式片段 {nm_} 太长：{len(f)} 字')
     return errs
 
 
 def estimate_formulas():
-    """全书公式数估算（设计 §8.3 那张表；build 实数超 FORMULA_BUDGET 才拦）"""
-    flow = (len(FLOW_COLS) - 1) * N_LEDGER
-    blk = N_BLK * (4 * N_ACC + 6)
+    """全书公式数估算（设计 §15.6 那张表；build 实数超 FORMULA_BUDGET 才拦）"""
+    flow = (len(FLOW_COLS) - len(FLOW_CONST)) * N_FLOW          # v3：A 列也是公式；段号是常数
+    blk = N_BLK * (4 * N_ACC + 6) + N_SEG * len(FLOW_SEG) + 16
     subs = sum(SUB_CAP.values()) * 12 + len(ALL_SUBS) * 130
     qry = N_QUERY * 12 + 130
     led = len(LEDGER_SHOW) * N_LEDGER + len(LEDGER_KPI)
     tab = (N_CO * 3 + N_ACC * 10 + N_ITEM * (8 + len(ATTR_NO)) + N_GROUP + N_PARTY * 5 + N_RULE * 9 + N_RULE * 6 + N_RULE_P * 6
+           + N_RULE + N_RULE_Q * 5
            + 4 * (N_ACC + N_CO + N_ITEM + N_PARTY) * 2 // 2 + len(ATTR_NO) * (CAND_LAST - 1) + CAND_TWO_LAST)
     cls = N_CLS * (12 + 2 + 6) + 200
     itemco = N_CLS * (N_CO + 1 + 6) + 300
@@ -905,7 +1184,7 @@ def estimate_formulas():
     span = N_PARTY * 6 + (SPAN_ITEMS * 2 + SPAN_TOP_IN + SPAN_TOP_OUT) * 3 + N_ACC * 7 + 200
     day = N_ACC * 66 + 2 * TWO_ROWS * 9 + 200
     other = 6000 + 2640
-    parts = dict(_流=flow, 块表=blk, 子表=subs, 账户查询=qry, 资金台帐=led, _表=tab, 收支分类报表=cls, 收支分项汇总=itemco,
+    parts = dict(_流=flow, 块表段表=blk, 子表=subs, 账户查询=qry, 资金台帐=led, _表=tab, 收支分类报表=cls, 收支分项汇总=itemco,
                  收支报表=ie, 任意时间段=span, 资金日报=day, 其余=other)
     return sum(parts.values()), parts
 
@@ -916,7 +1195,13 @@ if __name__ == '__main__':
     print(f'表 {sum(len(n) for _g, _c, n in GROUPS)} 张（子表 {N_SUB}＋备用 {len(SPARE_NAMES)} 张）＋隐藏 {len(HIDDEN)} 张；'
           f'名称 {len(NAMES)}＋下拉 {len(DV_NAMES)}；资金台帐 {N_LEDGER} 行，子表容量合计 {sum(SUB_CAP.values())}，账户查询 {N_QUERY}')
     print('基础资料块：' + '；'.join(f'{k} 标题{tr} 表头{h} 容量{n} 到{BASE_LAST[k]}' for k, _t, tr, h, n in BASE_BLOCKS))
-    print(f'_流 {FLOW_LAST} 为止，块表 {FLOW_BLK["净"]}..{FLOW_BLK_LAST}，自检 {FLOW_PROBE["首列"]} 起；_表 用到 {_TAB_NEXT} 前')
+    print(f'_流 {FLOW_LAST} 为止（{len(FLOW_COLS)} 列×{N_FLOW:,} 行＝{N_SEG} 段×{SEG_SLOTS} 位；台帐每段 {SEG_ROWS} 行），'
+          f'块表 {FLOW_BLK["净"]}..{FLOW_BLK_LAST}，段表 {FLOW_SEG["首"]}..{FLOW_SEG_LAST}，自检 {FLOW_PROBE["首列"]} 起；_表 用到 {_TAB_NEXT} 前')
+    print(f'录入模式停 {len(PAUSE_SHEETS)} 张表；锚列 {SH_LEDGER}!{LEDGER_ANCHOR}；第 {N_SEG // 2} 段地盘 {seg_area("锚", N_SEG // 2)}、'
+          f'读数区 {read_area("锚", N_SEG // 2)}（名称 {seg_name("日期", N_SEG // 2)}＝{NAMES[seg_name("日期", N_SEG // 2)]}）；'
+          f'最后一段地盘 {seg_area("锚", N_SEG)}；第 {SEG_SLOTS * 3 + 7} 行取摘要 {sref("摘要", SEG_SLOTS * 3 + 7)}')
+    print(f'名称 {len(NAMES)} 个，其中分段读数区 {len(SEG_NAMES)} 个（隐藏）；一段净插 ≤{SEG_GROW_MAX} 行读得到；'
+          f'段表 {"、".join(f"{k}{c}" for k, c in FLOW_SEG.items())}')
     print(f'公式估算 ≈ {tot:,}（预算 {FORMULA_BUDGET:,}）：' + '、'.join(f'{k} {v:,}' for k, v in parts.items()))
     print('✓ 自检通过' if not e else '✗ ' + '\n✗ '.join(e))
     raise SystemExit(1 if e else 0)
