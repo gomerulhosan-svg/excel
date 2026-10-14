@@ -64,8 +64,8 @@ def build_inv_grid(wb, ctx):
                 if b == 1:
                     ws[f'{c}{r}'] = 0
                 else:
-                    ws[f'{c}{r}'] = (f'=IF({an(a)}="",0,{c}{r - 1}+SUMIFS({SH_CASH}!${col}${p0}:${col}${p1},'
-                                     f'{SH_CASH}!$B${p0}:$B${p1},{an(a)}))')
+                    ws[f'{c}{r}'] = (f'=IF({an(a)}="",0,{c}{r - 1}+SUMIFS({seg_name(SH_CASH, col, b - 1)},'
+                                     f'{seg_name(SH_CASH, "B", b - 1)},{an(a)}))')      # wps：上一块＝流水第 b-1 段（段名称）
     for c, t in (('A', '物料'), ('B', '库存管理'), ('C', '期初数量'), ('D', '期初金额')):
         put(ws, f'{c}4', t, F_NOTE, border=False)
     mat = lambda col: rng(SH_BASE, col, MAT_R0, MAT_R1)

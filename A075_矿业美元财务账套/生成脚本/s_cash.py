@@ -18,6 +18,7 @@ def _rule_at(col, pos):
     return f'INDEX({rng(SH_RULE, col, RC_R0, RC_R1)},{pos})&""'
 
 
+K_SLOT, K_ANCHOR = 'AP', 'AQ'                 # wps 隐藏：槽位（第 s 段第 j 行＝(s-1)×100＋j）/ 锚列（空，段名称定位用）
 K_AROW, K_CROW, K_ZROW = 'AM', 'AN', 'AO'     # opt 隐藏：账户在档案第几行 / 类别在记账规则第几行 / 对方科目在科目表第几行（找不到＝0）
 
 
@@ -122,11 +123,16 @@ def build_cash(wb, ctx):
             ws[f'{K_UZS}{r}'] = f'=IF(OR($L{r}="",$K{r}=""),"",ROUND($L{r}*$K{r},2))'
         # opt：块前累计（_辅助 第 220 行起，见 common.CB_N）＋本块里加到本行；账户名不在档案里的照原来从第 6 行加
         b, bs = cash_block(r)
+        assert CB_N == SEG_N and seg_pos(SH_CASH, r)[0] == b
         mt = f'MATCH($B{r},账户名,0)'
+        # wps：本块里加到本行写成 INDEX(流水_L_段b,1):$L本行（不写往下撑的 $L$块首:L本行）；账户名不在档案里的照原来从第 6 行加（前面各段＋本段）
+        loc = lambda col: f'SUMIFS({local(SH_CASH, col, r)},{local(SH_CASH, "B", r)},$B{r})'
+        allup = upto_terms(SH_CASH, 'SUMIFS', r, [('L', None), ('B', f'$B{r}')])
         ws[f'{K_BAL}{r}'] = (f'=IF($B{r}="","",ROUND(SUMIF(账户名,$B{r},账户期初)+IFERROR(INDEX(流水块前原币,{b},{mt})'
-                             f'+SUMIFS($L${bs}:L{r},$B${bs}:B{r},$B{r}),SUMIFS($L${CASH_R0}:L{r},$B${CASH_R0}:B{r},$B{r})),2))')
+                             f'+{loc("L")},{allup}),2))')
         ws[f'{K_BBAL}{r}'] = (f'=IF($B{r}="","",IFERROR(ROUND(INDEX(账户期初本位,{mt})+INDEX(流水块前美元,{b},{mt})'
-                              f'+SUMIFS($M${bs}:M{r},$B${bs}:B{r},$B{r}),2),""))')
+                              f'+{loc("M")},2),""))')
+        ws[f'{K_SLOT}{r}'] = slot_formula(SH_CASH, r)       # wps：槽位（凭证ID 的位置）
         # 记账辅助
         ws[f'{K_ACODE}{r}'] = f'=IF($B{r}="","",IF({AM}=0,"",IFERROR(INDEX(账户科目,{AM})&"","")))'
         raw = (f'IF(AND($A{r}<启用日,{_rule_at(RC_HIST, AN)}<>""),{_rule_at(RC_HIST, AN)},'
@@ -135,7 +141,7 @@ def build_cash(wb, ctx):
         capc = f'IFERROR(INDEX({cap},MATCH($Q{r},单位表,0))&"","")'
         ws[f'{K_CCODE}{r}'] = (f'=IF($Y{r}="","",IF($Y{r}="@资本",IF({capc}="","3001",{capc}),{code_of(f"$Y{r}")}))')
         # opt：同一个合并号的第一笔一定在本行或上面——只往上找（原来查整段 3,960 行，改任何一行全表跟着重算）
-        head = f'INDEX($A${CASH_R0}:$A{r},MATCH($V{r},$V${CASH_R0}:$V{r},0))'
+        head = first_val(SH_CASH, f'$V{r}', 'V', 'A', r)      # wps：前面各段＋本段（不写往下撑的区域）
         # 有效＝核对列里那些 ✗ 都没有（✗ 的行不出凭证）
         ok = (f'AND(ISNUMBER($A{r}),$A{r}>=起始月份,ISNUMBER($M{r}),$M{r}<>0,$X{r}<>"",$Z{r}<>"",'
               f'$E{r}<>"",N({AN})>0,'
@@ -196,12 +202,12 @@ def build_cash(wb, ctx):
         for col in (K_ACODE, K_RAW, K_CCODE, K_DR, K_CR, K_VALID, K_CFI, K_GSEQ, K_GHEAD, K_VID, K_VMEMO):
             ws[f'{col}{r}'].font = F_NOTE
     hide(ws, [K_ACODE, K_RAW, K_CCODE, K_DR, K_CR, K_VALID, K_CFI, K_GSEQ, K_GHEAD, K_VID, K_VMEMO])
-    for col, t in ((K_AROW, '账户行'), (K_CROW, '类别行'), (K_ZROW, '对方科目行')):
+    for col, t in ((K_AROW, '账户行'), (K_CROW, '类别行'), (K_ZROW, '对方科目行'), (K_SLOT, '槽位'), (K_ANCHOR, '（空）')):
         put(ws, f'{col}{CASH_HDR}', t, F_NOTE, FILL_AUTO, align=ACW)
         ws.column_dimensions[col].width = 6
         for r in range(CASH_R0, CASH_R1 + 1):
             ws[f'{col}{r}'].font = F_NOTE
-    hide(ws, [K_AROW, K_CROW, K_ZROW])
+    hide(ws, [K_AROW, K_CROW, K_ZROW, K_SLOT, K_ANCHOR])
     rngc = f'{K_CHK}{CASH_R0}:{K_CHK}{CASH_R1}'
     ws.conditional_formatting.add(rngc, FormulaRule(formula=[f'LEFT(${K_CHK}{CASH_R0},1)="✗"'], fill=FILL_WARN,
                                                     font=Font(name=YH, sz=10, bold=True, color='FFC00000')))

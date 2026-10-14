@@ -66,6 +66,8 @@ def inject(target, valsrc, names=None):
             wsv = vals[src]
             empties = empty_str_cells(src)
             root = etree.fromstring(data)
+            # 带内部跳转的公式格算出空串时，LibreOffice 存的「值」是跳转地址（如 首页 J1 横幅 → '资金台帐'!A1）：按空串写回
+            links = {h.get('ref'): h.get('location') for h in root.iter(f'{{{NS}}}hyperlink') if h.get('location')}
             for c in root.iter(f'{{{NS}}}c'):
                 f = c.find(f'{{{NS}}}f')
                 if f is None:
@@ -74,6 +76,9 @@ def inject(target, valsrc, names=None):
                 if v is not None:
                     c.remove(v)
                 val = wsv[c.get('r')].value
+                if isinstance(val, str) and c.get('r') in links and val == links[c.get('r')]:
+                    val = None
+                    empties.add(c.get('r'))
                 if val is None:
                     if c.get('r') in empties:
                         c.set('t', 'str')

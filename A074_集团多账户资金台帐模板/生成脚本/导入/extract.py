@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""从 2026年日记账 读出 26 张账户表的流水（缓存值），不做任何清洗。"""
+"""从 2026年日记账 读出 24 张账户表（conf.ACCOUNTS）的流水（缓存值），不做任何清洗。"""
 import openpyxl
 from openpyxl.utils import column_index_from_string as CI
 

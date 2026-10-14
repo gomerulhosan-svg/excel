@@ -3,6 +3,7 @@
   _参  全书参数（B 列，名称 P_xx；v3.1 加 台帐末/台帐容量/漏行/Q规则数 和分段报警 P_错位/笔数差/没算/锚坏/可录）
   _表  基础资料镜像：取基础资料一律用名称 基_块_字段（layout.bref），不直接写「基础资料!」（WPS 存盘会拆）；
        压紧倒序的规则表（项规则、人规则、能在收付人里找的项规则 规Q）＋下拉压紧＋收支分类候选键＋公司→账户两级候选键
+       ＋月份下拉清单（change 10/14：MONTH_LIST 第 2..13 行＝管理年度 1～12 月的文字「2026年1月」，名称 月份_清单只给下拉用）
   _流  资金台帐分段取数（滚动接力）：台帐每 SEG_ROWS 行一段，_流 每段 SEG_SLOTS 个位置；第 z 个位置在第 z+1 行。
        取台帐格只用本段读数区名称 台k_字段（layout.sref）；位置跟台帐行号的对应在段表（GY:HM）。
        块表（一块＝一段：各账户净额/块前累计/最晚日期，窗口用的月统计）、段表、规则推断自检格。
@@ -18,7 +19,7 @@ from openpyxl.utils import get_column_letter as CL, column_index_from_string as 
 from layout import (
     H_PAR, H_TAB, H_FLOW, SH_BASE, SH_HOME, SH_SPAN, PAR, PAR_KEYS, PAR_ROW, BASE_PAR_VAL,
     LIST_CO, LIST_ACC, LIST_ITEM, LIST_GROUP, LIST_PARTY, LIST_RULE, LIST_RULE_I, LIST_RULE_P, LIST_RULE_Q,
-    DV_COLS, DV_CNT, CAND_ROWS, CAND_TWO, CAND_TWO_LAST, _TAB, _TAB_NEXT, HOME_SEL, SPAN_SEL,
+    DV_COLS, DV_CNT, CAND_ROWS, CAND_TWO, CAND_TWO_LAST, _TAB, _TAB_NEXT, HOME_SEL, SPAN_SEL, MONTH_LIST, MONTH_LIST_F,
     FLOW, FLOW_COLS, FLOW_BLK, FLOW_SEG, FLOW_PROBE, FLOW_CONST, N_FLOW, N_SEG, SEG_SLOTS, BLK, N_BLK, JUMP_LOOK,
     N_CO, N_ACC, N_ITEM, N_PARTY, N_RULE, N_RULE_P, N_RULE_Q, N_GROUP, N_YEARS, JUMP_DAYS, PAIR_DAYS, DUP_WIN,
     ATTR_NO, ATTR_UNKNOWN, ACC_STATUS, RULE_DIRS, RULE_WHERE, ITEM_PENDING, LEDGER_COLS,
@@ -213,6 +214,10 @@ def build_tab(ws, ctx):
     ws[f'{c}{a0 + N_ACC}'] = '=IF(COUNTIFS(账户_有效,1,账户_状态号,1,账户_公司号,0)>0,9800,"")'
     ws[f'{c}{a0 + N_ACC + 1}'] = '=IF(COUNTIFS(账户_有效,1,账户_状态号,">1")>0,9900,"")'
     assert a0 + N_ACC + 1 == CAND_TWO_LAST
+    # —— change 10/14：月份选择格的下拉清单（名称 月份_清单＝第 2..13 行；P_管理年度＝基础资料①填的，空＝最后一笔的年份）——
+    ws[f'{MONTH_LIST}1'] = '月份清单（下拉）'
+    for r in range(2, 14):
+        ws[f'{MONTH_LIST}{r}'] = MONTH_LIST_F
 
 
 # ═════════════════════════════ 规则推断（_流 项推/人号/提本 和自检格共用一套写法） ═════════════════════════════

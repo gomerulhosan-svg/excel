@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""A074 集团多账户资金台帐 · 账户子表（26 张）、备用子表（2 张）、账户查询（设计.md §6；v3.1 提速改动见 §15.1.7、§15.2、§15.4）。
+"""A074 集团多账户资金台帐 · 账户子表（24 张）、备用子表（2 张）、账户查询（设计.md §6；v3.1 提速改动见 §15.1.7、§15.2、§15.4）。
 
 版面（layout：SUB_* / QRY_*）：
   第 1 行标题（账户名、年份、原表名）；第 2 行说明；第 3 行 回首页｜账户（黄 D3）｜信息｜年份（黄 H3）｜状态（账户查询多 月份 J3）；
@@ -68,12 +68,12 @@ SUB_TIP = ('从【资金台帐】自动分出来的本账户流水，不用填�
 SPARE_TIP = ('备用子表：给新开的卡用。在 D3 选账户（下拉，也可以写账户名或别名），这张表就分出那个账户这一年的流水；'
              '表名别改（首页、核对表的链接按表名跳），用的是哪个账户看第 1 行标题。'
              '别的跟账户子表一样：不用填，改动录到【资金台帐】；H3 填年份（空＝管理年度）；余额按台帐上下顺序，右边月份表按日期。')
-QRY_TIP = ('任选一个账户查流水：D3 选账户（下拉，也可以写原表名），H3 年份（空＝管理年度），J3 月份（空＝全年；填 9 或 202609）。'
+QRY_TIP = ('任选一个账户查流水：D3 选账户（下拉，也可以写原表名），H3 年份（空＝管理年度），J3 月份（从下拉选，空＝全年）。'
            f'这里最多放 {N_QUERY:,} 笔，一年超过的请选月份。余额按台帐上下顺序，右边月份表按日期（收入、支出不含内部转账）。'
            '不用填，改动录到【资金台帐】。')
-# 复核 F10：月份格的出错提示跟输入提示、实际算法一致（1～12 按 H3 那一年）
-QRY_MONTH_PROMPT = '空＝全年。填 1～12（H3 那一年的这个月）、202609，或那个月的某一天'
-QRY_MONTH_ERROR = '填 1～12（H3 那一年的这个月）、202609 这样的年月，或那个月的某一天'
+# change 10/14：月份改下拉（月份_清单＝管理年度 1～12 月）；出错提示跟输入提示一个说法（复核 F10）
+QRY_MONTH_PROMPT = '从下拉选一个月份（基础资料①「管理年度」那一年的 1～12 月，选了年份就跟着月份走）；空着＝全年（H3 那一年）'
+QRY_MONTH_ERROR = '从下拉选一个月份，空着＝全年'
 
 
 def _x(f, z='$Z7'):
@@ -145,13 +145,6 @@ def _style(c, font, align, fmt):
     c.font, c.border, c.alignment = font, BD, align
     if fmt:
         c.number_format = fmt
-
-
-def _dv_error(ws, cell, text):
-    """common.selector 的月份出错提示写死了「管理年度的那个月」：改成本表自己的说法（复核 F10）"""
-    for dv in ws.data_validations.dataValidation:
-        if cell in str(dv.sqref).split():
-            dv.error = text
 
 
 def build_one(ws, kind, sub=None, orig=None, cap=40):
@@ -257,8 +250,7 @@ def build_one(ws, kind, sub=None, orig=None, cap=40):
     put(ws, SUB_KPI['信息'], pause(info), F_NOTE, align=ALW)
     selector(ws, SUB_KPI['年份标签'], '年份', sel_year, kind='year', prompt='空＝管理年度；填 2026、26 或某一天的日期都行')
     if qry:
-        selector(ws, QRY_KPI['月份标签'], '月份', QRY_SEL['月份'], kind='month', prompt=QRY_MONTH_PROMPT)
-        _dv_error(ws, QRY_SEL['月份'], QRY_MONTH_ERROR)
+        selector(ws, QRY_KPI['月份标签'], '月份', QRY_SEL['月份'], kind='month', prompt=QRY_MONTH_PROMPT, err=QRY_MONTH_ERROR)
     st_cell = QRY_KPI['状态'] if qry else SUB_KPI['状态']
     stop_txt = f'"（停用日 "&MONTH({stop})&"/"&DAY({stop})&"）"'
     over = (f'"※ 本年 "&{CNT}&" 笔，本表只放得下 {cap:,} 笔：后面的看【账户查询】选月份"' if not qry else

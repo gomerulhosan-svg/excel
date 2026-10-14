@@ -103,15 +103,12 @@ def w_pay(ws, r1, k):
 
 
 def w_man(ws, r1, k):
-    X = lambda col: mod_cell(SH_MAN, col, k)
-    mr = MOD_R0 + k - 1
+    X = lambda col: mod_cell(SH_MAN, col, k, r1)
     C = f'${J_VID}{r1}'
     G = mod(SH_MAN, MN_GRP)
     ws[f'{J_VID}{r1}'] = f'=IFERROR({X(MN_VID)},"")'
     ws[f'{J_DATE}{r1}'] = f'=IF({C}="","",{X(MN_VDATE)})'
-    ws[f'{J_MEMO}{r1}'] = (f'=IF({C}="","",IF({X(MN_MEMO)}<>"",{X(MN_MEMO)}&"",'
-                           f'IFERROR(INDEX({q(SH_MAN)}!${MN_MEMO}${MOD_R0}:{MN_MEMO}{mr},MATCH({X(MN_GKEY)},'
-                           f'{q(SH_MAN)}!${MN_GKEY}${MOD_R0}:{MN_GKEY}{mr},0))&"","")))')     # 同组第一行一定在本行或上面：只往上找
+    ws[f'{J_MEMO}{r1}'] = f'=IF({C}="","",{X(MN_VMEMO)})'      # wps：同组第一行的摘要在手工凭证 U 列算好
     ws[f'{J_CODE}{r1}'] = f'=IF({C}="","",{X(MN_CODE2)})'
     ws[f'{J_DR}{r1}'] = f'=IF({C}="",0,N({X(MN_DR)}))'
     ws[f'{J_CR}{r1}'] = f'=IF({C}="",0,N({X(MN_CR)}))'
@@ -297,7 +294,7 @@ def build_je(wb, ctx):
             for j in range(b['legs']):
                 r = r1 + j
                 ws[f'{J_NZ}{r}'] = (f'=IF(AND(${J_VID}{r}<>"",OR(ROUND(${J_DR}{r},2)<>0,ROUND(${J_CR}{r},2)<>0)),1,0)')
-                ws[f'{J_SEQ}{r}'] = f'=IF(${J_NZ}{r}=0,"",${J_START}${r1}+SUM(${J_NZ}${r1}:${J_NZ}{r}))'
+                ws[f'{J_SEQ}{r}'] = f'=IF(${J_NZ}{r}=0,"",${J_START}{r1}+SUM(${J_NZ}{r1}:${J_NZ}{r}))'      # wps：起点写相对行（不写往下撑的 $P$r1:$Pr）
                 ws[f'{J_KEY}{r}'] = f'=IF(${J_SEQ}{r}="","",${J_VID}{r}*1000+${J_SEQ}{r})'
                 ws[f'{J_NAME}{r}'] = je_name_formula(r)
                 je_tbkey(ws, r)
@@ -353,7 +350,7 @@ def build_vindex(wb, ctx):
             att = '""'
             if src == '流水':
                 # opt：直接引用流水第 k 行（F、J、K 三列 p1008 还会改）
-                X = lambda col: cash_cell(col, k)
+                X = lambda col: cash_cell(col, k, r)
                 ws[f'{VX_ON}{r}'] = f'=IFERROR(IF({X(K_VID)}={A},1,0),0)'
                 ws[f'{VX_DATE}{r}'] = f'=IF({Cc}=0,"",{X(K_DATE)})'
                 ws[f'{VX_LINES}{r}'] = (f'=IF({Cc}=0,0,IF({X(K_MERGE)}="",2,2*COUNTIF({cash(K_VID)},{A})))')
@@ -362,18 +359,18 @@ def build_vindex(wb, ctx):
             elif src in modcols:
                 sh, cv, cd, cl = modcols[src]
                 # opt：直接引用；分录条数只往下数（这张凭证的第一行在最上面）
-                ws[f'{VX_ON}{r}'] = f'=IFERROR(IF({mod_cell(sh, cv, k)}={A},1,0),0)'
-                ws[f'{VX_DATE}{r}'] = f'=IF({Cc}=0,"",{mod_cell(sh, cd, k)})'
-                ws[f'{VX_LINES}{r}'] = f'=IF({Cc}=0,0,SUMIF({mod_from(sh, cv, k)},{A},{mod_from(sh, cl, k)}))'
+                ws[f'{VX_ON}{r}'] = f'=IFERROR(IF({mod_cell(sh, cv, k, r)}={A},1,0),0)'
+                ws[f'{VX_DATE}{r}'] = f'=IF({Cc}=0,"",{mod_cell(sh, cd, k, r)})'
+                ws[f'{VX_LINES}{r}'] = f'=IF({Cc}=0,0,SUMIF({mod_from(sh, cv, k, r)},{A},{mod_from(sh, cl, k, r)}))'
                 jr = b['je0'] + (k - 1) * b['legs']
                 ws[f'{VX_MEMO}{r}'] = f'=IF({Cc}=0,"",{SH_JE}!{J_MEMO}{jr})'
             elif src == '手工':               # 第 k 行是这张凭证的第一行才有
                 R = mod(SH_MAN, MN_VID)
-                ws[f'{VX_ON}{r}'] = f'=IFERROR(IF({mod_cell(SH_MAN, MN_VID, k)}={A},1,0),0)'
-                ws[f'{VX_DATE}{r}'] = f'=IF({Cc}=0,"",{mod_cell(SH_MAN, MN_VDATE, k)})'
-                ws[f'{VX_LINES}{r}'] = f'=IF({Cc}=0,0,COUNTIF({mod_from(SH_MAN, MN_VID, k)},{A}))'
-                ws[f'{VX_MEMO}{r}'] = f'=IF({Cc}=0,"",{SH_JE}!{J_MEMO}{b["je0"] + k - 1})'
-                att = f'SUMIF({mod(SH_MAN, MN_GKEY)},{mod_cell(SH_MAN, MN_GKEY, k)},{mod(SH_MAN, MN_ATT)})'
+                ws[f'{VX_ON}{r}'] = f'=IFERROR(IF({mod_cell(SH_MAN, MN_VID, k, r)}={A},1,0),0)'
+                ws[f'{VX_DATE}{r}'] = f'=IF({Cc}=0,"",{mod_cell(SH_MAN, MN_VDATE, k, r)})'
+                ws[f'{VX_LINES}{r}'] = f'=IF({Cc}=0,0,COUNTIF({mod_from(SH_MAN, MN_VID, k, r)},{A}))'
+                ws[f'{VX_MEMO}{r}'] = f'=IF({Cc}=0,"",{mod_cell(SH_MAN, MN_VMEMO, k, r)})'      # wps：＝记账分录这一行的摘要
+                att = f'SUMIF({full_name(SH_MAN, MN_GKEY)},{mod_cell(SH_MAN, MN_GKEY, k, r)},{full_name(SH_MAN, MN_ATT)})'
             else:                                   # 月末结转：n = k
                 r0 = b['je0'] + (k - 1) * b['legs']
                 nz = je_nz(r0, r0 + b['legs'] - 1)

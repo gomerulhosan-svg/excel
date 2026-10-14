@@ -5,7 +5,8 @@
 这里做：
   · 【首页】【使用说明】整张从原件照搬——这两张用户（10/05）自己重排过版面，A075 又改了文字，
     生成脚本不再自己排（公式也照搬：首页 10 个 KPI 公式、导航链接）。
-  · 现金流水总表 T 列的批注照搬（A062 鑫盛那几笔的说明；A075 没有流水，这些批注已经对不上，见汇报）。
+  · （现金流水总表 T 列 57 条 A062 鑫盛的旧批注：wps 起不再照搬。）
+  · fix_texts：首页 / 使用说明里过时的文字（数据导入、五个账户、1.6 万行、L3 选科目、编号）；基础资料 J5:J7 对应科目先填建议值。
   · TEXTS：A075 改写过的标题、提示、表头文字（A062 是「苏姆」口径，A075 改成「美元」「1 美元 = X 外币」）。
     右边注释是 A062 / 生成脚本原来的文字。改字就改这里。
   · 用户在 WPS 里调过的「样子」（从原件比出来的，写死在下面几个表里）：标签颜色（用户 10/05 按设置 / 录入 / 自动 / 报表 / 校验分了五种颜色）、
@@ -151,9 +152,10 @@ CASH_HDR_FILL = {**{c: 'FFFFF2CC' for c in 'ABEGHIJPQR'}, **{c: 'FFF2F2F2' for c
 def apply(wb, ctx):
     ref = ctx['ref']
     log = []
-    for name in (SH_HOME, SH_HELP):
-        ref_a075.copy_sheet(ref, wb, name)
-    log.append('首页、使用说明从原件整张照搬')
+    ref_a075.copy_sheet(ref, wb, SH_HOME, drop_rows=(HOME_DROP_ROW,))
+    ref_a075.copy_sheet(ref, wb, SH_HELP)
+    log.append(f'首页、使用说明从原件整张照搬（首页第 {HOME_DROP_ROW} 行【数据导入】去掉，下面的行往上挪）')
+    log += fix_texts(wb)
     for (sh, cell), v in TEXTS.items():
         c = wb[sh][cell]
         assert c.value is None or isinstance(c.value, str), (sh, cell, c.value)     # 只改文字格，不碰公式
@@ -197,6 +199,54 @@ def apply(wb, ctx):
         wb[SH_CASH][f'{col}{CASH_HDR}'].fill = PatternFill('solid', fgColor=rgb)
     log.append(f'标签颜色 {len(TAB_COLORS)} 张、列宽 {sum(map(len, COL_WIDTHS.values()))} 列、行高 {sum(map(len, ROW_HEIGHTS.values()))} 行、'
                f'打印设置 {len(PAGE_SETUP)} 张、显示比例 {len(ZOOM)} 张、筛选范围 {len(FILTERS)} 张照原件')
-    n = ref_a075.copy_comments(ref, wb, SH_CASH, K_OVR)
-    log.append(f'现金流水总表 {K_OVR} 列批注 {n} 条照搬')
+    # wps（repro 第四节）：现金流水总表 T 列 57 条 A062 鑫盛的旧批注不再照搬（A075 没有流水，那些批注对不上了）
+    return log
+
+
+# ───── wps：挡使用的文字和默认值（repro 第四节、optchk 第 4 节） ─────
+HOME_DROP_ROW = 22          # 首页第 22 行：【数据导入】（A075 没有这张表，链接是断的）
+ACC_CODES = [(5, '人民币', '100209'), (6, '美元', '100205'), (7, 'FBC', '100210')]     # 基础资料 J5:J7 对应科目（科目表里用户已建好的结算账户）
+J_NOTE = ('【基础资料】三个资金账户的「对应科目」已先填好：人民币 100209、美元 100205、FBC 100210（都是银行结算账户）；'
+          '如果人民币、美元其实是现金，改成 100106 / 100105。')
+HOME_EDIT = [   # (原文片段, 改成)，在首页里找唯一的一格替换
+    ('平时只录【现金流水总表】和各业务表，外部流水先用【数据导入】对齐；凭证、账、报表全自动。',
+     '平时只录【现金流水总表】和各业务表；凭证、账、报表全自动。' + J_NOTE),
+    ('★ 每一笔收付款（五个账户合一张表），自动出凭证', '★ 每一笔收付款（三个账户合一张表），自动出凭证'),
+    ('所有凭证的分录总表（1.6 万行）', '所有凭证的分录总表（1.8 万行）'),
+    ('选一个科目看每一笔（在表里 L3 选科目）', '选一个科目看每一笔（在表里 B3 选科目）'),
+]
+HELP_EDIT = [
+    ('各账户对应会计科目在【基础资料·资金账户】设置。',
+     '各账户对应会计科目在【基础资料·资金账户】设置（已先填：人民币 100209、美元 100205、FBC 100210；'
+     '如果人民币、美元其实是现金，改成 100106 / 100105）。'),
+    ('不要插行、删行。', '不要插入、删除整行（删一笔就选中那一行的内容按 Delete 清空；插、删了整行【数据校验】第 41 项会报 ✗，按 Ctrl+Z 撤回）。'),
+]
+
+
+def _edit_unique(ws, old, new):
+    hit = [c for row in ws.iter_rows() for c in row if isinstance(c.value, str) and old in c.value]
+    assert len(hit) == 1, (ws.title, old, [c.coordinate for c in hit])
+    hit[0].value = hit[0].value.replace(old, new)
+    return hit[0].coordinate
+
+
+def fix_texts(wb):
+    log = []
+    hm, hp = wb[SH_HOME], wb[SH_HELP]
+    cells = [_edit_unique(hm, a, b) for a, b in HOME_EDIT]
+    hm.row_dimensions[2].height = 56
+    log.append(f'首页文字 {len(cells)} 处：去掉【数据导入】、五个账户→三个、1.6 万行→1.8 万行、L3→B3 选科目、对应科目提示（{",".join(cells)}）')
+    cells = [_edit_unique(hp, a, b) for a, b in HELP_EDIT]
+    k = 0
+    for r in range(1, hp.max_row + 1):          # 使用说明编号重排（原件 1～5 以后跳到 9）
+        v = hp[f'A{r}'].value
+        if isinstance(v, int):
+            k += 1
+            hp[f'A{r}'].value = k
+    log.append(f'使用说明：对应科目提示、插删整行提示（{",".join(cells)}），编号重排成 1～{k}')
+    b = wb[SH_BASE]
+    for r, nm, code in ACC_CODES:
+        assert b[f'{A_NAME}{r}'].value == nm and b[f'{A_CODE}{r}'].value is None, (r, b[f'{A_NAME}{r}'].value, b[f'{A_CODE}{r}'].value)
+        b[f'{A_CODE}{r}'] = code
+    log.append('基础资料 J5:J7 对应科目先填：人民币 100209、美元 100205、FBC 100210（不填一张凭证都出不来）')
     return log

@@ -28,6 +28,7 @@ import s_base, s_cash, s_mods, s_mend, s_je, s_ledger, s_reports, s_check
 import p1008
 import p_a075
 import p_opt
+import p_wps
 
 OUT = os.path.join(HERE, '..', 'A075_矿业美元财务账套（提速版）.xlsx')
 
@@ -45,6 +46,7 @@ def prepare(ref):
 def build(out=OUT, ref_path=ref_a075.REF, log=print, tweak=None):
     """tweak(wb, ctx)：存盘前再改一下（做场景测试用，比如填几笔流水）"""
     t0 = time.time()
+    SEG_NAMES.clear()
     ref = ref_a075.load(ref_path)
     log(f'  读原件 {time.time() - t0:.0f} 秒')
     ctx = prepare(ref)
@@ -91,6 +93,8 @@ def build(out=OUT, ref_path=ref_a075.REF, log=print, tweak=None):
         log('   · A075 ' + line)
     for line in p_opt.apply(wb, ctx):
         log('   · 提速 ' + line)
+    for line in p_wps.apply(wb):
+        log('   · WPS ' + line)
     wb[SH_AUX].sheet_state = 'hidden'
     wb[SH_VIDX].sheet_state = 'hidden'
     wb[SH_CLOSE].sheet_state = 'hidden'

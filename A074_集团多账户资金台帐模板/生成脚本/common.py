@@ -203,19 +203,20 @@ def cf_guess(ws, rng, formula):
     ws.conditional_formatting.add(rng, FormulaRule(formula=[formula], font=Font(name=YH, italic=True, color=RGB_GUESS_FONT)))
 
 
+MONTH_DV = '月份_清单'                 # change 10/14：月份选择格的下拉（layout.DV_NAMES）
 _SEL_KIND = {  # 选择格的有效性（stop：乱填填不进去；普通粘贴会冲掉有效性，公式那边还有 dsel/yr_eff 兜底）
     'date': ('日期', '要填真正的日期，像 2026/10/1（2000～2099 年）。「2026.10.1」是文字，填不进去', FMT_DATE),
     'year': ('年份', '填年份（如 2026，也可以填 26）或某一天的日期', FMT_YEAR),
-    'month': ('月份', '填 1～12、202609 这样的年月，或那个月的某一天', FMT_MONTH_SEL),   # 1～12 是哪一年的月，各表不一样：出错提示照各表的输入提示说（selector）
+    'month': ('月份', '从下拉选一个月份，空着＝截止月', FMT_MONTH_SEL),   # change 10/14：下拉（月份_清单）；空着是哪个月各表不一样，各表传 err
 }
 
 
 def selector(ws, cell_lbl, lbl, cell_in, value=None, dv_formula=None, fmt=None, prompt=None, kind=None, err=None):
     """报表顶上的选择格：标签 ＋ 黄底红字加粗的输入格（保护时不锁）。
-       kind：'date'（日期 stop）/'year'（年份或日期 stop，格式「2026年」）/'month'（1～12、202609 或日期 stop）/None（下拉 dv_formula 或不限）。
+       kind：'date'（日期 stop）/'year'（年份或日期 stop，格式「2026年」）/'month'（change 10/14：下拉 月份_清单＝管理年度 1～12 月，
+       选出来是文字「2026年1月」，stop；空着＝各表原来的默认月）/None（下拉 dv_formula 或不限）。
        生效值的写法用 layout.dsel / yr_eff / ym_eff；选择格旁边要显示「按 … 算」（看不懂 →「※ 看不懂，按 … 算」）。
-       err＝出错提示（不给：date/year 用 _SEL_KIND；month 有输入提示就照输入提示说——复核 F10：「1～12」按的是旁边年份格或
-       ② 那天的年份，各表不一样，不能统一写「管理年度」）"""
+       err＝出错提示（不给：用 _SEL_KIND；month 各表传「从下拉选一个月份，空着＝<本表空着的意思>」）"""
     put(ws, cell_lbl, lbl, F_KPI_L, fill('FFD9E1F2'), align=AC)
     c = cell_in.replace('$', '')
     if kind in _SEL_KIND and fmt is None:
@@ -228,8 +229,7 @@ def selector(ws, cell_lbl, lbl, cell_in, value=None, dv_formula=None, fmt=None, 
         dv = DataValidation(type='custom', allow_blank=True,
                             formula1=f'AND(ISNUMBER({c}),OR(AND({c}>=2000,{c}<=2100),AND({c}>=36526,{c}<=73050),AND({c}>=0,{c}<=99)))')
     elif kind == 'month':
-        dv = DataValidation(type='custom', allow_blank=True,
-                            formula1=f'AND(ISNUMBER({c}),OR(AND({c}>=1,{c}<=12),AND({c}>=200001,{c}<=210012),AND({c}>=36526,{c}<=73050)))')
+        dv = DataValidation(type='list', formula1=MONTH_DV, allow_blank=True)     # change 10/14：月份下拉（名称，定长 12 格）
     elif dv_formula:
         dv = DataValidation(type='list', formula1=str(dv_formula).lstrip('='), allow_blank=True, showErrorMessage=True,
                             errorStyle='warning', errorTitle='不在清单里', error='不在清单里：点「是」照样填（会按认不出处理）')
@@ -238,10 +238,7 @@ def selector(ws, cell_lbl, lbl, cell_in, value=None, dv_formula=None, fmt=None, 
     if dv is not None:
         if kind in _SEL_KIND:
             dv.showErrorMessage, dv.errorStyle = True, 'stop'
-            e = err or _SEL_KIND[kind][1]
-            if err is None and kind == 'month' and prompt:
-                e = ('看不懂这个月份。' + prompt)[:255]
-            dv.errorTitle, dv.error = _SEL_KIND[kind][0], e
+            dv.errorTitle, dv.error = _SEL_KIND[kind][0], (err or _SEL_KIND[kind][1])[:255]
         if prompt:
             dv.promptTitle, dv.prompt, dv.showInputMessage = '提示', prompt, True
         ws.add_data_validation(dv)

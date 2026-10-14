@@ -43,13 +43,21 @@ def _group_cols(ws, r, r1, valid, key_col, legs_col, pre_col, vid_col, key_expr,
     前面几行的分录条数 → 这一行的分录在凭证里从第几条接着排；凭证ID = 来源×100000 + 本组第一行的位置。"""
     ws[f'{key_col}{r}'] = f'=IF({valid}{r}=0,"",{key_expr})'
     ws[f'{legs_col}{r}'] = f'=IF({valid}{r}=0,0,{legs_expr})'
-    ws[f'{pre_col}{r}'] = (f'=IF({valid}{r}=0,0,SUMIF(${key_col}${MOD_HDR}:{key_col}{r - 1},{key_col}{r},'
-                           f'${legs_col}${MOD_HDR}:{legs_col}{r - 1}))')
-    # opt：同组第一行一定在本行或上面——只往上找（原来查整列，改一行整张表的凭证ID全跟着重算）
-    ws[f'{vid_col}{r}'] = (f'=IF({valid}{r}=0,"",{SRC[src] * 100000}+MATCH({key_col}{r},${key_col}${MOD_R0}:{key_col}{r},0))')
+    sh = ws.title
+    # wps：前面几行（本行以上）＝前面各段＋本段到上一行（不写往下撑的 $W$3:W上一行）
+    ws[f'{pre_col}{r}'] = f'=IF({valid}{r}=0,0,{above_terms(sh, "SUMIF", r, [(key_col, f"{key_col}{r}"), (legs_col, None)])})'
+    # opt：同组第一行一定在本行或上面——只往上找；wps：位置＝槽位（SEG 槽位列，插删行时跟着段走）
+    ws[f'{SEG[sh][3]}{r}'] = slot_formula(sh, r)
+    ws[f'{vid_col}{r}'] = (f'=IF({valid}{r}=0,"",{SRC[src] * 100000}+{first_val(sh, f"{key_col}{r}", key_col, SEG[sh][3], r)})')
 
 
 def _group_style(ws, r0, r1, cols):
+    if ws.title in SEG and SEG[ws.title][3]:          # wps：槽位列、锚列（空）
+        sl, an = SEG[ws.title][3:5]
+        ws[f'{sl}{MOD_HDR}'] = '槽位'
+        ws[f'{an}{MOD_HDR}'] = '（空）'
+        ws[f'{sl}{MOD_HDR}'].font = ws[f'{an}{MOD_HDR}'].font = F_NOTE
+        cols = list(cols) + [sl, an]
     for r in range(r0, r1 + 1):
         for c in cols:
             ws[f'{c}{r}'].font = F_NOTE
@@ -69,14 +77,14 @@ def _same_month(dcol, r, head):
     return f'(YEAR({dcol}{r})*100+MONTH({dcol}{r})=YEAR({head})*100+MONTH({head}))'
 
 
-def _head(col_date, col_no, r1, r):
-    """同一个单据号的第一行的日期（opt：第一行一定在本行或上面，只往上找）"""
-    return f'INDEX(${col_date}${MOD_R0}:{col_date}{r},MATCH({col_no}{r},${col_no}${MOD_R0}:{col_no}{r},0))'
+def _head(sh, col_date, col_no, r):
+    """同一个单据号的第一行的日期（opt：第一行一定在本行或上面，只往上找；wps：前面各段＋本段）"""
+    return first_val(sh, f'{col_no}{r}', col_no, col_date, r)
 
 
-def _ok_group(col_date, col_no, r1, r):
+def _ok_group(sh, col_date, col_no, r):
     """没填单据号，或者跟同单据号第一行同一个月（✗ 的行不记账）"""
-    return f'IF({col_no}{r}="",TRUE,IFERROR({_same_month(col_date, r, _head(col_date, col_no, r1, r))},FALSE))'
+    return f'IF({col_no}{r}="",TRUE,IFERROR({_same_month(col_date, r, _head(sh, col_date, col_no, r))},FALSE))'
 
 
 def _in_range(dcol, r):
@@ -118,12 +126,12 @@ def build_buy(wb, ctx):
         extra_ok = f'AND(OR({B_FRT}{r}="",ISNUMBER({B_FRT}{r})),OR({B_VAT}{r}="",ISNUMBER({B_VAT}{r})))'
         ws[f'{B_VALID}{r}'] = (f'=IF(AND({_in_range(B_DATE, r)},N({B_COST}{r})+N({B_VAT}{r})<>0,{B_ACC}{r}<>"",'
                                f'OR({goods_ok},{addon_ok}),{extra_ok},'
-                               f'ISNUMBER(MATCH({B_ACC}{r},{CODES},0)),{_ok_group(B_DATE, B_NO, BUY_R1, r)}),1,0)')
+                               f'ISNUMBER(MATCH({B_ACC}{r},{CODES},0)),{_ok_group(SH_BUY, B_DATE, B_NO, r)}),1,0)')
         _group_cols(ws, r, BUY_R1, B_VALID, B_GKEY, B_LEGS, B_GPRE, B_VID,
                     f'IF({B_NO}{r}<>"","D"&{B_NO}{r},"#"&ROW())',
                     f'(ROUND(N({B_COST}{r}),2)<>0)+(ROUND(N({B_VAT}{r}),2)<>0)+(ROUND(N({B_TOT}{r}),2)<>0)'
                     f'+(ROUND(N({B_FRT}{r}),2)<>0)', '采购')
-        head = _head(B_DATE, B_NO, BUY_R1, r)
+        head = _head(SH_BUY, B_DATE, B_NO, r)
         ws[f'{B_CHK}{r}'] = _chain(blank, [
             (f'NOT(ISNUMBER({B_DATE}{r}))', '✗ 日期没填或不是真日期'), (f'{B_DATE}{r}<起始月份', '✗ 日期早于建账起始月份'),
             (f'{B_MAT}{r}=""', '✗ 没选物料'), (f'ISNA(MATCH({B_MAT}{r},{MATN},0))', '✗ 物料不在【基础资料·物料档案】里'),
@@ -192,10 +200,10 @@ def build_issue(wb, ctx):
         stock = f'IFERROR(INDEX({MAT(M_STOCK)},MATCH({I_MAT}{r},{MATN},0)),"")'
         ws[f'{I_VALID}{r}'] = (f'=IF(AND({_in_range(I_DATE, r)},N({I_AMT}{r})<>0,{I_DR}{r}<>"",{I_CR}{r}<>"",'
                                f'ISNUMBER(MATCH({I_DR}{r},{CODES},0)),ISNUMBER(MATCH({I_CR}{r},{CODES},0)),{stock}="是",'
-                               f'{_ok_group(I_DATE, I_NO, ISS_R1, r)}),1,0)')
+                               f'{_ok_group(SH_ISS, I_DATE, I_NO, r)}),1,0)')
         _group_cols(ws, r, ISS_R1, I_VALID, I_GKEY, I_LEGS, I_GPRE, I_VID,
                     f'IF({I_NO}{r}<>"","D"&{I_NO}{r},"#"&ROW())', '2', '领用')
-        head = _head(I_DATE, I_NO, ISS_R1, r)
+        head = _head(SH_ISS, I_DATE, I_NO, r)
         ws[f'{I_CHK}{r}'] = _chain(blank, [
             (f'NOT(ISNUMBER({I_DATE}{r}))', '✗ 日期没填或不是真日期'), (f'{I_DATE}{r}<起始月份', '✗ 日期早于建账起始月份'),
             (f'{month_no(f"{I_DATE}{r}")}>{N_MONTHS}', '✗ 超出模板月份范围'),
@@ -277,11 +285,11 @@ def build_sale(wb, ctx):
         ws[f'{S_UC}{r}'] = f'=IF(NOT(ISNUMBER({S_DATE}{r})),"",IFERROR({ore_unit_cost(month_no(f"{S_DATE}{r}"))},0))'
         ws[f'{S_COGS}{r}'] = f'=IF(OR({S_TON}{r}="",{S_UC}{r}=""),"",ROUND({S_TON}{r}*{S_UC}{r},2))'
         ws[f'{S_VALID}{r}'] = (f'=IF(AND({_in_range(S_DATE, r)},N({S_TOT}{r})<>0,'
-                               f'{_ok_group(S_DATE, S_NO, SALE_R1, r)}),1,0)')
+                               f'{_ok_group(SH_SALE, S_DATE, S_NO, r)}),1,0)')
         _group_cols(ws, r, SALE_R1, S_VALID, S_GKEY, S_LEGS, S_GPRE, S_VID,
                     f'IF({S_NO}{r}<>"","D"&{S_NO}{r},"#"&ROW())',
                     f'(ROUND(N({S_NET}{r}),2)<>0)+(ROUND(N({S_TAX}{r}),2)<>0)+(ROUND(N({S_TOT}{r}),2)<>0)', '销售')
-        head = _head(S_DATE, S_NO, SALE_R1, r)
+        head = _head(SH_SALE, S_DATE, S_NO, r)
         ws[f'{S_CHK}{r}'] = _chain(blank, [
             (f'NOT(ISNUMBER({S_DATE}{r}))', '✗ 日期没填或不是真日期'), (f'{S_DATE}{r}<起始月份', '✗ 日期早于建账起始月份'),
             (f'{month_no(f"{S_DATE}{r}")}>{N_MONTHS}', '✗ 超出模板月份范围'),
@@ -452,11 +460,15 @@ def build_man(wb, ctx):
         diff = f'ROUND(SUMIF({GK},{MN_GKEY}{r},{DRr})-SUMIF({GK},{MN_GKEY}{r},{CRr}),2)'
         ws[f'{MN_OK}{r}'] = (f'=IF(OR({MN_HAS}{r}=0,{MN_BAD}{r}=1,{MN_GKEY}{r}=""),0,'
                              f'IF(AND(COUNTIFS({GK},{MN_GKEY}{r},{rg(MN_BAD)},1)=0,{diff}=0),1,0))')
-        ws[f'{MN_SEQ}{r}'] = (f'=IF({MN_OK}{r}=0,"",COUNTIFS(${MN_GKEY}${MOD_R0}:{MN_GKEY}{r},{MN_GKEY}{r},'
-                              f'${MN_OK}${MOD_R0}:{MN_OK}{r},1))')
+        ws[f'{MN_SEQ}{r}'] = f'=IF({MN_OK}{r}=0,"",{upto_terms(SH_MAN, "COUNTIFS", r, [(MN_GKEY, f"{MN_GKEY}{r}"), (MN_OK, "1")])})'
         # 凭证ID ＝ 来源×100000 ＋ 这张凭证第一条能记账的分录所在的位置
         ws[f'{MN_KEY}{r}'] = f'=IF({MN_OK}{r}=0,"",{MN_GKEY}{r})'
-        ws[f'{MN_VID}{r}'] = f'=IF({MN_OK}{r}=0,"",{SRC["手工"] * 100000}+MATCH({MN_GKEY}{r},${MN_KEY}${MOD_R0}:{MN_KEY}{r},0))'   # opt：只往上找
+        ws[f'{SEG[SH_MAN][3]}{r}'] = slot_formula(SH_MAN, r)          # wps：槽位
+        ws[f'{MN_VID}{r}'] = (f'=IF({MN_OK}{r}=0,"",{SRC["手工"] * 100000}+'
+                              f'{first_val(SH_MAN, f"{MN_GKEY}{r}", MN_KEY, SEG[SH_MAN][3], r)})')   # opt：只往上找；wps：位置＝槽位
+        # wps：凭证摘要（记账分录、凭证索引取它）＝本行写了摘要就用本行的，没写就用同组第一行的（只往上找）
+        ws[f'{MN_VMEMO}{r}'] = (f'=IF({MN_OK}{r}=0,"",IF({MN_MEMO}{r}<>"",{MN_MEMO}{r}&"",'
+                                f'IFERROR({first_val(SH_MAN, f"{MN_GKEY}{r}", MN_GKEY, MN_MEMO, r)}&"","")))')
         blank = f'AND({MN_GRP}{r}="",{MN_DATE}{r}="",{MN_CODE}{r}="",{MN_DR}{r}="",{MN_CR}{r}="")'
         ws[f'{MN_CHK}{r}'] = _chain(blank, [
             (f'AND({MN_CODE}{r}="",{MN_DR}{r}="",{MN_CR}{r}="")', ''),        # 只写了组号/日期/摘要的抬头行，不算错
@@ -476,7 +488,8 @@ def build_man(wb, ctx):
                aligns={MN_MEMO: AL, MN_CODE: AL, MN_NAME: AL, MN_CHK: AL, MN_DR: AR_, MN_CR: AR_})
     for r in range(MOD_R0, MAN_R1 + 1):
         ws[f'{MN_VDATE}{r}'].number_format = DATE
-    _group_style(ws, MOD_R0, MAN_R1, [MN_SEQ, MN_CODE2, MN_HAS, MN_VDATE, MN_BAD, MN_OK, MN_VID, MN_KEY, MN_GKEY])
+    ws[f'{MN_VMEMO}{MOD_HDR}'] = '凭证摘要'
+    _group_style(ws, MOD_R0, MAN_R1, [MN_SEQ, MN_CODE2, MN_HAS, MN_VDATE, MN_BAD, MN_OK, MN_VID, MN_KEY, MN_GKEY, MN_VMEMO])
     _chk_fmt(ws, MN_CHK, MOD_R0, MAN_R1)
     add_date_dv(ws, f'{MN_DATE}{MOD_R0}:{MN_DATE}{MAN_R1}')
     add_list_dv(ws, f'{MN_CODE}{MOD_R0}:{MN_CODE}{MAN_R1}', '=科目选择', '从下拉选，或直接填编码', stop=False)

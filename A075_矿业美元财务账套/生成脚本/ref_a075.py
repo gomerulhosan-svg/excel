@@ -96,18 +96,23 @@ def read(ref):
 
 
 # ───────────────────────── 整张照搬（首页、使用说明：用户自己重排过的版面） ─────────────────────────
-def copy_sheet(ref, wb, name, index=None):
+def copy_sheet(ref, wb, name, index=None, drop_rows=()):
+    """整张照搬；drop_rows：不要的行（下面的行往上挪，合并格、行高跟着挪；有效性、条件格式只能在这些行上面）"""
     src = ref[name]
     if name in wb.sheetnames:
         old = wb[name]
         index = wb.sheetnames.index(name) if index is None else index
         wb.remove(old)
     ws = wb.create_sheet(name, index)
+    drop = sorted(drop_rows)
+    nr = lambda r: r - sum(1 for x in drop if x < r)
     for row in src.iter_rows():
         for c in row:
             if c.value is None and not c.has_style:
                 continue
-            d = ws.cell(row=c.row, column=c.column, value=c.value)
+            if c.row in drop:
+                continue
+            d = ws.cell(row=nr(c.row), column=c.column, value=c.value)
             if c.has_style:
                 d.font, d.fill, d.border = copy(c.font), copy(c.fill), copy(c.border)
                 d.alignment, d.protection = copy(c.alignment), copy(c.protection)
@@ -116,7 +121,10 @@ def copy_sheet(ref, wb, name, index=None):
                 d.hyperlink = copy(c.hyperlink)
                 d.hyperlink.ref = d.coordinate
     for mr in src.merged_cells.ranges:
-        ws.merge_cells(str(mr))
+        if any(mr.min_row <= x <= mr.max_row for x in drop):
+            assert mr.min_row == mr.max_row, (name, str(mr))
+            continue
+        ws.merge_cells(start_row=nr(mr.min_row), start_column=mr.min_col, end_row=nr(mr.max_row), end_column=mr.max_col)
     for k, cd in src.column_dimensions.items():
         n = ws.column_dimensions[k]
         n.width, n.hidden = cd.width, cd.hidden
@@ -124,10 +132,16 @@ def copy_sheet(ref, wb, name, index=None):
         if cd.outlineLevel:
             n.outlineLevel = cd.outlineLevel
     for k, rd in src.row_dimensions.items():
-        n = ws.row_dimensions[k]
+        if k in drop:
+            continue
+        n = ws.row_dimensions[nr(k)]
         if rd.height is not None:
             n.height = rd.height
         n.hidden = rd.hidden
+    if drop:
+        lo = min(drop)
+        assert all(r.max_row < lo for dv in src.data_validations.dataValidation for r in dv.sqref.ranges), name
+        assert all(r.max_row < lo for cf in src.conditional_formatting for r in cf.sqref.ranges), name
     for dv in src.data_validations.dataValidation:
         nd = DataValidation(type=dv.type, operator=dv.operator, formula1=dv.formula1, formula2=dv.formula2,
                             allow_blank=dv.allow_blank, showErrorMessage=dv.showErrorMessage,

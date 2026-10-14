@@ -16,6 +16,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import build
+import p_wps
 from share import share
 from inject_cache import inject
 from lo_recalc import recalc, count, unhide_cols
@@ -35,6 +36,9 @@ def main(out=OUT, keep=False, log=print):
     s = share(out)
     nf, _, _ = count(out)
     log(f'① 生成并压共享公式：公式 {nf} 个（共享公式 {sum(s.values())} 格），{os.path.getsize(out) / 1e6:.1f} MB，{time.time() - t0:.0f} 秒')
+    wps_ok, _, _ = p_wps.report(out, log=log)          # WPS 体检：成列的公式里不准有「表名!」、往下撑的区域
+    if not wps_ok:
+        return 3
     os.makedirs(CALC, exist_ok=True)
     calc = os.path.join(CALC, os.path.splitext(os.path.basename(out))[0] + '_算数.xlsx')
     shutil.copy(out, calc)

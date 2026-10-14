@@ -38,6 +38,7 @@ from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.pagebreak import Break, RowBreak
 
 from common import (CASH_R0, CASH_R1, CASH_SLOTS, JE_R0, VX_R0, N_MONTHS, BASE_NAME, SH_CLOSE, cash_cell, cash_from, N_CASH,
+                    SH_CASH, upto_terms, first_val,
                     K_DATE, K_ACC, K_CUR, K_MEMO, K_NET, K_UZS, K_NOTE, K_CP, K_PRJ, K_OVR, K_MERGE, K_ATT,
                     K_CCODE, K_DR, K_CR, K_VALID, K_CFI, K_GSEQ, K_GHEAD, K_VID, K_VMEMO,
                     K_MKEY, K_GCNT, K_GSUM, K_GMEMO, VP_PAGES)
@@ -107,7 +108,7 @@ def expect(ws, ref, want, bad):
         bad.append(f'{ws.title}!{ref}\n   有：{got}\n   该：{want}')
 
 
-def cx(col, row):        # 记账分录第 row 行取现金流水某列（opt：直接引用流水第 k 行，原来 INDEX(整段,$K row)）
+def cx(col, row):        # 记账分录第 row 行取现金流水某列（wps：INDEX(流水_列_段s,段内第几行)；opt 时是直接引用，原来 INDEX(整段,$K row)）
     return cash_cell(col, (row - JE0) // 2 + 1)
 
 
@@ -179,11 +180,11 @@ def step_merge(wb, log):
         cs[f'{KK}{r}'].value = (f'=IF(${AE}{r}=0,"",IF(${X}{r}<>"","X|"&${X}{r},INT($A{r})&"|"&$B{r}&"|"&IF(${O}{r}>0,"收","支")))')
         cs[f'{AG}{r}'].value = f'=IF(${KK}{r}="","",SUBSTITUTE(SUBSTITUTE(SUBSTITUTE(${KK}{r},"~","~~"),"*","~*"),"?","~?"))'
         # opt：组内第几笔＝从本组第一笔（凭证ID 指的那一行）数到本行，不再从第 6 行数起
-        cs[f'{AF}{r}'].value = f'=IF(${AE}{r}=0,"",COUNTIF(INDEX(${KK}${C0}:${KK}{r},${AH}{r}-100000):${KK}{r},${AG}{r}))'
+        cs[f'{AF}{r}'].value = f'=IF(${AE}{r}=0,"",{upto_terms(SH_CASH, "COUNTIF", r, [(KK, f"${AG}{r}")])})'
         # opt：凭证ID 只往上找（同组第一笔一定在本行或上面）；组笔数 / 组合计 / 合并行摘要只在组的第一笔算，只往下数（同组其他笔都在下面）
         up = lambda c: f'${c}${C0}:${c}{r}'
         dn = lambda c: f'${c}{r}:INDEX(${c}${C0}:${c}${C1},流水末行)'      # 只数到有录入的最后一行
-        cs[f'{AH}{r}'].value = f'=IF(${AE}{r}=0,"",100000+MATCH(${AG}{r},{up(KK)},0))'
+        cs[f'{AH}{r}'].value = f'=IF(${AE}{r}=0,"",100000+{first_val(SH_CASH, f"${AG}{r}", KK, "AP", r)})'     # wps：位置＝槽位（AP）
         cs[f'{KL}{r}'].value = f'=IF(${AF}{r}=1,COUNTIF({dn(KK)},${AG}{r}),"")'
         cs[f'{KM}{r}'].value = f'=IF(AND(${AF}{r}=1,${X}{r}=""),ABS(SUMIF({dn(KK)},${AG}{r},{dn(O)})),"")'
         cs[f'{KN}{r}'].value = (f'=IF(OR(${AF}{r}<>1,${X}{r}<>""),"",IF(${KL}{r}=1,${AJ}{r},$B{r}&" "&MONTH($A{r})&"月"&DAY($A{r})&"日"'
@@ -206,14 +207,14 @@ def step_merge(wb, log):
         expect(je, f'G{a}', 0, bad)
         expect(je, f'H{a}', f'=IF($L{a}="","",{cx(K_CP, a)}&"")', bad)
         expect(je, f'I{a}', f'=IF($L{a}="","",{cx(K_PRJ, a)}&"")', bad)
-        expect(je, f'M{a}', f'=IF($P{a}=0,"",$Q${a}+SUM($P${a}:$P{a}))', bad)
+        expect(je, f'M{a}', f'=IF($P{a}=0,"",$Q{a}+SUM($P{a}:$P{a}))', bad)
         expect(je, f'Q{a}', f'=IF($L{a}="",0,(IF({cx(AF, a)}="",1,{cx(AF, a)})-1)*2)', bad)
         expect(je, f'C{b}', f'=$C{a}', bad)
         expect(je, f'F{b}', 0, bad)
         expect(je, f'G{b}', f'=$F{a}', bad)
         expect(je, f'H{b}', f'=$H{a}', bad)
         expect(je, f'I{b}', f'=$I{a}', bad)
-        expect(je, f'M{b}', f'=IF($P{b}=0,"",$Q${a}+SUM($P${a}:$P{b}))', bad)
+        expect(je, f'M{b}', f'=IF($P{b}=0,"",$Q{a}+SUM($P{a}:$P{b}))', bad)
         if bad:
             break
     assert not bad, '\n'.join(bad[:5])
@@ -241,7 +242,7 @@ def step_merge(wb, log):
     log.append('记账分录 流水块：收款借方 / 付款贷方 的本账户并成合计一行，条号按组重排')
 
     ix = wb[IX]
-    ci = cash_cell                     # opt：直接引用流水第 k 行
+    ci = lambda col, k: cash_cell(col, k, k + 3)     # wps：段名称，_凭证索引第 r 行＝第 k 笔（ROW() 写法）
     bad = []
     for r in range(4, 4 + FLOW_K):
         k = r - 3
@@ -257,7 +258,7 @@ def step_merge(wb, log):
         ix[f'F{r}'].value = f'=IF($C{r}=0,0,IF({ci(X, k)}="",N({ci(KL, k)})+1,2*N({ci(KL, k)})))'
         ix[f'J{r}'].value = f'=IF($C{r}=0,"",IF(AND({ci(X, k)}="",{ci(K_DR, k)}>0),{ci(KN, k)},{ci(AJ, k)}))'
         # opt：附单据按组合计，只往下数（这张凭证的第一笔就是第 k 行）
-        ix[f'K{r}'].value = (f'=IF($C{r}=0,"",SUMIF({cash_from(AH, k)},$A{r},{cash_from(K_ATT, k)}))' if k <= N_CASH
+        ix[f'K{r}'].value = (f'=IF($C{r}=0,"",SUMIF({cash_from(AH, k, r)},$A{r},{cash_from(K_ATT, k, r)}))' if k <= N_CASH
                              else f'=IF($C{r}=0,"","")')
     log.append('_凭证索引 流水凭证：条数＝笔数＋1、摘要取合并行、附单据按组合计')
 
@@ -404,7 +405,7 @@ def step_close(wb, log):
             cp(je[f'P{r}'], je[f'{col}{r}'])
         je[f'H{r}'] = '=""'
         je[f'I{r}'] = '=""'
-        je[f'M{r}'] = f'=IF($P{r}=0,"",$Q${b}+SUM($P${b}:$P{r}))'
+        je[f'M{r}'] = f'=IF($P{r}=0,"",$Q{b}+SUM($P{b}:$P{r}))'      # wps：起点写相对行（不写往下撑的区域）
         je[f'N{r}'] = f'=IF($M{r}="","",$L{r}*1000+$M{r})'
         je[f'O{r}'] = (f'=IF($P{r}=0,"",IF(AND(明细账科目<>"",LEFT($D{r},LEN(明细账科目))=明细账科目,$A{r}>=明细账起,$A{r}<=明细账止),'
                        f'INT($A{r})*10^7+N($B{r})*1000+$M{r},""))')

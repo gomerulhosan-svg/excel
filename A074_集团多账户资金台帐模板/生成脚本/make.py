@@ -297,7 +297,7 @@ def _flow_rules(ws):
             kd = kinds.get(nm, ('?', None))
             if kd[0] == 'seg_leaf':
                 out.append(f'引用了段表叶子 {nm}')
-            if kd[0] == 'blk':
+            if kd[0] == 'blk' and name not in FLOW_GATED:      # 配对的月窗口要用 块_至最晚月/块_后最早月（v2 一样；设计 §15.1.9 只拦原始列）
                 out.append(f'引用了块表名称 {nm}' + ('（正常日要直接写本块「前最晚」那一格，会成环）' if name == '正常日' else ''))
             if kd[0] == 'seg' and kd[1] != k:
                 out.append(f'用了别的段的名称 {nm}（本行是第 {k} 段）')

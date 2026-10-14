@@ -52,7 +52,6 @@ SH_VIDX  = '_凭证索引'
 SH_AUX   = '_辅助'
 
 SH_CLOSE = '_结转损益'                # 10/08 加的（p1008.py 建）
-SH_CMP   = '_分录精简'                # 提速加的（p_opt.py 建）：记账分录里有凭证的行挤在一起
 
 SHEET_ORDER = [SH_HOME, SH_HELP, SH_BASE, SH_RULE, SH_RATE, SH_ACC,
                SH_CASH, SH_BUY, SH_ISS, SH_PROD, SH_SALE, SH_PAY, SH_FA, SH_MAN,
@@ -197,15 +196,15 @@ def cash(col):
 N_CASH = CASH_R1 - CASH_R0 + 1
 
 
-def cash_cell(col, k):
-    """opt：现金流水第 k 笔（1 起）那一行的某一格，直接引用（原来 INDEX(整段 3,960 行,k)：计算只读一格，可依赖登记在整段上，
-    改流水任何一格，记账分录 8,000 行、凭证索引 4,000 行全跟着重算）。k 超出流水行数（死槽位）＝""（永远空，跟原来 INDEX 出错再 IFERROR 一样）"""
-    return '""' if k > N_CASH else f'{SH_CASH}!{col}{CASH_R0 + k - 1}'
+def cash_cell(col, k, row=None):
+    """现金流水第 k 笔（1 起）那一行的某一格。wps：INDEX(流水_列_段s,段内第几行)（段名称，见下面 SEG）；
+    row＝引用它的格子所在行（同一列每行取下一笔、要压共享公式的，写成 ROW()-常数）。k 超出流水行数（死槽位）＝""（永远空）"""
+    return '""' if k > N_CASH else seg_cell(SH_CASH, col, k, row)
 
 
-def cash_from(col, k):
+def cash_from(col, k, row=None):
     """现金流水第 k 笔那一行到「流水末行」（一组凭证的第一笔在最上面，同组其他笔都在它下面：只往下数，数到有录入的最后一行为止）"""
-    return f'{SH_CASH}!{col}{CASH_R0 + k - 1}:INDEX({cash(col)},流水末行)'
+    return seg_from(SH_CASH, col, k, row, '流水末行')
 
 # ─────────────────────────── 录入模块（第 3 行表头、第 4 行起数据） ───────────────────────────
 MOD_HDR, MOD_R0 = 3, 4
@@ -237,6 +236,7 @@ MAN_R1 = MOD_R0 + 600 - 1          # 600 行分录
     'A B C D E F G H I J K'.split()
 # 隐藏：L 组内第几条  M 科目编码  N 有金额  O 凭证日期（组内第一行的日期）  P 这一行有错  Q 这张凭证能记账  R 凭证ID
 MN_SEQ, MN_CODE2, MN_HAS, MN_VDATE, MN_BAD, MN_OK, MN_VID, MN_KEY, MN_GKEY = 'L M N O P Q R S T'.split()
+MN_VMEMO = 'U'                     # wps：凭证摘要（本行没写摘要就取同组第一行的；记账分录、凭证索引取它）
 # S：能记账的行的分组键（找凭证第一行用）  T：分组键＝组号|年月（组号每月可以重新从 1 编）
 MAN_GROUPS = 150
 
@@ -254,14 +254,16 @@ def mod_r1(sh):
 # 汇总类公式（SUMIFS / COUNTIF / SUMPRODUCT…）原来一律扫到容量末行（流水 3,960 行、领用 1,000 行…），现在只扫到「最后一行有录入的」：
 # 区域写成 $X$6:INDEX($X$6:$X$3965,流水末行)（不是易失函数，Excel 2010 / WPS 都认）。末行以下全是空行，公式结果全是空 / 0，少扫它们结果一样。
 # 末行＝这几列里最后一行有东西的（录入列；只填了这些列以外的格子的行，所有公式都是空的）。末行格子放在 _辅助 第 206 行起（隐藏表）。
+# wps（optchk #1b）：备注列（没有任何公式引用）和流水的摘要 / 项目 / 往来 / 备注 / 指定科目 / 合并号 / 附单据不再算——只填这些的行公式全是空的，
+# 录这几列也就不会把所有「本行到末行」的汇总标脏（LibreOffice 里原来录一格摘要要等 13～30 秒）。
 USED = {   # 表: (名称, 第一行, 最后一行, 录入列)
-    SH_CASH: ('流水末行', CASH_R0, CASH_R1, 'A B E G H I J P Q R T V W'),
-    SH_BUY: ('采购末行', MOD_R0, BUY_R1, 'B C D E H I J N O S T'),
-    SH_ISS: ('领用末行', MOD_R0, ISS_R1, 'B C D G H M N'),
-    SH_PROD: ('产量末行', MOD_R0, PROD_R1, 'B C D E F G H'),
-    SH_SALE: ('销售末行', MOD_R0, SALE_R1, 'B C D E F G I O P'),
-    SH_PAY: ('工资末行', MOD_R0, PAY_R1, 'B C D E F I'),
-    SH_FA: ('资产末行', MOD_R0, FA_R1, 'A B C E F G H I P'),
+    SH_CASH: ('流水末行', CASH_R0, CASH_R1, 'A B E H I'),     # optchk #1b：只看这五列（只填了摘要、备注…的行所有公式都是空的）
+    SH_BUY: ('采购末行', MOD_R0, BUY_R1, 'B C D E H I J N O S'),
+    SH_ISS: ('领用末行', MOD_R0, ISS_R1, 'B C D G H M'),
+    SH_PROD: ('产量末行', MOD_R0, PROD_R1, 'B C D E F G'),
+    SH_SALE: ('销售末行', MOD_R0, SALE_R1, 'B C D E F G I O'),
+    SH_PAY: ('工资末行', MOD_R0, PAY_R1, 'B C D E F'),
+    SH_FA: ('资产末行', MOD_R0, FA_R1, 'A B C E F G H I'),
     SH_MAN: ('手工末行', MOD_R0, MAN_R1, 'A B C D F G H I J'),
 }
 USED_R0 = 206                      # _辅助 A206:B213 放末行，A214:B214 放「最后有数的月序」
@@ -286,22 +288,22 @@ def used_formula(sh):
 
 def cash_u(col):
     """流水某列，只到「流水末行」（汇总公式用；按位置取一行的不要用它）"""
-    return f'{SH_CASH}!${col}${CASH_R0}:INDEX({cash(col)},流水末行)'
+    return f'INDEX({full_name(SH_CASH, col)},1):INDEX({full_name(SH_CASH, col)},流水末行)'
 
 
 def mod_u(sh, col):
     """录入表某列，只到这张表的末行（汇总公式用）"""
-    return f'{q(sh)}!${col}${MOD_R0}:INDEX({mod(sh, col)},{USED[sh][0]})'
+    return f'INDEX({full_name(sh, col)},1):INDEX({full_name(sh, col)},{USED[sh][0]})'
 
 
-def mod_cell(sh, col, k):
-    """opt：录入表第 k 行（1 起）的某一格，直接引用（原来 INDEX(整列,k)）"""
-    return f'{q(sh)}!{col}{MOD_R0 + k - 1}'
+def mod_cell(sh, col, k, row=None):
+    """录入表第 k 行（1 起）的某一格（wps：段名称，见 cash_cell）"""
+    return seg_cell(sh, col, k, row)
 
 
-def mod_from(sh, col, k):
+def mod_from(sh, col, k, row=None):
     """录入表第 k 行到最后一行"""
-    return f'{q(sh)}!{col}{MOD_R0 + k - 1}:${col}${mod_r1(sh)}'
+    return seg_from(sh, col, k, row, mod_r1(sh) - MOD_R0 + 1)
 
 # ─────────────────────────── 月末结转（全自动） ───────────────────────────
 # 三块长表，按「月份序号 n」一行：
@@ -426,6 +428,130 @@ MONTH = 'yyyy"年"m"月"'
 PCT   = '0.0%;[Red]-0.0%;"-"'
 PCT2  = '0.00%;[Red]-0.00%;"-"'
 CNT   = 'General;[Red]-General;0'
+
+
+# ─────────── WPS 存盘（wps）：分段名称 ───────────
+# WPS 12.1 存 xlsx 时，同一列往下拖的公式只要写了「别的表!格子」或往下撑的区域（$A$5:A5），就一格一条全文写进文件（共享公式拆光，
+# A075 原件就是这样被存到 85 MB XML 的）；只用名称的照样共享。所以：
+#  · 跨表取录入表第 k 行：INDEX(段名称,段内第几行)，段＝100 行一个名称（流水_AG_段07＝现金流水总表!$AG$606:$AG$705），依赖只挂在本段；
+#  · 本表「从第一行到本行」（往下撑）：拆成「前面各段」名称（流水_AI_前07＝第 6～605 行）＋「本段第一行到本行」INDEX(段名称,1):$AI本行；
+#  · 绝对的跨表区域（科目表!$A$5:$A$454 这种）由 p_wps 统一换成名称（隐藏）。
+# 槽位（凭证ID 的「位置」）按段算：第 s 段第 j 行＝(s-1)×100＋j（槽位列 SLOT）。插入 / 删除整行时名称跟着伸缩，
+# 只有插删的那一段对不上（数据校验第 41 项报出来），别的段读的还是原来那几行、凭证ID 也对得上，不会整片错位、不会变 #REF!。
+SEG_N = 100
+SEG = {   # 表: (名称前缀, 第一行, 最后一行, 槽位列, 锚列（空列，只给 ROW 定位用）)
+    SH_CASH: ('流水', CASH_R0, CASH_R1, 'AP', 'AQ'),
+    SH_BUY: ('采购', MOD_R0, BUY_R1, 'AA', 'AB'),
+    SH_ISS: ('领用', MOD_R0, ISS_R1, 'U', 'V'),
+    SH_SALE: ('销售', MOD_R0, SALE_R1, 'W', 'X'),
+    SH_PAY: ('工资', MOD_R0, PAY_R1, 'P', 'Q'),
+    SH_MAN: ('手工', MOD_R0, MAN_R1, 'V', 'W'),        # 手工凭证 U＝凭证摘要（同组第一行的摘要）
+    SH_PROD: ('产量', MOD_R0, PROD_R1, None, None),     # 产量、固定资产只用整列名称（汇总）
+    SH_FA: ('资产', MOD_R0, FA_R1, None, None),
+}
+SEG_NAMES = {}      # 名称 → 引用（p_wps.apply 写进工作簿，隐藏）
+
+
+def _seg_reg(name, sh, col, a, b):
+    ref = f'{q(sh)}!${col}${a}:${col}${b}' if a != b else f'{q(sh)}!${col}${a}'
+    old = SEG_NAMES.setdefault(name, ref)
+    assert old == ref, (name, old, ref)
+    return name
+
+
+def seg_pos(sh, r):
+    """录入表第 r 行 → (段号 s, 段内第 j 行, 这段第一行)"""
+    _, r0, r1, _, _ = SEG[sh]
+    assert r0 <= r <= r1, (sh, r)
+    s = (r - r0) // SEG_N + 1
+    a = r0 + (s - 1) * SEG_N
+    return s, r - a + 1, a
+
+
+def seg_name(sh, col, s):
+    p, r0, r1, _, _ = SEG[sh]
+    a = r0 + (s - 1) * SEG_N
+    return _seg_reg(f'{p}_{col}_段{s:02d}', sh, col, a, min(r1, a + SEG_N - 1))
+
+
+def pre_name(sh, col, s):
+    """第 1～s-1 段（s≥2）"""
+    p, r0, r1, _, _ = SEG[sh]
+    assert s >= 2
+    return _seg_reg(f'{p}_{col}_前{s:02d}', sh, col, r0, r0 + (s - 1) * SEG_N - 1)
+
+
+def full_name(sh, col):
+    p, r0, r1, _, _ = SEG[sh]
+    return _seg_reg(f'{p}_{col}', sh, col, r0, r1)
+
+
+def seg_cell(sh, col, k, row=None, legs=1):
+    """录入表第 k 笔（1 起）那一行的某一格：INDEX(段名称,段内第几行)。
+    row：引用它的格子在第几行（同一列每行取下一笔、要压共享公式的，写成 ROW()-常数；legs＝每笔占几行，只有 1 才行）"""
+    _, r0, r1, _, _ = SEG[sh]
+    if k > r1 - r0 + 1:
+        return '""'
+    s, j, _ = seg_pos(sh, r0 + k - 1)
+    nm = seg_name(sh, col, s)
+    if row is None:
+        return f'INDEX({nm},{j})'
+    assert legs == 1
+    return f'INDEX({nm},ROW()-{row - j})'
+
+
+def seg_from(sh, col, k, row, end):
+    """第 k 笔那一行到 end（INDEX(全列名称,end)，end 是末行名称或常数）：INDEX(段,j):INDEX(全列,末)。整列名称兜住中间各段的依赖"""
+    return f'{seg_cell(sh, col, k, row)}:INDEX({full_name(sh, col)},{end})'
+
+
+def local(sh, col, r):
+    """本段第一行到本行：INDEX(段名称,1):$X本行（本表里用）"""
+    s, _, _ = seg_pos(sh, r)
+    return f'INDEX({seg_name(sh, col, s)},1):${col}{r}'
+
+
+def upto_terms(sh, func, r, pairs, tail=''):
+    """第一行到本行的 COUNTIFS / SUMIFS（往下撑的区域）拆成「前面各段」＋「本段到本行」两项相加。
+    pairs：[(列, 条件)]（COUNTIFS）或 [(求和列, None), (列, 条件)…]（SUMIFS，第一项是求和列）"""
+    s, _, _ = seg_pos(sh, r)
+    loc = ','.join(local(sh, c, r) + (f',{v}' if v is not None else '') for c, v in pairs)
+    out = f'{func}({loc}{tail})'
+    if s >= 2:
+        pre = ','.join(pre_name(sh, c, s) + (f',{v}' if v is not None else '') for c, v in pairs)
+        out = f'({func}({pre}{tail})+{out})'
+    return out
+
+
+def above_terms(sh, func, r, pairs):
+    """第一行到上一行（不含本行）：本段第一行时只有「前面各段」"""
+    s, j, a = seg_pos(sh, r)
+    if j == 1:
+        if s == 1:
+            return '0'
+        return f'{func}(' + ','.join(pre_name(sh, c, s) + (f',{v}' if v is not None else '') for c, v in pairs) + ')'
+    loc = ','.join(f'INDEX({seg_name(sh, c, s)},1):${c}{r - 1}' + (f',{v}' if v is not None else '') for c, v in pairs)
+    out = f'{func}({loc})'
+    if s >= 2:
+        pre = ','.join(pre_name(sh, c, s) + (f',{v}' if v is not None else '') for c, v in pairs)
+        out = f'({func}({pre})+{out})'
+    return out
+
+
+def first_val(sh, key, keycol, valcol, r):
+    """第一行到本行里，keycol 第一个对上 key 的那一行的 valcol（原来 INDEX($V$6:$V本行,MATCH(key,$K$6:$K本行,0))）"""
+    s, _, _ = seg_pos(sh, r)
+    loc = f'INDEX({seg_name(sh, valcol, s)},MATCH({key},{local(sh, keycol, r)},0))'
+    if s == 1:
+        return loc
+    return f'IFERROR(INDEX({pre_name(sh, valcol, s)},MATCH({key},{pre_name(sh, keycol, s)},0)),{loc})'
+
+
+def slot_formula(sh, r):
+    """槽位列：第 s 段第 j 行＝(s-1)×100＋j；j＝ROW()−这段第一行＋1（第一行按锚列的段名称定位，插删行跟着走）"""
+    _, _, _, _, anchor = SEG[sh]
+    s, _, _ = seg_pos(sh, r)
+    return f'=ROW()-ROW(INDEX({seg_name(sh, anchor, s)},1))+{(s - 1) * SEG_N + 1}'
 
 
 def at(rng_, k):
