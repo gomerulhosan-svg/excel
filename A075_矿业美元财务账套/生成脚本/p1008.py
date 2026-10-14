@@ -589,7 +589,7 @@ def step_close(wb, log):
 
     # 8) 月末结转：每月汇总表加 J、K 两列
     mj = wb['月末结转']
-    for r in range(5, 38):
+    for r in range(5, 6 + NM):
         assert mj[f'J{r}'].value is None and mj[f'K{r}'].value is None
     for col, t in (('J', '结转损益\n本月利润\n(负＝亏损)'), ('K', '年末结转\n未分配利润')):
         cp(mj['I5'], mj[f'{col}5'])

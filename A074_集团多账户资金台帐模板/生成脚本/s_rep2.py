@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""报表二（s_rep2）：【收支分类报表】【收支分项汇总】【收支报表】【任意时间段收支报表】。设计见 设计.md §5.5～§5.8。
+"""报表二（s_rep2）：【收支分类报表】【收支分项汇总】【收支报表】【任意时间段收支报表】。设计见 设计.md §5.5～§5.8、§15（v3.1）。
 
 口径（设计 §1.3 经营口径）：经营收入＝属性「收入」行 Σ(收－支)；经营支出＝属性「支出」行 Σ(支－收)；投资建设＝Σ(支－收)（正数＝花出去）；
   往来净额、待分类净额、内部净额＝Σ(收－支)。恒等式：经营净额－投资建设＋往来净额＋待分类净额＋内部净额＝资金净增加（＝Σ 收－支）。
@@ -7,14 +7,19 @@
 写法：
   - 只引用定义名称（_流、_表、_参、块_）和本表格子；扫 _流 一律配窗口（每个月一对窗口放本表隐藏格），条件照写全（窗口只是少扫）。
   - 收支分类、分项汇总的行＝_表 分类_候选键 第 k 小（段首、大类小计、收费项、认不出）；段首、小计只加「它下面」的行：
-    SUMIFS(本列下一行:本列表尾下一行, …)，引用一律往下，Excel 静态判环也不成环（不能 SUMIFS 整列：会把自己圈进去）。
+    SUMIFS(本列下一行:本列下面第 N_CLS 行, …)，引用一律往下，Excel 静态判环也不成环（不能 SUMIFS 整列：会把自己圈进去）。
   - 每块「其余 / 未列示 / 公司没认出」＝总额－明细（补差），保证每块合计＝总额。
-  - 第 2 行起每个公式都套 layout.rpt()（报表暂停）；第 1 行标题暂停时红字。
+  - 第 2 行起每个公式都套 layout.rpt()（＝pause()：录入模式出空）；第 1 行标题录入模式时换成 layout.PAUSE_TITLE（红字）。
+v3.1（设计 §15；复核 compat-1：改台帐一格时这四张表最慢的是收支报表、任意时间段的排名表）：
+  - WPS 存盘不拆：序号 ROW()－常数（不写 ROWS($X$a:Xr)），小计区域写定长相对窗口（不写 r+1..$end）；只用名称，不写「表名!」。
+  - 每个公式的扫描都换成更省的写法（数一个不变，模型逐格对过）：收支报表排名表 SUMIFS(全年 ">=" "<=") → 12 个月窗口各一个单键 SUMIF；
+    收支分类 X 列、收支报表 Y 列的「全年笔数」挡拿掉（挡的 COUNTIFS 比被挡的 12 个月单键 SUMIF 还贵）；分项汇总看一个月时区间条件换成等于；
+    任意时间段「期内」用 流_期人键>0（_流 已按 P_期起～P_期止 算好）代替两个日期条件，收费项定了属性的不再比属性号，
+    各账户收入/支出＝期内全部收/支－内部转入/转出。
 私有帮助格（不进 layout.NAMES，只本表用）：
-  收支分类报表：R1..R4 标签、Z2..AA13（1～12 月窗口）、I3:L3（本年经营净额）、第 416 行留空（小计的区域尾）；
-  收支分项汇总：AI 列「公司没认出」（＝合计－各公司，合计里含）、AK2..AK4（起月、止月、年份格生效值）、AP1..AP4 标签、第 415 行留空；
-  收支报表：Q 列（块 1～3 每行的收付人号 / 收费项号）、Y 列（块 2 每行本年笔数）、Y1..Y3 标签、AA2..AB13（1～12 月窗口）、
-    第 249 行（块 4「没归到 9 类的」）；
+  收支分类报表：R1..R4 标签、Z2..AA13（1～12 月窗口）、I3:L3（本年经营净额）、第 266 行起留空（小计窗口会看到，必须空）；X 列 v3.1 不用了；
+  收支分项汇总：AI 列「公司没认出」（＝合计－各公司，合计里含）、AK2..AK4（起月、止月、年份格生效值）、AP1..AP4 标签、第 265 行起留空；
+  收支报表：Q 列（块 1～3 每行的收付人号 / 收费项号）、Y1..Y3 标签、AA2..AB13（1～12 月窗口）、第 249 行（块 4「没归到 9 类的」）；
   任意时间段：X1..X3 标签、Z/AA 第 8..47 行（账户号、期间笔数）、AB..AE 第 54 行起（四块每行的收费项号 / 收付人号）、K3:L4（资金净增加、核对）、
     第 5 行（选择格「按 … 算」）。"""
 import re
@@ -25,7 +30,7 @@ from layout import (
     SH_CLS, SH_ITEMCO, SH_IE, SH_SPAN, N_CO, N_CLS, N_PARTY, K_DAY, ATTR_NO, PARTY_TYPES, DV_FIXED,
     CLS, CLS_SEL, CLS_EFF, ITEMCO, ITEMCO_SEL, ITEMCO_EFF, IE, IE_SEL, IE_EFF, IE_TOP_IN, IE_TOP_OUT, IE_ITEMS,
     SPAN_SEL, SPAN_KPI, SPAN_EFF, SPAN_ACC, SPAN_BLK, SPAN_RANK,
-    rpt, dsel_bad, yr_eff, yr_bad, ym_eff, ym_of, raw, win_first, win_last, win, k_aypm, k_igypm, name2no)
+    rpt, PAUSE_TITLE, dsel_bad, yr_eff, yr_bad, ym_eff, ym_of, raw, win_first, win_last, win, k_aypm, k_igypm, name2no)
 from common import (
     YH, F_HDR, F_TXT, F_TXTB, F_AUTO, F_AUTOB, F_HELP, F_RED, F_KPI_L, F_KPI_V, F_NOTE, FILL_KPI, FILL_SUB, FILL_SECT,
     FILL_NONE, BD, AC, ACW, AL, AR, ACC, INT, PCT, put, title, header, section, widths, hide, selector, home_link,
@@ -38,6 +43,8 @@ SEC = {A_IN: '一、收入（经营收入）', A_OUT: '二、支出（经营支�
        A_FLOW: '四、往来（正数＝净流入）', A_TBD: '五、待分类（请定性质）', I9: '六、内部转账（全集团应为 0）'}
 ATXT = {A_IN: '收入', A_OUT: '支出', A_CAP: '投资建设', A_FLOW: '往来', A_TBD: '待分类', I9: '内部转账'}
 UNKNOWN_TXT = '　　（收费项没填或认不出）'
+TBD_TIP = ('：收费项待定、没填或认不出。是哪几行：【资金台帐】M 列（属性）筛选「待分类」，改 C 列收费项'
+           '（或在基础资料④给收费项定属性）')                     # 复核 F11：说清楚去哪儿找是哪几行
 GRP99 = '（大类空或超过 40 个）'
 ASHRINK = Alignment(horizontal='left', vertical='center', shrink_to_fit=True)
 ACSHRINK = Alignment(horizontal='center', vertical='center', shrink_to_fit=True)
@@ -74,8 +81,9 @@ def sign(p):
 
 
 def pause_title(ws, f):
-    ws['A1'] = f'=IF(P_报表暂停=1,"报表暂停中：基础资料①「报表暂停」清空就恢复",{f[1:] if f.startswith("=") else f})'
-    ws.conditional_formatting.add('A1', FormulaRule(formula=['P_报表暂停=1'], font=Font(name=YH, sz=15, bold=True, color='FFC00000'),
+    """第 1 行标题：录入模式时换成 layout.PAUSE_TITLE（红字，条件格式），平时 f。第 1 行不归 pause() 管（make 从第 2 行查）"""
+    ws['A1'] = f'=IF(P_录入模式=1,"{PAUSE_TITLE}",{f[1:] if f.startswith("=") else f})'
+    ws.conditional_formatting.add('A1', FormulaRule(formula=['P_录入模式=1'], font=Font(name=YH, sz=15, bold=True, color='FFC00000'),
                                                     fill=cf_bg('FFFFD7D7')))
 
 
@@ -131,7 +139,7 @@ def cand_rows(ws, r1, r2, H, C):
     S, T, U, V, W = (H[k] for k in ('键', '类型', '属性号', '大类号', '项号'))
     for r in range(r1, r2 + 1):
         s, t, u, v, w = (f'${x}{r}' for x in (S, T, U, V, W))
-        helper(ws, f'{S}{r}', R(f'IFERROR(SMALL(分类_候选键,ROWS(${S}${r1}:{S}{r})),0)'))
+        helper(ws, f'{S}{r}', R(f'IFERROR(SMALL(分类_候选键,ROW()-{r1 - 1}),0)'))
         helper(ws, f'{T}{r}', R(f'IF({s}=0,0,IF(MOD({s},1000000)=0,{TYPE_SEC},IF(MOD({s},1000000)=999999,{TYPE_UNK},'
                                 f'IF(MOD({s},1000)=0,{TYPE_GRP},{TYPE_ITEM}))))'))
         helper(ws, f'{U}{r}', R(f'IF({s}=0,0,INT({s}/1000000))'))
@@ -146,10 +154,12 @@ def cand_rows(ws, r1, r2, H, C):
 
 
 def sub_total(col, r, H, end):
-    """段首、大类小计：只加下面的行（本列 r+1..end；end＝表尾下一行，留空）"""
+    """段首、大类小计：只加下面的行。v3.1：区域写成定长相对窗口 本列 r+1..r+N_CLS（两头都是相对行，每行 R1C1 一样，
+       WPS 存盘照样共享；v2 的 r+1..$end 一头绝对一头相对，WPS 会拆）。表尾下面的行（end 起）都是空的，多看几行结果一样"""
     T, U, V = H['类型'], H['属性号'], H['大类号']
-    rng = lambda c: f'{c}{r + 1}:{c}${end}'
-    rngA = lambda c: f'${c}{r + 1}:${c}${end}'
+    assert r + N_CLS >= end
+    rng = lambda c: f'{c}{r + 1}:{c}{r + N_CLS}'
+    rngA = lambda c: f'${c}{r + 1}:${c}{r + N_CLS}'
     return (f'IF(${T}{r}={TYPE_GRP},SUMIFS({rng(col)},{rngA(U)},${U}{r},{rngA(V)},${V}{r},{rngA(T)},{TYPE_ITEM}),'
             f'SUMIFS({rng(col)},{rngA(U)},${U}{r},{rngA(T)},">={TYPE_ITEM}"))')
 
@@ -256,18 +266,16 @@ def build_cls(ws):
     ws.conditional_formatting.add(f'{mcol[0]}{SR["核对"]}:{C["全年"]}{SR["核对"]}',
                                   FormulaRule(formula=[f'AND(ISNUMBER({mcol[0]}{SR["核对"]}),ROUND({mcol[0]}{SR["核对"]},2)<>0)'],
                                               font=Font(name=YH, bold=True, color='FFC00000'), fill=cf_bg('FFFFD7D7')))
-    # —— 明细（第 16～415 行）——
+    # —— 明细（第 16～265 行）——
+    # v3.1：不再先用 X 列「全年笔数」挡（COUNTIFS 扫全年两个条件，比 12 个月的单键 SUMIF 加起来还贵；挡不挡数一样）
     cand_rows(ws, r1, r2, H, C)
-    T, U, Wc, X = H['类型'], H['属性号'], H['项号'], H['笔数']
-    wy_i, wy_ig = wy('流_项年属月键'), wy('流_项归年属月键')
+    T, U, Wc = H['类型'], H['属性号'], H['项号']
     for r in range(r1, r2 + 1):
         t, u, w = f'${T}{r}', f'${U}{r}', f'${Wc}{r}'
-        helper(ws, f'{X}{r}', R(f'IF({t}<{TYPE_ITEM},0,IF({G}=0,COUNTIFS({wy_i},">="&{k_aypm(w, Y, u, 1)},{wy_i},"<="&{k_aypm(w, Y, u, 12)}),'
-                                f'COUNTIFS({wy_ig},">="&{k_igypm(w, G, Y, u, 1)},{wy_ig},"<="&{k_igypm(w, G, Y, u, 12)})))'))
         for m, c in enumerate(mcol, 1):
             one = (f'IF({G}=0,SUMIF({wm("流_项年属月键", m)},{k_aypm(w, Y, u, m)},{wm("流_净", m)}),'
                    f'SUMIF({wm("流_项归年属月键", m)},{k_igypm(w, G, Y, u, m)},{wm("流_净", m)}))')
-            money(ws, f'{c}{r}', R(f'IF({t}=0,"",IF({t}>={TYPE_ITEM},IF(${X}{r}=0,0,ROUND({sign(u)}*{one},2)),'
+            money(ws, f'{c}{r}', R(f'IF({t}=0,"",IF({t}>={TYPE_ITEM},ROUND({sign(u)}*{one},2),'
                                    f'{sub_total(c, r, H, end)}))'))
         money(ws, f'{C["全年"]}{r}', R(f'IF({t}=0,"",ROUND(SUM({mcol[0]}{r}:{mcol[-1]}{r}),2))'), bold=True)
         pin, pout = f'${C["全年"]}${SR["经营收入"]}', f'${C["全年"]}${SR["经营支出"]}'
@@ -285,8 +293,7 @@ def build_cls(ws):
     tipf = (f'IF(COUNT(分类_候选键)>{N_CLS},"※ 收费项、大类太多：本表只放得下 {N_CLS} 行，后面的没列出来（下面各段会比上面汇总少）",'
             f'IF(({mis})>0,"※ 下面明细跟上面汇总对不上 "&({mis})&" 段：请告诉我们",'
             f'IF(ROUND({chk},2)<>0,"※ 资金净增加跟台帐对不上：请告诉我们",'
-            f'IF(ROUND({tbd},2)<>0,"△ 待分类净额 "&IF({tbd}<0,"-","")&{money_txt(tbd)}&'
-            f'"：收费项待定、没填或认不出，去【资金台帐】选收费项（或在基础资料④定属性）",'
+            f'IF(ROUND({tbd},2)<>0,"△ 待分类净额 "&IF({tbd}<0,"-","")&{money_txt(tbd)}&"{TBD_TIP}",'
             f'IF(AND({G}=0,ROUND({intl},2)<>0),"△ 内部转账全年差 "&{money_txt(intl)}&'
             f'"：漏录一头、金额或日期对不上，看核对表清单","✓ 下面明细合计跟上面汇总一致"&IF({G}>0,"（选了公司：内部净额不为 0 是正常的）",""))))))')
     merge_put(ws, f'A{tr}:{C["占比"]}{tr}', R(tipf), F_TXT, FILL_NONE, align=AL)
@@ -317,7 +324,7 @@ def build_itemco(ws, n_co):
         ws.column_dimensions[c].width = 12.5
     tip = ('像原来日记账的【汇总】：每个收费项各家公司收了多少、花了多少。按「归属公司」算（私户替别的公司收付时台帐填的归属公司，没填＝账户所属公司）；'
            '经营口径：支出、投资建设取正数（花出去），其余是收－支。上面是各公司的汇总，下面按属性 → 大类 → 收费项展开。'
-           '黄格：年份空着＝管理年度；月份空着＝首页截止日那个月（填 1～12＝上面年份的那个月）；「看全年」选「是」看一整年（要扫一年，慢一点）。'
+           '黄格：年份空着＝管理年度；月份空着＝首页截止日那个月（年份不是那一年＝那年 12 月；填 1～12＝B3 那一年的这个月）；「看全年」选「是」看一整年（要扫一年，慢一点）。'
            '合计列跟【收支分类报表】同期全集团的数一样；「公司没认出」是账户的公司不在基础资料②的（算在合计里，不在哪家公司）。'
            '公司超过现在的家数以后的列隐藏了：加了公司就取消隐藏。全部自动算，不用填。')
     title(ws, '=""', TOT, tip, h2=58)
@@ -341,10 +348,10 @@ def build_itemco(ws, n_co):
     selector(ws, 'A3', '年份', ITEMCO_SEL['年份'], kind='year', prompt='填 2026 或 26；空着＝管理年度')
     txt(ws, 'C3', by_year(S['年份'], E['年份格']), font=F_NOTE, align=ASHRINK)
     selector(ws, 'D3', '月份', ITEMCO_SEL['月份'], kind='month',
-             prompt='填 1～12＝上面年份的那个月；也可以填 202609 或那个月的某一天；空着＝首页截止日那个月')
+             prompt='填 1～12＝B3 那一年的这个月；也可以填 202609 或那个月的某一天；空着＝首页截止日那个月（B3 不是那一年＝那年 12 月）')
     bad_m = f'AND({raw(S["月份"])},{ym_eff(S["月份"], E["年份格"], 0)}=0)'
     txt(ws, 'F3', R(f'IF({FY}=1,"看全年（月份不管用）",IF({bad_m},"※ 看不懂，按 "&{ym_txt(YM)}&" 算","按 "&{ym_txt(YM)}&" 算"&'
-                    f'IF({raw(S["月份"])},"","（截止日那个月）")))'), font=F_NOTE, align=ASHRINK)
+                    f'IF({raw(S["月份"])},"",IF({YG}=P_截止年,"（截止日那个月）","（那年 12 月）"))))'), font=F_NOTE, align=ASHRINK)
     selector(ws, 'G3', '看全年', ITEMCO_SEL['全年'], dv_formula='"' + DV_FIXED['是'] + '"',
              prompt='选「是」看一整年（扫一年，慢一点）；空着＝只看上面那个月')
     txt(ws, 'I3', R(f'IF({FY}=1,"按 "&{Y}&" 年全年算",IF({raw(S["全年"])},"※ 只认「是」，按一个月算","空着＝只看一个月"))'),
@@ -359,7 +366,7 @@ def build_itemco(ws, n_co):
     header(ws, hr2, hdr, '报表', height=34)
     for k, c in enumerate(ccol, 1):
         put(ws, f'{c}{hr}', R(f'IF(INDEX(公司_有效,{k})=1,INDEX(公司_名称,{k}),"")'), F_HDR, fill('FF30561E'), align=ACW)
-        put(ws, f'{c}{hr2}', R(f'{c}{hr}'), F_HDR, fill('FF30561E'), align=ACW)
+        put(ws, f'{c}{hr2}', R(f'{c}{hr}&""'), F_HDR, fill('FF30561E'), align=ACW)   # &""：引用空串格时 LO 有时给 0
     for k, t in (('键', '键'), ('类型', '类型'), ('属性号', '属性号'), ('大类号', '大类号'), ('项号', '项号'), ('笔数', '笔数')):
         helper(ws, f'{H[k]}{hr2}', t)
     # —— 汇总（第 5～12 行）——
@@ -367,8 +374,13 @@ def build_itemco(ws, n_co):
     label = dict(经营收入='经营收入', 经营支出='经营支出', 经营净额='经营净额', 投资建设='投资建设（正数＝花出去）', 往来净额='往来净额',
                  待分类='待分类净额', 内部净额='内部转账净额', 净增加='资金净增加')
     wg, wn, wmm, wp = wy('流_归年属月键'), wy('流_净'), wy('流_月码'), wy('流_属性号')
-    sg = lambda k, p: f'SUMIFS({wn},{wg},">="&{k_aypm(k, Y, p, M1)},{wg},"<="&{k_aypm(k, Y, p, M2)})'
-    sa = lambda p: f'SUMIFS({wn},{wmm},">="&({Y}*100+{M1}),{wmm},"<="&({Y}*100+{M2}),{wp},{p})'
+    # v3.1（复核 compat-1）：看一个月（起月＝止月）时区间条件 ">=" "<=" 换成单键等于（SUMIF/COUNTIF 扫一遍，SUMIFS 两个条件扫两遍）
+    one_m = f'{M1}={M2}'
+    rsum = lambda sr, kr, lo, hi: f'IF({one_m},SUMIF({kr},{lo},{sr}),SUMIFS({sr},{kr},">="&{lo},{kr},"<="&{hi}))'
+    rcnt = lambda kr, lo, hi: f'IF({one_m},COUNTIF({kr},{lo}),COUNTIFS({kr},">="&{lo},{kr},"<="&{hi}))'
+    sg = lambda k, p: rsum(wn, wg, k_aypm(k, Y, p, M1), k_aypm(k, Y, p, M2))
+    sa = lambda p: (f'IF({one_m},SUMIFS({wn},{wmm},{Y}*100+{M1},{wp},{p}),'
+                    f'SUMIFS({wn},{wmm},">="&({Y}*100+{M1}),{wmm},"<="&({Y}*100+{M2}),{wp},{p}))')
 
     def vals(c, sp):
         return dict(经营收入=sp(A_IN), 经营支出=f'-{sp(A_OUT)}', 经营净额=f'{c}{SR["经营收入"]}-{c}{SR["经营支出"]}',
@@ -384,18 +396,18 @@ def build_itemco(ws, n_co):
         money(ws, f'{IC_UNL}{r}', R(f'ROUND({TOT}{r}-SUM({ccol[0]}{r}:{ccol[-1]}{r}),2)'))
     for k in ('经营净额', '待分类', '净增加'):
         cf_neg_red(ws, f'{ccol[0]}{SR[k]}:{IC_UNL}{SR[k]}', f'{ccol[0]}{SR[k]}')
-    # —— 明细（第 15～414 行）——
+    # —— 明细（第 15～264 行）——
     cand_rows(ws, r1, r2, H, C)
     T, U, Wc, X = H['类型'], H['属性号'], H['项号'], H['笔数']
     wi, wig = wy('流_项年属月键'), wy('流_项归年属月键')
     for r in range(r1, r2 + 1):
         t, u, w = f'${T}{r}', f'${U}{r}', f'${Wc}{r}'
-        helper(ws, f'{X}{r}', R(f'IF({t}<{TYPE_ITEM},0,COUNTIFS({wi},">="&{k_aypm(w, Y, u, M1)},{wi},"<="&{k_aypm(w, Y, u, M2)}))'))
+        helper(ws, f'{X}{r}', R(f'IF({t}<{TYPE_ITEM},0,{rcnt(wi, k_aypm(w, Y, u, M1), k_aypm(w, Y, u, M2))})'))
         for kk, c in enumerate(ccol, 1):
-            one = f'SUMIFS({wn},{wig},">="&{k_igypm(w, kk, Y, u, M1)},{wig},"<="&{k_igypm(w, kk, Y, u, M2)})'
+            one = rsum(wn, wig, k_igypm(w, kk, Y, u, M1), k_igypm(w, kk, Y, u, M2))
             money(ws, f'{c}{r}', R(f'IF({t}=0,"",IF({c}${hr}="","",IF({t}>={TYPE_ITEM},IF(${X}{r}=0,0,ROUND({sign(u)}*{one},2)),'
                                    f'{sub_total(c, r, H, end)})))'))
-        one = f'SUMIFS({wn},{wi},">="&{k_aypm(w, Y, u, M1)},{wi},"<="&{k_aypm(w, Y, u, M2)})'
+        one = rsum(wn, wi, k_aypm(w, Y, u, M1), k_aypm(w, Y, u, M2))
         money(ws, f'{TOT}{r}', R(f'IF({t}=0,"",IF({t}>={TYPE_ITEM},IF(${X}{r}=0,0,ROUND({sign(u)}*{one},2)),{sub_total(TOT, r, H, end)}))'),
               bold=True)
         money(ws, f'{IC_UNL}{r}', R(f'IF({t}=0,"",ROUND({TOT}{r}-SUM({ccol[0]}{r}:{ccol[-1]}{r}),2))'))
@@ -406,7 +418,7 @@ def build_itemco(ws, n_co):
                I9: SR['内部净额']}
     mis = '+'.join(f'(ROUND(SUMIFS(${TOT}${r1}:${TOT}${r2},${T}${r1}:${T}${r2},{TYPE_SEC},${U}${r1}:${U}${r2},{p})-${TOT}${rr},2)<>0)'
                    for p, rr in sec_sum.items())
-    direct = f'SUMIFS({wn},{wmm},">="&({Y}*100+{M1}),{wmm},"<="&({Y}*100+{M2}))'
+    direct = rsum(wn, wmm, f'({Y}*100+{M1})', f'({Y}*100+{M2})')
     unl = f'${IC_UNL}${SR["净增加"]}'
     unl_any = 'OR(' + ','.join(f'ROUND(${IC_UNL}${r},2)<>0' for r in SR.values()) + ')'
     tbd = f'${TOT}${SR["待分类"]}'
@@ -415,8 +427,7 @@ def build_itemco(ws, n_co):
             f'IF(ROUND(${TOT}${SR["净增加"]}-{direct},2)<>0,"※ 资金净增加跟台帐对不上：请告诉我们",'
             f'IF({unl_any},"△ 有的流水归属公司没认出（账户的公司不在基础资料②），资金净增加里有 "&IF({unl}<0,"-","")&{money_txt(unl)}&'
             f'" 不在哪家公司：去③改账户的公司",'
-            f'IF(ROUND({tbd},2)<>0,"△ 待分类净额 "&IF({tbd}<0,"-","")&{money_txt(tbd)}&'
-            f'"：收费项待定、没填或认不出，去【资金台帐】选收费项（或在基础资料④定属性）",'
+            f'IF(ROUND({tbd},2)<>0,"△ 待分类净额 "&IF({tbd}<0,"-","")&{money_txt(tbd)}&"{TBD_TIP}",'
             f'"✓ 下面明细合计跟上面汇总一致；合计列跟【收支分类报表】同期全集团一样")))))')
     merge_put(ws, f'A{tr}:{TOT}{tr}', R(tipf), F_TXT, FILL_NONE, align=AL)
     cf_flags(ws, f'A{tr}', f'A{tr}')
@@ -427,7 +438,7 @@ def build_itemco(ws, n_co):
 
 
 # ═════════════════════════════ 收支报表 ═════════════════════════════
-IE_NO, IE_GATE = 'Q', 'Y'                                  # 块 1～3 每行的收付人号/收费项号；块 2 每行本年笔数（私有）
+IE_NO, IE_GATE = 'Q', 'Y'                                  # 块 1～3 每行的收付人号/收费项号；Y 只放第 1～3 行的标签（v3.1 块 2 不再用笔数挡）
 IE_MWIN = dict(窗首='AA', 窗末='AB')                       # 第 m+1 行＝m 月的窗口（私有）
 
 
@@ -517,8 +528,8 @@ def build_ie(ws):
         assert last - first + 1 == n
         for r in range(first, last + 1):
             q = f'${IE_NO}{r}'
-            helper(ws, f'{IE_NO}{r}', R(f'N(INDEX(${kcol}$2:${kcol}${n + 1},ROWS(${IE_NO}${first}:{IE_NO}{r})))'))
-            put(ws, f'{C["序号"]}{r}', R(f'IF({q}=0,"",ROWS(${IE_NO}${first}:{IE_NO}{r}))'), F_AUTO, FILL_NONE, fmt=INT, align=AC)
+            helper(ws, f'{IE_NO}{r}', R(f'N(INDEX(${kcol}$2:${kcol}${n + 1},ROW()-{first - 1}))'))
+            put(ws, f'{C["序号"]}{r}', R(f'IF({q}=0,"",ROW()-{first - 1})'), F_AUTO, FILL_NONE, fmt=INT, align=AC)
             txt(ws, f'{C["项目"]}{r}', R(f'IF({q}=0,"","　"&INDEX(人_名称,{q}))'), align=ASHRINK)
             for m, c in enumerate(mcol, 1):
                 v = f'SUMIF({wm("流_人年属月键", m)},{k_aypm(q, Y, p, m)},{wm("流_净", m)})'
@@ -536,17 +547,15 @@ def build_ie(ws):
     # —— 块 2：资金支出（按收费项）——
     total_row(b2['总额'], '二', '资金支出合计（经营支出）· 按收费项', A_OUT, -1)
     rest_row(b2['未列示'], b2['总额'], b2['首行'], b2['末行'], None, f'　未列示（收费项超过 {IE_ITEMS} 个、认不出的）')
-    wi = wy('流_项年属月键')
     for r in range(b2['首行'], b2['末行'] + 1):
-        q, g = f'${IE_NO}{r}', f'${IE_GATE}{r}'
-        k = f'ROWS(${IE_NO}${b2["首行"]}:{IE_NO}{r})'
+        q = f'${IE_NO}{r}'
+        k = f'(ROW()-{b2["首行"] - 1})'
         helper(ws, f'{IE_NO}{r}', R(f'IF({k}>项_序数{A_OUT},0,MOD(SMALL(项_序键{A_OUT},{k}),1000))'))
-        helper(ws, f'{IE_GATE}{r}', R(f'IF({q}=0,0,COUNTIFS({wi},">="&{k_aypm(q, Y, A_OUT, 1)},{wi},"<="&{k_aypm(q, Y, A_OUT, 12)}))'))
         put(ws, f'{C["序号"]}{r}', R(f'IF({q}=0,"",{k})'), F_AUTO, FILL_NONE, fmt=INT, align=AC)
         txt(ws, f'{C["项目"]}{r}', R(f'IF({q}=0,"","　"&INDEX(项_名称,{q}))'), align=ASHRINK)
-        for m, c in enumerate(mcol, 1):
+        for m, c in enumerate(mcol, 1):                     # v3.1：不再先用全年笔数挡（COUNTIFS 扫全年 2 个条件，比 12 个月的单键 SUMIF 还贵）
             v = f'SUMIF({wm("流_项年属月键", m)},{k_aypm(q, Y, A_OUT, m)},{wm("流_净", m)})'
-            money(ws, f'{c}{r}', R(f'IF({q}=0,"",IF({g}=0,0,ROUND(-{v},2)))'))
+            money(ws, f'{c}{r}', R(f'IF({q}=0,"",ROUND(-{v},2))'))
         money(ws, f'{FY}{r}', R(f'IF({q}=0,"",ROUND(SUM({mcol[0]}{r}:{mcol[-1]}{r}),2))'), bold=True)
         share_cell(r, b2['总额'])
     # —— 块 3：资金支出（按收付人）——
@@ -563,12 +572,14 @@ def build_ie(ws):
     for k, t in (('人号', '人号'), ('年收入', '年收入'), ('收键', '收键'), ('年支出', '年支出'), ('支键', '支键'), ('收第k', '收第k'),
                  ('支第k', '支第k')):
         helper(ws, f'{RK[k]}1', t)
-    wn, wk = wy('流_净'), wy('流_人年属月键')
+    # v3.1（复核 compat-1）：排名表原来每格 SUMIFS(全年窗口 人年属月键 ">=" 1 月 "<=" 12 月) 两个区间条件扫全年，500 人×2 列是这张表最贵的；
+    #   改成 12 个月各自的窗口上单键 SUMIF(人年属月键＝那个月的键) 加起来：每个月只扫那个月的窗口、一个条件（LO 实测约快一倍，
+    #   跟在 _流 加「人年属键」列一样快，不用加列、不加公式）。数一样（同一批行，只是按月分开加）。
     for i in range(1, N_PARTY + 1):
         r = i + 1
         rr = f'${RK["人号"]}{r}'
         helper(ws, f'{RK["人号"]}{r}', i)
-        yv = lambda p: f'SUMIFS({wn},{wk},">="&{k_aypm(rr, Y, p, 1)},{wk},"<="&{k_aypm(rr, Y, p, 12)})'
+        yv = lambda p: '(' + '+'.join(f'SUMIF({wm("流_人年属月键", m)},{k_aypm(rr, Y, p, m)},{wm("流_净", m)})' for m in range(1, 13)) + ')'
         helper(ws, f'{RK["年收入"]}{r}', R(f'IF(INDEX(人_有效,{rr})<>1,0,ROUND({yv(A_IN)},2))'))
         helper(ws, f'{RK["收键"]}{r}', R(f'IF({RK["年收入"]}{r}>0,{RK["年收入"]}{r}+{rr}/1000000,"")'))
         helper(ws, f'{RK["年支出"]}{r}', R(f'IF(INDEX(人_有效,{rr})<>1,0,ROUND(-{yv(A_OUT)},2))'))
@@ -636,7 +647,10 @@ def build_span(ws):
     # —— 第 3、4 行：选择格＋大数 ——
     selector(ws, 'A3', '开始日期', SPAN_SEL['开始'], kind='date', prompt='空着＝最后一笔流水那年的 1 月 1 日')
     selector(ws, 'A4', '结束日期', SPAN_SEL['结束'], kind='date', prompt='空着＝最后一笔流水的日期')
-    sp = lambda p: f'SUMIFS({w("流_净")},{w("流_日期")},">="&{D1},{w("流_日期")},"<="&{D2},{w("流_属性号")},{p})'
+    # v3.1（复核 compat-1）：「这段时间里的有效行」直接用 流_期人键>0（_流 按 P_期起～P_期止 算好的：有效且在期内＝人号×10＋属性号≥1，
+    #   否则 0），少两个日期条件；跟 流_日期 ">="&起 "<="&止 加 有效 一样（录入模式时 期人键＝0，但这张表也停了）
+    wpk = w('流_期人键')
+    sp = lambda p: f'SUMIFS({w("流_净")},{wpk},">0",{w("流_属性号")},{p})'
     kv = dict(经营收入=sp(A_IN), 经营支出=f'-{sp(A_OUT)}', 经营净额=f'{K["经营收入"]}-{K["经营支出"]}', 投资建设=f'-{sp(A_CAP)}',
               往来净额=sp(A_FLOW), 待分类=sp(A_TBD), 内部净额=sp(I9))
     lab = dict(经营收入='经营收入', 经营支出='经营支出', 经营净额='经营净额', 投资建设='投资建设', 往来净额='往来净额', 待分类='待分类净额',
@@ -645,7 +659,7 @@ def build_span(ws):
         lc = CL(CI(re.match(r'[A-Z]+', cell).group()) - 1) + cell[len(re.match(r'[A-Z]+', cell).group()):]
         put(ws, lc, lab[k], F_KPI_L, FILL_KPI, align=ACW)
         if k == '天数笔数':
-            cnt = f'COUNTIFS({w("流_日期")},">="&{D1},{w("流_日期")},"<="&{D2},{w("流_有效")},1)'
+            cnt = f'COUNTIF({wpk},">0")'
             put(ws, cell, R(f'IF({D2}<{D1},"※ 结束早于开始，请改日期","共 "&({D2}-{D1}+1)&" 天 "&{cnt}&" 笔")'), F_KPI_L, FILL_KPI,
                 align=ACSHRINK)
         else:
@@ -680,17 +694,19 @@ def build_span(ws):
     r1 = SPAN_ACC['首行']
     wk, wk0 = w('流_账日键'), w0('流_账日键')
     for r in range(r1, tr):
-        k = f'ROWS(${P["号"]}${r1}:{P["号"]}{r})'
+        k = f'(ROW()-{r1 - 1})'
         a, n = f'${P["号"]}{r}', f'${P["笔数"]}{r}'
         helper(ws, f'{P["号"]}{r}', R(f'IF(INDEX(账户_有效,{k})=1,{k},0)'))
         helper(ws, f'{P["笔数"]}{r}', R(f'IF(OR({a}=0,{D2}<{D1}),0,COUNTIFS({wk},">="&({a}*{K_DAY}+{D1}),{wk},"<="&({a}*{K_DAY}+{D2})))'))
         txt(ws, f'{A_["账户"]}{r}', R(f'IF({a}=0,"",INDEX(账户_名称,{a}))'), align=ASHRINK)
         money(ws, f'{A_["期初余额"]}{r}', R(f'IF({a}=0,"",ROUND(INDEX(账户_期初,{a})+SUMIFS({w0("流_净")},{wk0},">="&{a}*{K_DAY},'
                                            f'{wk0},"<"&({a}*{K_DAY}+{D1})),2))'))
-        for kk, val, cond in (('收入', '流_收', f'"<>{I9}"'), ('支出', '流_支', f'"<>{I9}"'), ('内部转入', '流_收', I9),
-                              ('内部转出', '流_支', I9)):
-            money(ws, f'{A_[kk]}{r}', R(f'IF({a}=0,"",IF({n}=0,0,ROUND(SUMIFS({w(val)},{wk},">="&({a}*{K_DAY}+{D1}),{wk},"<="&({a}*{K_DAY}+{D2}),'
-                                       f'{w("流_属性号")},{cond}),2)))'))
+        # v3.1：收入（不含内部）＝期内全部收－内部转入（少一个 属性号<>9 条件；内部转入那格就在旁边）
+        per = lambda val: f'SUMIFS({w(val)},{wk},">="&({a}*{K_DAY}+{D1}),{wk},"<="&({a}*{K_DAY}+{D2})'
+        for kk, val in (('内部转入', '流_收'), ('内部转出', '流_支')):
+            money(ws, f'{A_[kk]}{r}', R(f'IF({a}=0,"",IF({n}=0,0,ROUND({per(val)},{w("流_属性号")},{I9}),2)))'))
+        for kk, val, sub in (('收入', '流_收', '内部转入'), ('支出', '流_支', '内部转出')):
+            money(ws, f'{A_[kk]}{r}', R(f'IF({a}=0,"",IF({n}=0,0,ROUND({per(val)})-{A_[sub]}{r},2)))'))
         c = lambda x: f'{A_[x]}{r}'
         money(ws, c('期末余额'), R(f'IF({a}=0,"",ROUND({c("期初余额")}+{c("收入")}-{c("支出")}+{c("内部转入")}-{c("内部转出")},2))'),
               bold=True)
@@ -723,7 +739,7 @@ def build_span(ws):
                 收入按收付人=(f'收入 · 按收付人（前 {SPAN_BLK["行数"]["收入按收付人"]} 名）', '收付人', A_IN, 1, K['经营收入'], '人'),
                 支出按收费项=('支出 · 按收费项（经营支出）', '收费项', A_OUT, -1, K['经营支出'], '项'),
                 支出按收付人=(f'支出 · 按收付人（前 {SPAN_BLK["行数"]["支出按收付人"]} 名）', '收付人', A_OUT, -1, K['经营支出'], '人'))
-    wpi, wpp, wpd = w('流_项号'), w('流_属性号'), w('流_日期')
+    wpi, wpp = w('流_项号'), w('流_属性号')
     for blk, (cn, ca, cs) in B['块'].items():
         ttl, hname, p, sg, kcell, kind = spec[blk]
         nrow = B['行数'][blk]
@@ -739,12 +755,14 @@ def build_span(ws):
         money(ws, f'{ca}{unl}', R(f'ROUND({ca}{tot}-SUM({ca}{f0}:{ca}{last}),2)'))
         pct(ws, f'{cs}{unl}', R(f'IF(OR(N({ca}{unl})=0,ROUND(${ca}${tot},2)=0),"",{ca}{unl}/${ca}${tot})'))
         for r in range(f0, last + 1):
-            k = f'ROWS(${hc}${f0}:{hc}{r})'
+            k = f'(ROW()-{f0 - 1})'
             q = f'${hc}{r}'
             if kind == '项':
                 helper(ws, f'{hc}{r}', R(f'IF({k}>项_序数{p},0,MOD(SMALL(项_序键{p},{k}),1000))'))
                 txt(ws, f'{cn}{r}', R(f'IF({q}=0,"",INDEX(项_名称,{q}))'), align=ASHRINK)
-                v = f'SUMIFS({wn},{wpi},{q},{wpp},{p},{wpd},">="&{D1},{wpd},"<="&{D2})'
+                # v3.1：收费项定了属性（不是「按方向」）时，项号＝q 的行属性号一定＝p，属性号条件省掉；期内＝期人键>0
+                v = (f'IF(INDEX(项_属性号,{q})={p},SUMIFS({wn},{wpi},{q},{wpk},">0"),'
+                     f'SUMIFS({wn},{wpi},{q},{wpp},{p},{wpk},">0"))')
                 money(ws, f'{ca}{r}', R(f'IF({q}=0,"",ROUND({"-" if sg < 0 else ""}{v},2))'))
             else:
                 src = RK['收第k'] if p == A_IN else RK['支第k']

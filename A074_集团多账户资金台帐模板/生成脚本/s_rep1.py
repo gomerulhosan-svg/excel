@@ -12,9 +12,12 @@
   - 只引用定义名称（_流、_表、_参、块_）和本表格子；名单按序号 INDEX(账户_名称,k)、INDEX(公司_名称,c) 取；两级清单用 账两级_候选键。
   - 扫 _流 一律配窗口（layout.win_*，窗口首/末放本表隐藏的 EFF 格）；条件照写全（窗口只是少扫）。
   - 公司小计不引用本列（会成环）：每个账户的数先放隐藏帮助区（40 行，第 a 行＝账户 a），公司行＝SUMIF(帮助 组号, c, 帮助列)。
-  - 第 2 行起每个公式都套 layout.rpt()（基础资料①「报表暂停」）；第 1 行标题暂停时红字。
+  - v3.1 录入模式（设计 §15.2）：第 2 行起每个公式都套 layout.pause()（基础资料①「录入模式」＝是 → 全空、不扫 _流）；
+    第 1 行标题录入模式时换成 layout.PAUSE_TITLE（红字）。
+  - v3.1 WPS 存盘：不写往下撑的区域（$X$8:X8 这种）——第几个用 ROW()-常数；②③ 的序号用隐藏链列 CN（上一格＋本行是不是账户）。
+  - 资金日报打印（复核 compat-4）：不缩成一页宽（68 列会缩到 14%），固定 48%、重复 A:B 列、打印区域 ①、②③ 两块。
 私有帮助格（不进 layout.NAMES，只本表用）：
-  资金日报 BP/BQ（① 每行账户号、窗内笔数）、BR15～BR17（日前窗末、月前窗末、填的截止）、BT..CI（②③ 每个账户）、CK..CM（②③ 每行键）；
+  资金日报 BP/BQ（① 每行账户号、窗内笔数）、BR15～BR17（日前窗末、月前窗末、填的截止）、BT..CI（②③ 每个账户）、CK..CN（②③ 每行键、序号链）；
   月度汇报表 R..V（一 每月窗口、月码、有数、显示；二 每个账户的号、笔数）；
   公司汇总 V..Z（组号、本年收入/支出/内部转入/转出）、AB..AE（每月窗口、月码、显示）、AF..AQ（每个账户 12 个月的月末余额）、AS..AU（三 每行键），
   第 37、71 行「未列示」（合计里没落到哪家公司的：账户的公司没认出）。"""
@@ -25,7 +28,7 @@ from openpyxl.utils import get_column_letter as CL, column_index_from_string as 
 from layout import (
     SH_DAY, SH_MON, SH_CO, N_ACC, N_CO, TWO_ROWS, K_DAY, K_YM, ATTR_NO, ATTR_NOINT_HI, CO_METRICS, ACC_TYPES, ACC_STATUS,
     DAY_SEL, DAY_EFF, DAY_KPI, DAY1, DAY2, DAY3, MON_SEL, MON_EFF, MON1, MON2, CO_SEL, CO_EFF, CO1, CO2, CO3, CO_HELP,
-    FMT_DATE_HDR, DV_FIXED, rpt, dsel, dsel_bad, yr_eff, yr_bad, ym_eff, ym_of, raw, win_first, win_last, win_before, win,
+    FMT_DATE_HDR, DV_FIXED, pause, PAUSE_TITLE, dsel, dsel_bad, yr_eff, yr_bad, ym_eff, ym_of, raw, win_first, win_last, win_before, win,
     k_aypm, sum_year, sum_before_year)
 from common import (
     YH, F_HDR, F_TXT, F_TXTB, F_AUTO, F_AUTOB, F_HELP, F_RED, F_KPI_L, F_KPI_V, F_NOTE, FILL_KPI, FILL_SUB, FILL_AUTO,
@@ -43,7 +46,13 @@ F_SUB = Font(name=YH, sz=10, bold=True, color='FF1F3864')
 
 
 def R(f):
-    return rpt(f)
+    """录入模式门控（设计 §15.2）：最外层 =IF(P_录入模式=1,"",…)"""
+    return pause(f)
+
+
+def nth(r0):
+    """第 r0 行起的第几个（v3.1：不写「第 r0 行到本行」那种往下撑的区域——WPS 存盘会拆）"""
+    return f'(ROW()-{r0 - 1})'
 
 
 def ab(c):
@@ -61,9 +70,9 @@ def ym_txt(x):
 
 
 def pause_title(ws, f):
-    """第 1 行标题：报表暂停时显示红字（条件格式），平时 f"""
-    ws['A1'] = f'=IF(P_报表暂停=1,"报表暂停中：基础资料①「报表暂停」清空就恢复",{f[1:] if f.startswith("=") else f})'
-    ws.conditional_formatting.add('A1', FormulaRule(formula=['P_报表暂停=1'], font=Font(name=YH, sz=15, bold=True, color='FFC00000'),
+    """第 1 行标题：录入模式时换成 layout.PAUSE_TITLE（红字，条件格式），平时 f。第 1 行不归 pause() 管（make 从第 2 行查）"""
+    ws['A1'] = f'=IF(P_录入模式=1,"{PAUSE_TITLE}",{f[1:] if f.startswith("=") else f})'
+    ws.conditional_formatting.add('A1', FormulaRule(formula=['P_录入模式=1'], font=Font(name=YH, sz=15, bold=True, color='FFC00000'),
                                                     fill=cf_bg('FFFFD7D7')))
 
 
@@ -140,7 +149,7 @@ D_H1 = DAY2['首行']                                          # ②③ 帮助�
 D_H2 = D_H1 + N_ACC - 1
 D_HC = dict(号='BT', 组='BU', 日笔数='BV', 昨日='BW', 日收='BX', 日支='BY', 日内入='BZ', 日内出='CA', 日余='CB',
             月笔数='CC', 月初='CD', 月收='CE', 月支='CF', 月内入='CG', 月内出='CH', 月末='CI')
-D_ROW = dict(键='CK', 号='CL', 组='CM')                      # ②③ 每行（两级清单）
+D_ROW = dict(键='CK', 号='CL', 组='CM', 序='CN')              # ②③ 每行（两级清单）；序＝到本行为止有几个账户行（链）
 
 
 def build_day(ws):
@@ -155,7 +164,8 @@ def build_day(ws):
            '收款、付款含内部转入/转出，跟银行流水对得上；② 某一天各账户：昨日余额、本日收入/支出（不含内部转账）、内部转入/转出、本日余额；'
            '③ 某个月各账户：月初、本月收入/支出（不含内部）、内部转入/转出、月末。余额都按日期算（不看台帐上下顺序）。'
            '黄格可以改：① 起始空着＝最后一笔流水那个月的 1 号，截止空着＝起始后 31 天内到最后一笔；② 日期空着＝① 的截止日；'
-           '③ 月份空着＝② 那天所在的月（填 1～12＝② 那天所在年份的那个月）。暂停的账户放在 ②③ 最后。')
+           '③ 月份空着＝② 那天所在的月（填 1～12＝② 那天所在年份的那个月）。暂停的账户放在 ②③ 最后。'
+           '打印：① 每页约 7 天（选的天数以外的页是空的，打印时选页码），②③ 另起一页。')
     title(ws, '=""', 'Q', tip, h2=58)
     pause_title(ws, f'{group_name()}&" 资金日报（"&{d_txt(E["起"])}&"～"&IF({E["止填"]}<{E["起"]},"※ 截止早于起始",{d_txt(E["止"])})&"）"')
     # —— 隐藏的生效值 ——
@@ -233,7 +243,7 @@ def build_day(ws):
     wsr, wzc = win('流_收', E['窗首'], E['窗末']), win('流_支', E['窗首'], E['窗末'])
     wn0, wk0 = win('流_净', 1, E['前窗末']), win('流_账日键', 1, E['前窗末'])
     for r in range(r0, rt):
-        k = f'ROWS(${D_ACC}${r0}:{D_ACC}{r})'
+        k = nth(r0)
         a = f'${D_ACC}{r}'
         helper(ws, f'{D_ACC}{r}', R(f'IF(INDEX(账户_有效,{k})=1,{k},0)'))
         helper(ws, f'{D_CNT}{r}', R(f'IF(OR({a}=0,{E["天数"]}<1),0,COUNTIFS({wk},">="&({a}*{K_DAY}+{E["起"]}),'
@@ -269,6 +279,29 @@ def build_day(ws):
         ws.column_dimensions[c].width = 10
     hide(ws, *([D_ACC, D_CNT, 'BR', 'BS'] + list(D_HC.values()) + list(D_ROW.values())))
     ws.freeze_panes = f'C{r0}'
+    print_day(ws)
+
+
+DAY_PRINT_SCALE = 48      # A4 横向可打宽约 1,065 像素（Excel 按 Calibri 11 算列宽）；②③（A:Q）约 2,127 像素 → ≤50% 才一页宽，留点余量取 48%；① 每页约 7～8 天
+
+
+def print_day(ws):
+    """资金日报打印（复核 compat-4）：v2 套默认「缩成一页宽」，① 68 列挤进一张 A4 横向缩到 14%，看不清。
+       改成：A4 横向、固定 48%（不用「缩到一页宽」）、每页重复 A:B 列（账户名、期初）、打印区域两块——① A1:BO48、②③ A50:Q125（另起一页）；
+       隐藏的帮助列不在打印区域里。ws._keep_print＝True：make 就不再套默认的一页宽。"""
+    ws._keep_print = True
+    ps = ws.page_setup
+    ps.orientation = 'landscape'
+    ps.paperSize = ws.PAPERSIZE_A4
+    ps.scale = DAY_PRINT_SCALE
+    ps.fitToWidth = ps.fitToHeight = None
+    ws.sheet_properties.pageSetUpPr.fitToPage = False
+    ws.print_title_cols = 'A:B'
+    ws.print_area = [f'A1:{DAY1["期末"]}{DAY1["合计行"]}', f'A{DAY2["标题行"]}:{DAY3["列"].split(":")[1]}{DAY2["合计行"]}']
+    ws.page_margins.left = ws.page_margins.right = 0.3
+    ws.page_margins.top = 0.5
+    ws.page_margins.bottom = 0.75
+    ws.page_margins.header = ws.page_margins.footer = 0.3
 
 
 def build_day23(ws, E):
@@ -291,7 +324,7 @@ def build_day23(ws, E):
         helper(ws, f'{H[k]}{D_H1 - 1}', t)
     for r in range(D_H1, D_H2 + 1):
         a = f'${H["号"]}{r}'
-        kk = f'ROWS(${H["号"]}${D_H1}:{H["号"]}{r})'
+        kk = nth(D_H1)
         helper(ws, h('号', r), R(f'IF(INDEX(账户_有效,{kk})=1,{kk},0)'))
         helper(ws, h('组', r), R(group_no(a)))
         dkey = f'{a}*{K_DAY}+{E["日"]}'
@@ -316,7 +349,8 @@ def build_day23(ws, E):
     selector(ws, f'A{s2}', '日期', DAY_SEL['日期'], kind='date', prompt='空着＝① 的截止日期')
     merge_put(ws, f'C{s2}:H{s2}', by_date(S['日期'], E['日'], '（空着＝① 的截止日期）'), F_NOTE, FILL_NONE, align=AL)
     selector(ws, f'J{s2}', '月份', DAY_SEL['月份'], kind='month',
-             prompt='填 1～12＝② 那天所在年份的那个月；也可以填 202609 或那个月的某一天；空着＝② 那天所在的月')
+             prompt='填 1～12＝② 那天所在年份的那个月；也可以填 202609 或那个月的某一天；空着＝② 那天所在的月',
+             err='填 1～12（② 那天所在年份的那个月）、202609 这样的年月，或那个月的某一天')     # 复核 F10：跟输入提示一个说法
     merge_put(ws, f'L{s2}:Q{s2}', by_month(S['月份'], f'YEAR({E["日"]})', E['月码'], '（空着＝② 那天所在的月）'), F_NOTE, FILL_NONE,
               align=AL)
     ws.row_dimensions[s2].height = 22
@@ -325,14 +359,15 @@ def build_day23(ws, E):
     header(ws, hd, list(zip([CL(i) for i in range(1, 9)], hdr2)) + list(zip([CL(i) for i in range(10, 18)], hdr3)), '报表')
     # 每行（两级清单）
     K = D_ROW
-    for k, t in (('键', '两级键'), ('号', '账户号'), ('组', '公司号/段')):
+    for k, t in (('键', '两级键'), ('号', '账户号'), ('组', '公司号/段'), ('序', '序号链')):
         helper(ws, f'{K[k]}{hd}', t)
     for r in range(f1, tot):
         key, a, c = f'${K["键"]}{r}', f'${K["号"]}{r}', f'${K["组"]}{r}'
-        helper(ws, f'{K["键"]}{r}', R(f'IFERROR(SMALL(账两级_候选键,ROWS(${K["键"]}${f1}:{K["键"]}{r})),0)'))
+        helper(ws, f'{K["键"]}{r}', R(f'IFERROR(SMALL(账两级_候选键,{nth(f1)}),0)'))
         helper(ws, f'{K["号"]}{r}', R(f'MOD({K["键"]}{r},100)'))
         helper(ws, f'{K["组"]}{r}', R(f'INT({K["键"]}{r}/100)'))
-        seq = R(f'IF({a}>0,COUNTIF(${K["号"]}${f1}:{K["号"]}{r},">0"),"")')
+        helper(ws, f'{K["序"]}{r}', R(f'N({K["序"]}{r - 1})+IF({a}>0,1,0)'))      # 第 f1 行的上一格是表头文字，N()＝0
+        seq = R(f'IF({a}>0,${K["序"]}{r},"")')
         nm = R(two_level_name(key, a, c))
         for (cseq, cname, cols, keys) in (('A', 'B', 'CDEFGH', ('昨日', '日收', '日支', '日内入', '日内出', '日余')),
                                           ('J', 'K', 'LMNOPQ', ('月初', '月收', '月支', '月内入', '月内出', '月末'))):
@@ -401,7 +436,7 @@ def build_mon(ws):
     header(ws, MON1['表头行'], [(C1[k], hdr[k]) for k in C1], '报表', height=34)
     Y = E['年份']
     for r in range(r1, rt):
-        m = f'ROWS(${P["窗首"]}${r1}:{P["窗首"]}{r})'
+        m = nth(r1)
         ym = f'${P["月码"]}{r}'
         helper(ws, f'{P["窗首"]}{r}', R(win_first(f'{Y}*100+{m}')))
         helper(ws, f'{P["窗末"]}{r}', R(win_last(f'{Y}*100+{m}', f'{P["窗首"]}{r}')))
@@ -451,7 +486,8 @@ def build_mon2(ws, E, S):
     t, s, hd, r1, rt = MON2['标题行'], MON2['选择行'], MON2['表头行'], MON2['首行'], MON2['合计行']
     section(ws, t, 'A', 'I', '二、指定月份 · 各账户（账户口径：收入、支出不含内部转账，内部转入/转出单列；月末＝月初＋收入－支出＋内部转入－内部转出）')
     selector(ws, f'A{s}', '月份', MON_SEL['月份'], kind='month',
-             prompt='填 1～12＝上面年份的那个月；也可以填 202609 或那个月的某一天；空着＝该年最后有数的月')
+             prompt='填 1～12＝上面年份的那个月；也可以填 202609 或那个月的某一天；空着＝该年最后有数的月',
+             err='填 1～12（上面年份的那个月）、202609 这样的年月，或那个月的某一天')           # 复核 F10
     merge_put(ws, f'C{s}:E{s}', by_month(S['月份'], E['年份'], E['月码'], '（空着＝该年最后有数的月）'), F_NOTE, FILL_NONE, align=AL)
     ws.row_dimensions[s].height = 22
     hdr = dict(账户='账户', 公司='公司', 月初余额='月初余额', 收入='本月收入\n（不含内部）', 支出='本月支出\n（不含内部）', 内部转入='内部转入',
@@ -463,7 +499,7 @@ def build_mon2(ws, E, S):
     wm = lambda nm: win(nm, E['月窗首'], E['月窗末'])
     wb, wbn = win('流_账月键', 1, E['前窗末']), win('流_净', 1, E['前窗末'])
     for r in range(r1, rt):
-        kk = f'ROWS(${P["号"]}${r1}:{P["号"]}{r})'
+        kk = nth(r1)
         a = f'${P["号"]}{r}'
         mkey = f'{a}*{K_YM}+{E["月码"]}'
         helper(ws, f'{P["号"]}{r}', R(f'IF(INDEX(账户_有效,{kk})=1,{kk},0)'))
@@ -545,7 +581,7 @@ def build_co(ws):
     wy = lambda nm: win(nm, E['窗首'], E['窗末'])
     wky = wy('流_账年属月键')
     for r in range(CO_H1, CO_H2 + 1):
-        kk = f'ROWS(${H["账户号"]}${CO_H1}:{H["账户号"]}{r})'
+        kk = nth(CO_H1)
         a = f'${H["账户号"]}{r}'
         helper(ws, f'{H["账户号"]}{r}', R(f'IF(INDEX(账户_有效,{kk})=1,{kk},0)'))
         helper(ws, f'{H["公司号"]}{r}', R(f'IF({a}=0,0,INDEX(账户_公司号,{a}))'))
@@ -563,7 +599,7 @@ def build_co(ws):
     mrow = {m: 1 + m for m in range(1, 13)}
     for m in range(1, 13):
         r = mrow[m]
-        mm = f'ROWS(${M["窗首"]}$2:{M["窗首"]}{r})'
+        mm = nth(2)
         helper(ws, f'{M["窗首"]}{r}', R(win_first(f'{Y}*100+{mm}')))
         helper(ws, f'{M["窗末"]}{r}', R(win_last(f'{Y}*100+{mm}', f'{M["窗首"]}{r}')))
         helper(ws, f'{M["月码"]}{r}', R(f'{Y}*100+{mm}'))
@@ -590,7 +626,7 @@ def build_co(ws):
     header(ws, CO1['表头行'], [(C[k], hdr[k]) for k in C], '报表', height=34)
     wg = wy('流_归年属月键')
     for r in range(r1, rt):
-        cc = f'ROWS($A${r1}:$A{r})'
+        cc = nth(r1)
         nm = f'$A{r}'
         sy = lambda p, sg=1: (('-' if sg < 0 else '') + sum_year(wy('流_净'), wg, cc, Y, p=p))
         txt(ws, f'{C["公司"]}{r}', R(f'IF(INDEX(公司_有效,{cc})=1,INDEX(公司_名称,{cc}),"")'), font=F_TXTB, fill_=FILL_NONE)
@@ -624,7 +660,7 @@ def build_co(ws):
     put(ws, f'N{h2}', R(f'IF({E["指标号"]}=8,"年末","全年")'), Font(name=YH, sz=10, bold=True, color='FFFFFFFF'), fill('FF30561E'),
         align=AC)
     for r in range(s2, e2):
-        cc = f'ROWS($A${s2}:$A{r})'
+        cc = nth(s2)
         txt(ws, f'A{r}', R(f'IF(INDEX(公司_有效,{cc})=1,INDEX(公司_名称,{cc}),"")'), font=F_TXTB, fill_=FILL_NONE)
         for m in range(1, 13):
             col, mr = CL(1 + m), mrow[m]
@@ -664,7 +700,7 @@ def build_co(ws):
     stats = '"' + '","'.join(ACC_STATUS) + '"'
     for r in range(f3, e3):
         key, a, c = f'${K["键"]}{r}', f'${K["号"]}{r}', f'${K["组"]}{r}'
-        helper(ws, f'{K["键"]}{r}', R(f'IFERROR(SMALL(账两级_候选键,ROWS(${K["键"]}${f3}:{K["键"]}{r})),0)'))
+        helper(ws, f'{K["键"]}{r}', R(f'IFERROR(SMALL(账两级_候选键,{nth(f3)}),0)'))
         helper(ws, f'{K["号"]}{r}', R(f'MOD({K["键"]}{r},100)'))
         helper(ws, f'{K["组"]}{r}', R(f'INT({K["键"]}{r}/100)'))
         txt(ws, f'{C3["名称"]}{r}', R(two_level_name(key, a, c, sub='')), font=F_TXT, fill_=FILL_NONE, align=ASHRINK)

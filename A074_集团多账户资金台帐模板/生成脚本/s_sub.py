@@ -5,9 +5,12 @@
   第 1 行标题（账户名、年份、原表名）；第 2 行说明；第 3 行 回首页｜账户（黄 D3）｜信息｜年份（黄 H3）｜状态（账户查询多 月份 J3）；
   第 4 行 KPI：年初余额 D4｜本年收入 F4｜本年支出 H4（不含内部转账）｜年末/当前余额 J4｜笔数 K4；
   第 5 行表头（A..K 明细；M..S 月份表）；第 6 行「年初余额」；第 7 行起逐笔（像原日记账：月、日、收费项、收付人、摘要、收入、支出、余额…）。
-逐笔：隐藏 Z 列＝这一笔在 _流 的第几个位置（链式：每行只 MATCH 一次，从上一笔往后找；整张表只扫一遍 _流；段尾空位键是 0，自动跳过），
-  其余各列 INDEX(流_xx, Z)；摘要、备注、对方账户、归属公司、没认出的收费项/收付人原文用 layout.lref_z（整列名称 台帐_字段；
-  v3.1：_流 位置 ≠ 台帐第几条，台帐行号用 段_区首＋取数号−1）。Z=0 的行每一列都 IF 挡成空（INDEX(…,0) 会取整列/表头）。
+逐笔：隐藏 Z 列＝这一笔在 _流 的第几个位置（链式：每行只 MATCH 一次，从上一笔往后找；段尾空位键是 0，自动跳过；
+  第 k 行 k＞笔数 Z4 直接出 0；先在后面 SEG_SLOTS 个位置里找，找不到再放大 10 倍，最后才找到底——结果同 layout.next_pos，
+  但 LibreOffice 每个不同区域的 MATCH 都要按区域长短花时间，全容量正常模式改一格实测省约 1 秒）。
+  其余各列 INDEX(流_xx, Z)；摘要、备注、对方账户、归属公司、没认出的收费项/收付人原文从整列名称 台帐_字段 取（layout.lref_z 的口径：
+  v3.1 _流 位置 ≠ 台帐第几条，台帐行号＝段_区首＋取数号−1）：台帐第几格先在私有隐藏列 Y（第 7 行起，TROW）算一次，
+  各文字列只 INDEX 一次（原来每格 4～8 次，正常模式改一格实测省约 0.5 秒）。Z=0 的行每一列都 IF 挡成空（INDEX(…,0) 会取整列/表头）。
   不用 FILTER/OFFSET/INDIRECT；公式里不直接写「资金台帐!」、不写往下撑的区域（WPS 存盘会一格一条拆开写；序号写 ROW()−6）。
 月份表（M5:S19）：按 _流 的键算（账户口径：收入/支出不含内部转账，内部转入/转出单列；月末余额＝上月＋收−支＋入−出），每个月只扫那个月的窗口。
   当年最后日期以后的月份显示空；第 19 行全年（R19＝R6＋N19−O19＋P19−Q19，不取 R18）。
@@ -16,7 +19,8 @@
 隐藏格（layout.SUB_PARAM）：Z1 账户号、Z2 年份、Z3 键（账年键；账户查询选了月份＝账月键）、Z4 笔数（_流 里这个键的条数）、
   Y1 账户名、Y2 子表名（常数；备用/查询＝""）、Y3 月码（子表＝0）、Y4 状态号；U/V 各月扫描窗口（U6/V6＝年初用的「年前」窗口，U19/V19＝全年/选的月）。
 私有帮助格（X 列，本模块自己用；s_check 可以读）：X1 最后月码、X2 本表容量、X3 本表明细净额（SUM(G)−SUM(H)）、X4 J4 用的窗口末、
-  X5 明细起点余额（＝I6：年初余额；账户查询选了月份＝月初余额）、X6 年份格生效值（查询）、X7 月初余额用的窗口末（查询）；W7..W18 各月月码。
+  X5 明细起点余额（＝I6：年初余额；账户查询选了月份＝月初余额）、X6 年份格生效值（查询）、X7 月初余额用的窗口末（查询）；W7..W18 各月月码；
+  Y7 起（逐笔每行）＝这一笔是整列名称 台帐_字段 的第几格（Z=0 或录入模式＝0）。
 """
 from openpyxl.styles import Font
 from openpyxl.formatting.rule import FormulaRule
@@ -26,7 +30,7 @@ from layout import (
     SUB_HDR, SUB_OPEN, SUB_R0, SUB_COLS, SUB_HEAD, SUB_WIDTH, SUB_MON, SUB_MON_HDR, SUB_MON_OPEN, SUB_MON_R1, SUB_MON_TOT,
     SUB_HELP, SUB_MON_WIN, SUB_PARAM, SUB_SEL, SUB_KPI, QRY_SEL, QRY_KPI, SUB_FILTER_COLS, RGB_GUESS_FONT,
     RGB_ERR_FILL, RGB_ERR_FONT, PAUSE_TITLE,
-    K_YM, K_DAY, FMT_MONEY, lref_z, raw, norm, esc, name2no, yr_eff, yr_bad, ym_eff, win_first, win_last, win_before, win,
+    K_YM, K_DAY, FMT_MONEY, SEG_SLOTS, z_row, raw, norm, esc, name2no, yr_eff, yr_bad, ym_eff, win_first, win_last, win_before, win,
     k_aypm, sum_before_year, next_pos, chain, pause, pause0)
 from common import (put, title, header, widths, hide, home_link, selector, kpi, cf_flags, cf_neg_red, cf_bg, print_setup,
                     F_TXT, F_TXTB, F_AUTO, F_HELP, F_NOTE, FILL_KPI, FILL_SEL, BD, AC, AL, ALW, AR,
@@ -46,8 +50,11 @@ U, V = SUB_MON_WIN['窗首'], SUB_MON_WIN['窗末']
 Z = SUB_HELP['位置']
 SC, MO = SUB_COLS, SUB_MON
 R_OPEN, R1, RT = SUB_MON_OPEN, SUB_MON_R1, SUB_MON_TOT     # 6 年初；7..18 月；19 全年
-HELP_COLS = ('T', U, V, MC, 'X', 'Y', Z)
-assert SUB_R0 == 7 and Z == 'Z', '逐笔公式按「第 7 行、Z 列」写的（$Z7），layout 改了这里要跟着改'
+TROW = 'Y'                                             # 私有：逐笔每行这一笔是 台帐_字段 的第几格（第 SUB_R0 行起；Y1..Y4 是 SUB_PARAM）
+HELP_COLS = ('T', U, V, MC, 'X', TROW, Z)
+assert SUB_R0 == 7 and Z == 'Z' and TROW == 'Y', '逐笔公式按「第 7 行、Z 列、Y 列」写的（$Z7、$Y7），layout 改了这里要跟着改'
+assert all(not (c[0] == TROW and int(c[1:]) >= SUB_R0) for c in SUB_PARAM.values()), 'Y 列第 7 行起是逐笔帮助列'
+W1, W2 = SEG_SLOTS, SEG_SLOTS * 10                     # 链式 MATCH 先找的两级窗口
 
 # 录入模式：标题（第 1 行）换成 PAUSE_TITLE；状态格（不停，登记 _pause_exempt）
 ENTRY_ON = 'P_录入模式=1'
@@ -74,9 +81,15 @@ def _x(f, z='$Z7'):
     return f'INDEX(流_{f},{z})'
 
 
-def _tx(field, z='$Z7'):
-    """_流 位置 z 那一笔在资金台帐的录入原文（去首尾空格）：整列名称 台帐_字段，行号＝段_区首＋取数号−1（layout.lref_z）"""
-    return f'TRIM({lref_z(field, z)}&"")'
+def _tx(field, t='$Y7'):
+    """这一笔在资金台帐的录入原文（去首尾空格）：整列名称 台帐_字段 的第 t 格（t＝Y 列，layout.lref_z 的口径）"""
+    return f'TRIM(INDEX(台帐_{field},{t})&"")'
+
+
+def _trow_formula():
+    """Y 列（第 7 行写法）：_流 位置 Z 那一笔是 台帐_字段 的第几格＝z_row(Z)−段_首(1)+1（layout.lref_z 里 INDEX 的第二个参数）。
+       pause0 打头：录入模式出 0（make：子表逐笔区 A..K、Z 以外的格要 pause 打头）"""
+    return pause0(f'=IF($Z7=0,0,{z_row("$Z7")}-INDEX(段_首,1)+1)')
 
 
 def _guard(f, z='$Z7'):
@@ -102,15 +115,22 @@ def _detail_formulas():
     }
 
 
+def _next(prev, keyname):
+    """从 prev 往后找下一个 键＝KEY 的位置（结果同 layout.next_pos）：先找后面 W1 个位置，再 W2 个，最后到 N_FLOW"""
+    win_ = lambda w: f'{prev}+MATCH({KEY},INDEX({keyname},{prev}+1):INDEX({keyname},MIN({N_FLOW},{prev}+{w})),0)'
+    return f'IFERROR({win_(W1)},IFERROR({win_(W2)},{next_pos(prev, KEY, keyname, N_FLOW)}))'
+
+
 def _pos_formulas(qry):
-    """Z 列：第 7 行从头 MATCH（链头，pause0：录入模式出 0，整张逐笔区变空壳）；第 8 行起从上一笔往后找（链式，末位 N_FLOW）"""
+    """Z 列：第 7 行从头 MATCH（链头，pause0：录入模式出 0，整张逐笔区变空壳）；第 8 行起从上一笔往后找（链式，末位 N_FLOW）；
+       第 k 行（k＝ROW()−6）k＞笔数 Z4 就是 0（Z4＝窗口里数的同一个键，窗口按块表保证盖住全部；省掉最后一次找到底的 MATCH）"""
+    more = f'ROW()-{SUB_R0 - 1}>{CNT}'
     if not qry:
         first = pause0(f'=IF({A_}=0,0,IFERROR(MATCH({KEY},流_账年键,0),0))')
-        nxt = f'=IF(Z7=0,0,{next_pos("Z7", KEY, "流_账年键", N_FLOW)})'
+        nxt = f'=IF(Z7=0,0,IF({more},0,{_next("Z7", "流_账年键")}))'
     else:
         first = pause0(f'=IF({A_}=0,0,IFERROR(IF({YM}=0,MATCH({KEY},流_账年键,0),MATCH({KEY},流_账月键,0)),0))')
-        nxt = (f'=IF(Z7=0,0,IF({YM}=0,{next_pos("Z7", KEY, "流_账年键", N_FLOW)},'
-               f'{next_pos("Z7", KEY, "流_账月键", N_FLOW)}))')
+        nxt = f'=IF(Z7=0,0,IF({more},0,IF({YM}=0,{_next("Z7", "流_账年键")},{_next("Z7", "流_账月键")})))'
     return first, nxt
 
 
@@ -342,12 +362,12 @@ def build_one(ws, kind, sub=None, orig=None, cap=40):
     # ── 逐笔 ──
     det = _detail_formulas()
     first, nxt = _pos_formulas(qry)
-    zfont = F_HELP
+    trow = _trow_formula()
     for r in range(SUB_R0, end + 1):
-        zc = ws.cell(row=r, column=CI(Z), value=first if r == SUB_R0 else nxt.replace('Z7', f'Z{r - 1}'))
-        zc.font = zfont
+        ws.cell(row=r, column=CI(Z), value=first if r == SUB_R0 else nxt.replace('Z7', f'Z{r - 1}')).font = F_HELP
+        ws.cell(row=r, column=CI(TROW), value=trow.replace('$Z7', f'$Z{r}')).font = F_HELP
         for k, col in SC.items():
-            c = ws.cell(row=r, column=CI(col), value=det[k].replace('$Z7', f'$Z{r}'))
+            c = ws.cell(row=r, column=CI(col), value=det[k].replace('$Z7', f'$Z{r}').replace('$Y7', f'$Y{r}'))
             _style(c, *STYLE[k])
     # 条件格式：按摘要认出来的收费项（流_项推>0）/收付人（台帐空着、认出来了）琥珀斜体；余额负数红
     dcol, ecol = SC['收费项'], SC['收付人']
@@ -356,7 +376,7 @@ def build_one(ws, kind, sub=None, orig=None, cap=40):
     ws.conditional_formatting.add(f'{dcol}{SUB_R0}:{dcol}{end}', FormulaRule(
         formula=[f'AND({z0}>0,INDEX(流_项推,{z0})>0)'], font=guess))
     ws.conditional_formatting.add(f'{ecol}{SUB_R0}:{ecol}{end}', FormulaRule(
-        formula=[f'AND({z0}>0,{_tx("收付人", z0)}="")'], font=guess))
+        formula=[f'AND({z0}>0,{_tx("收付人", f"${TROW}{SUB_R0}")}="")'], font=guess))
     cf_neg_red(ws, f'{SC["余额"]}{SUB_R0}:{SC["余额"]}{end}', f'{SC["余额"]}{SUB_R0}')
     hide(ws, *HELP_COLS)
     ws.freeze_panes = f'A{SUB_OPEN}'
