@@ -46,7 +46,7 @@ from layout import (
     LEDGER_COLS, LEDGER_SHOW, LEDGER_LAST, LEDGER_ANCHOR, BASE_BLOCKS, BASE_COLS, BASE_KEYCOL, BASE_LAST, BASE_CAP, CO1, CLS,
     ITEMCO, SUB_R0, SUB_PARAM, SUB_KPI, SUB_MON, SUB_MON_TOT, SUB_COLS, K_YM, PAIR_DAYS, DUP_WIN, JUMP_DAYS, BLK,
     ITEM_OPEN, R0, HDR, PAUSE_TITLE, q, bref, lrange, esc, next_pos, k_aypm, z_row, lref_z, seg_name, win_first, win_last, win,
-    pause, pause0)
+    pause, pause0, cnta)
 from common import (
     YH, F_TXT, F_TXTB, F_AUTO, F_AUTOB, F_HELP, F_NOTE, F_KPI_L, F_SEC, FILL_KPI, FILL_NONE, BD, AC, AL, ALW, AR, ACC, INT, PCT,
     DATE, put, title, header, widths, hide, link, home_link, cf_bg, fill, print_setup)
@@ -485,7 +485,7 @@ def build_chk(ws, ctx):
         cols = [CI(c) for f, c in BASE_COLS[k].items() if f not in ('序号', '核对')]
         c1, c2 = CL(min(cols)), CL(max(cols))
         area = f'{q(SH_BASE)}!${c1}${hdr}:${c2}${BASE_LAST[k]}'
-        hs.append(f'COUNTA({area})-COUNTA(INDEX({area},1,1):INDEX({area},{cap + 1},COLUMNS({area})))')
+        hs.append(f'{cnta(area)}-{cnta(f"INDEX({area},1,1):INDEX({area},{cap + 1},COLUMNS({area}))")}')   # a74split：不数空串
         items.append(k)
     ref = lambda i: f'${CL(HELP0 + i)}{r}'
     nt = '""'
@@ -501,7 +501,7 @@ def build_chk(ws, ctx):
            f'="推收费项的规则里，查找位置空着或填「收付人」的有 "&N(P_Q规则数)&" 条（最多 {N_RULE_Q} 条）：超了以后按收付人认收费项全都不起作用'
            f'（按摘要照样认）。只在摘要里找的规则，把⑥「查找位置」填「摘要」"', fmt=INT, sheet=SH_BASE)
     kw = bref('规则', '关键词')
-    ck.row('规则', '摘要关键词规则没起作用的', f'MAX(0,COUNTA(INDEX({kw},2):INDEX({kw},{N_RULE + 1}))-P_规则数)', ('w', '条'),
+    ck.row('规则', '摘要关键词规则没起作用的', f'MAX(0,{cnta(f"INDEX({kw},2):INDEX({kw},{N_RULE + 1})")}-P_规则数)', ('w', '条'),
            '基础资料⑥填了关键词、但收费项和收付人都认不出（或方向、查找位置写错）：这条规则不起作用，看⑥的核对列', fmt=INT, sheet=SH_BASE)
     ck.row('容量', f'收费项大类超过 {N_GROUP} 个', f'MAX(0,N(大类_数)-{N_GROUP})', ('x', '个'),
            f'="大类现在 "&N(大类_数)&" 个：超过 {N_GROUP} 个的报表不单列（归到「大类空或超过」），合并几个大类"', fmt=INT, sheet=SH_BASE)
@@ -652,7 +652,7 @@ def _seg_helpers(ws):
             f'"第 "&({pt}+1)&"～"&MIN(INDEX(段_尾,{k}),INDEX(段_区首,{k})-1)&" 行"),""))')
         ws[k].font = ws[f'{Pp}{r}'].font = F_HELP
     i0 = 'P_台帐末-INDEX(段_首,1)+2'
-    cnt = lambda f: f'COUNTA(INDEX(台帐_{f},{i0}):INDEX(台帐_{f},ROWS(台帐_{f})))'
+    cnt = lambda f: cnta(f'INDEX(台帐_{f},{i0}):INDEX(台帐_{f},ROWS(台帐_{f}))')      # a74split：不数空串
     ws[f'{O}5'] = pause0(f'IF(P_没算=0,0,IFERROR(MAX({cnt("日期")},{cnt("账户")}),0))')
     ws[f'{O}5'].font = F_HELP
 
@@ -721,7 +721,8 @@ def _base_ins_row(ck):
     hs, names = [], []
     for k, t, _tr, _hdr, cap in BASE_BLOCKS:
         key, no = bref(k, _key_field(k)), bref(k, '序号')
-        hs.append(f'COUNTIFS(INDEX({key},2):INDEX({key},{cap + 1}),"<>",INDEX({no},2):INDEX({no},{cap + 1}),"")')
+        # a74split：「有名字」不用 COUNTIFS 的 "<>"（公式出的空串也算有）；查询本取数格空着是 ""
+        hs.append(f'SUMPRODUCT(--(LEN(INDEX({key},2):INDEX({key},{cap + 1}))>0),--(INDEX({no},2):INDEX({no},{cap + 1})&""=""))')
         names.append(t.split('（')[0].replace(' ', ''))
     nt = '""'
     for i, nm in reversed(list(enumerate(names))):

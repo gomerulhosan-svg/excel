@@ -2,6 +2,7 @@
 """A074 集团多账户资金台帐模板 · 生成脚本
 
 跑法：python3 build.py [--only s_input,s_mirror,…] [--out 路径] [--keep] [--no-time] [--blank] [--time-ref 参照.xlsx] [--time-calc]
+      python3 build.py --split [--out-dir 目录] [--keep]     a74split 两本联动（录入本 A074-1、查询本 A074-2，见 main_split、split.py）
 输出：../A074_集团多账户资金台帐模板.xlsx（基础资料和导入的流水在 data.py，读 导入/out/*.json）
       ../A074_数据整理记录.xlsx（v3.1：修改明细挪成单独文件，静态，设计 §15.5；--out 另存时放在旁边，文件名加「_数据整理记录」）
       --blank：另出一本空白模板（基础资料照预置，资金台帐、数据整理记录是空的；默认文件名加「_空白」）
@@ -250,7 +251,122 @@ def main(out=OUT, only=None, scenario=None, keep=False, timeout=3000, timing=Tru
     return (0 if ok else 1), st
 
 
+def patch_cache(path, sheet, values):
+    """成品里某张表几个公式格的缓存值改成给定的文字（zip 级；查询本首页 K3 这种一本版里没有的公式，inject 拿不到它的数）"""
+    from lxml import etree
+    from inject_cache import sheet_parts, NS
+    tmp = path + '.tmp'
+    zin = zipfile.ZipFile(path)
+    part = sheet_parts(zin)[sheet]
+    zout = zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED)
+    n = 0
+    for it in zin.infolist():
+        d = zin.read(it.filename)
+        if it.filename == part:
+            root = etree.fromstring(d)
+            for c in root.iter(f'{{{NS}}}c'):
+                if c.get('r') in values and c.find(f'{{{NS}}}f') is not None:
+                    v = c.find(f'{{{NS}}}v')
+                    if v is None:
+                        v = etree.SubElement(c, f'{{{NS}}}v')
+                    c.set('t', 'str')
+                    v.text = str(values[c.get('r')])
+                    n += 1
+            d = etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+        zout.writestr(it, d)
+    zout.close()
+    zin.close()
+    shutil.move(tmp, path)
+    return n
+
+
+def main_split(out_dir=ROOT, keep=False, timeout=3000):
+    """a74split 两本联动：一本版（内存，make 全套检查）→ 存一本版（只给 LibreOffice 算数）→ 改成查询本、查、存、退回 → 拆成录入本、查、存
+       → A074_数据整理记录.xlsx 照旧单独出 → 三本压共享公式（含「[」的不压）→ 打印 XML／WPS 存后估计
+       → LibreOffice（关多线程）算一本版、算录入本，数报错 → 一本版的数写进查询本、录入本的数写进录入本 → 查询本外部链接缓存按录入本重写。
+       原来那本一本版成品（A074_集团多账户资金台帐模板.xlsx）不动。"""
+    import time
+    import split
+    from layout import SMALL, WB1_FILE, WB2_FILE, MIRROR_MODE
+    from refresh_link_cache import refresh
+    t0 = time.time()
+    out_dir = os.path.abspath(out_dir)
+    if SMALL and out_dir == os.path.abspath(ROOT):
+        print('✗ 现在是小容量（A074_SMALL=1），不准写正式成品；用 --out-dir 另存')
+        return 3
+    out1, out2 = os.path.join(out_dir, WB1_FILE), os.path.join(out_dir, WB2_FILE)
+    os.makedirs(CALC, exist_ok=True)
+    one = os.path.join(CALC, 'A074_一本版_拆本用.xlsx')
+    ctx = data.build_ctx()
+    wb = make.build(ctx=ctx)
+    print(f'① 一本版（内存）{time.time() - t0:.0f} 秒；make 检查、查环都过')
+    wb.save(one)
+    undo = split.make_query(wb, ctx)
+    winfo_q = make.check_book(wb, 'query')
+    wb.save(out2)
+    undo()
+    print(f'   查询本：make 检查（WPS 体检、录入模式、_流 规则）、查环都过；存 {os.path.basename(out2)}')
+    split.make_entry(wb, ctx)
+    winfo_e = make.check_book(wb, 'entry')
+    wb.save(out1)
+    print(f'   录入本：make 检查（WPS 体检）、查环都过；存 {os.path.basename(out1)}（{time.time() - t0:.0f} 秒）')
+    del wb
+    write_log_book(ctx, OUT if out_dir == os.path.abspath(ROOT) else os.path.join(out_dir, os.path.basename(OUT)))
+    nf = {}
+    for p, tag in ((one, '一本版'), (out2, '查询本'), (out1, '录入本')):
+        s_ = share(p)
+        nf[p] = count_formulas(p)
+        print(f'② {tag}：公式 {nf[p]:,} 个（共享 {sum(s_.values()):,} 格），{os.path.getsize(p) / 1e6:.1f} MB')
+        if p != one:
+            xml_report(p)
+    calc_one = os.path.join(CALC, 'A074_一本版_拆本用_算数.xlsx')
+    calc_e = os.path.join(CALC, os.path.basename(out1).replace('.xlsx', '_算数.xlsx'))
+    ok = True
+    for src, calc, tag in ((one, calc_one, '一本版（查询本的数从它来）'), (out1, calc_e, '录入本')):
+        shutil.copy(src, calc)
+        unhide_cols(calc)
+        st = lo_recalc(calc, timeout)
+        if st is None or 'error' in st:
+            print(f'✗ {tag} 重算没跑成：', str((st or {}).get('error'))[:500])
+            return 2
+        print(f"③ LibreOffice 算{tag}：公式 {st['total_formulas']:,} 个，报错 {st['total_errors']} 处")
+        for k, v in (st.get('error_summary') or {}).items():
+            print(f'    {k} ×{v["count"]}  {v["locations"][:15]}')
+        ok = ok and st['total_errors'] == 0 and st['total_formulas'] == nf[src]
+        if st['total_formulas'] != nf[src]:
+            print(f"✗ 公式个数对不上：{nf[src]} vs LibreOffice {st['total_formulas']}")
+    n2, _ = inject(out2, calc_one)
+    n1, _ = inject(out1, calc_e)
+    k3 = _k3_text(ctx)
+    patch_cache(out2, '首页', {'K3': k3})
+    print(f'④ 写回缓存：查询本 {n2:,} 格（一本版算的；首页 K3＝「{k3}」）、录入本 {n1:,} 格')
+    refresh(out2, {WB1_FILE: out1})
+    print(f'⑤ {WB1_FILE} {os.path.getsize(out1) / 1e6:.1f} MB、{WB2_FILE} {os.path.getsize(out2) / 1e6:.1f} MB（取数写法 {MIRROR_MODE}）；'
+          f'共 {time.time() - t0:.0f} 秒')
+    if not keep:
+        for p in (one, calc_one, calc_e):
+            if os.path.exists(p):
+                os.remove(p)
+    return 0 if ok else 1
+
+
+def _k3_text(ctx):
+    """查询本首页 K3 的缓存值（跟公式 split.home_k3_formula 一样算）：流水笔数＝日期或账户有字的行，最后一笔＝认得出的最晚日期"""
+    import datetime as dt
+    from layout import N_LEDGER
+    es = [e for e in (ctx.get('entries') or [])[:N_LEDGER] if e]
+    n = max(sum(1 for e in es if e.get('日期') not in (None, '')), sum(1 for e in es if e.get('账户') not in (None, '')))
+    ds = [e['日期'] for e in es if isinstance(e.get('日期'), (dt.date, dt.datetime))]
+    last = max(ds) if ds else None
+    return (f'数据来自录入本：流水 {n:,} 笔，最后一笔 ' + (f'{last.year}/{last.month}/{last.day}' if last else '（没有）')
+            + '（跟录入本首页对一下）')
+
+
 if __name__ == '__main__':
+    if '--split' in sys.argv:
+        a = sys.argv[1:]
+        od = os.path.abspath(a[a.index('--out-dir') + 1]) if '--out-dir' in a else ROOT
+        sys.exit(main_split(od, keep='--keep' in a))
     args = sys.argv[1:]
     only = None
     out = OUT

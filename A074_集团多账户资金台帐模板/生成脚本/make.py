@@ -14,7 +14,12 @@
   全书只有 _参 的 P_错位、P_笔数差 准引用 段_错位、段_有字；
 - WPS 存盘体检（wps_check）：WPS_STRICT 里的表，同一列连续 ≥3 格同写法的公式出现「表名!」或往下撑的区域就报错
   （白名单：_流 段表各列、_流 第 1 段）；_表、_流、子表类里一律不准直接写「资金台帐!」「基础资料!」（用名称）；其余表只打印会被拆的格数、字节。
-再查环（cyclecheck）。"""
+再查环（cyclecheck）。
+
+a74split 两本联动（split.py；build.main_split 调 check_book）：一本版照上面全查；拆出来的两本各再查一遍 check_book(wb, book)：
+- 查询本（book='query'）：上面每一条照查；只有 WPS 体检不管外部取数格（'[1]资金台帐'!A5 这种：share 本来就不压，WPS 也照写全文）；
+- 录入本（book='entry'）：没有录入模式（不查 pause 打头）；没有 _流（_流、段表规则不查）；LOOKUP 准在资金台帐（辅助列、问题列）；
+  名称只认本子里定义了的；WPS 体检、查环照查。"""
 import importlib
 import re
 from collections import defaultdict
@@ -53,6 +58,7 @@ _RX = re.compile(
     r"|(?P<nm>[^\W\d][\w.]*))"
     r"(?![\w.(!])")
 _NOT_NAMES = {'TRUE', 'FALSE'}
+EXT_REF = re.compile(r"\[\d+\]")                    # 外部链接（a74split 查询本的取数格）
 _ERRLIT = re.compile(r'#(?:N/A|REF!|VALUE!|DIV/0!|NUM!|NAME\?|NULL!)')
 
 
@@ -170,13 +176,13 @@ def _formulas(ws):
     return got
 
 
-def _text_issues(ws_title, f, known):
+def _text_issues(ws_title, f, known, lookup_ok=LOOKUP_OK):
     """只看公式文字的检查（同一列同写法的格只查一次）"""
     hit = []
     outside = _outside(f).upper()
     hit += BANNED.findall(outside) + (['_xlfn'] if '_XLFN.' in outside else [])
-    if ws_title not in LOOKUP_OK and LOOKUP_RE.search(outside):
-        hit.append('LOOKUP 只准在 _流 的摘要规则列用')
+    if ws_title not in lookup_ok and LOOKUP_RE.search(outside):
+        hit.append('LOOKUP 只准在 _流 的摘要规则列用（录入本：资金台帐的辅助列、问题列）')
     long_lit = [len(t) for t in f.split('"')[1::2] if len(t) > 255]       # 公式里的文字常量 Excel 最多 255 字
     if long_lit:
         hit.append(f'文字常量超过 255 字 {long_lit}')
@@ -467,7 +473,9 @@ def wps_check(wb):
                 j = i + 1
                 while j < len(lst) and lst[j][0] == lst[j - 1][0] + 1 and keys[j] == keys[i]:
                     j += 1
-                if j - i >= 3:
+                if j - i >= 3 and EXT_REF.search(_outside(lst[i][1])):
+                    pass                                 # a74split 查询本的外部取数格（'[1]资金台帐'!A5）：share 本来就不压，WPS 也照写全文，不归这里管
+                elif j - i >= 3:
                     xs, mx = wps_split(lst[i][1])
                     if xs or mx:
                         n += j - i
@@ -506,8 +514,16 @@ def entry_stats(wb):
     return out
 
 
-def check_formulas(wb):
-    known = {n.upper() for n in set(NAMES) | set(DV_NAMES) | set(wb.defined_names.keys())}   # Excel 的名称不分大小写
+def check_formulas(wb, book='one'):
+    """book：'one' 一本版、'query' 查询本（a74split）、'entry' 录入本。拆本以后不适用的检查：
+       录入本没有「录入模式」（不查 pause 打头）、名称只认本子里定义了的（不拿 layout.NAMES 兜底）、LOOKUP 准在资金台帐（辅助列、问题列）；
+       _流、段表规则只在有 _流 的本子查（一本版、查询本）；WPS 体检三本都查（查询本的外部取数格不归体检管，见 wps_check）。"""
+    if book == 'entry':
+        known = {n.upper() for n in wb.defined_names.keys()}
+        lookup_ok = LOOKUP_OK | {SH_LEDGER}
+    else:
+        known = {n.upper() for n in set(NAMES) | set(DV_NAMES) | set(wb.defined_names.keys())}   # Excel 的名称不分大小写
+        lookup_ok = LOOKUP_OK
     agg = {}                                         # (表, 列, 毛病) → [第一格, 格数, 公式]：同一列同样的毛病只报一条
     cache = {}
     for ws in wb.worksheets:
@@ -516,8 +532,8 @@ def check_formulas(wb):
             key = (ws.title, c, nk)
             hit = cache.get(key)
             if hit is None:
-                hit = cache[key] = _text_issues(ws.title, v, known)
-            p = _pause_issue(ws.title, r, c, v, ex)
+                hit = cache[key] = _text_issues(ws.title, v, known, lookup_ok)
+            p = None if book == 'entry' else _pause_issue(ws.title, r, c, v, ex)
             if hit or p:
                 k = (ws.title, c, tuple(hit + ([p] if p else [])))
                 if k in agg:
@@ -527,7 +543,7 @@ def check_formulas(wb):
     bad = [f'{t}!{a}（这一列同样 {n} 格）: {list(h)} len={len(v)} {v[:160]}' for (t, _c, h), (a, n, v) in agg.items()]
     if H_FLOW in wb.sheetnames:
         bad += _flow_rules(wb[H_FLOW])
-    bad += _leaf_rules(wb)
+        bad += _leaf_rules(wb)
     werr, winfo = wps_check(wb)
     bad += werr
     assert not bad, f'公式检查没过 {len(bad)} 条：\n' + '\n'.join(bad[:40])
@@ -656,3 +672,18 @@ def build(only=None, scenario=None, ctx=None):
     for ws in wb.worksheets:
         ws.__dict__.pop('_a074_f', None)
     return wb
+
+
+def check_book(wb, book):
+    """a74split：拆出来的两本各查一遍（check_formulas(book)＋查环），格式同 build()。返回 WPS 体检信息"""
+    for ws in wb.worksheets:
+        ws.__dict__.pop('_a074_f', None)
+    winfo = check_formulas(wb, book)
+    import cyclecheck
+    cyc = cyclecheck.find_cycles(wb)
+    if cyc:
+        print(f'✗ {book} 公式有环 {len(cyc)} 处，前 10 个：\n' + cyclecheck.fmt(cyc[:10]))
+    assert not cyc, f'{book} 公式有环 {len(cyc)} 处'
+    for ws in wb.worksheets:
+        ws.__dict__.pop('_a074_f', None)
+    return winfo

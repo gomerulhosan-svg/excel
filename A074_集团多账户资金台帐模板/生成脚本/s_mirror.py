@@ -24,7 +24,7 @@ from layout import (
     N_CO, N_ACC, N_ITEM, N_PARTY, N_RULE, N_RULE_P, N_RULE_Q, N_GROUP, N_YEARS, JUMP_DAYS, PAIR_DAYS, DUP_WIN,
     ATTR_NO, ATTR_UNKNOWN, ACC_STATUS, RULE_DIRS, RULE_WHERE, ITEM_PENDING, LEDGER_COLS,
     K_DAY, K_YM, K_PAIR, q, bref, lrange, esc, norm, raw, name2no, chain, dsel, win_first, win_last, win, ym_of,
-    k_aypm, k_igypm, numv, tref, sref, seg_name, seg_area, read_area, seg_cell, slot_of_row, win_row, blk_row, pause, pause0, _ymd8)
+    k_aypm, k_igypm, numv, cnta, tref, sref, seg_name, seg_area, read_area, seg_cell, slot_of_row, win_row, blk_row, pause, pause0, _ymd8)
 
 R1 = 2                                  # 第 1 个位置在第 2 行
 RN = N_FLOW + 1                         # 最后一个位置所在行
@@ -581,7 +581,7 @@ def _probe(ws):
 def _far_below():
     """容量外、离得远的行：最后一段的 段_有字 只看到 读到＋S 行；再往下还有日期或账户的行数（整列名称，表头行起算）"""
     i0 = f'P_台帐末-INDEX(段_首,1)+{S + 2}'
-    cnt = lambda f: f'COUNTA(INDEX({tref(f)},{i0}):INDEX({tref(f)},ROWS({tref(f)})))'
+    cnt = lambda f: cnta(f'INDEX({tref(f)},{i0}):INDEX({tref(f)},ROWS({tref(f)}))')     # a74split：不数空串（查询本取数格）
     return f'IFERROR(IF(ISNUMBER({i0}),MAX({cnt("日期")},{cnt("账户")}),0),0)'
 
 
@@ -607,7 +607,7 @@ def build_par(ws, ctx):
         '截止月码': ('=YEAR(P_截止)*100+MONTH(P_截止)', ''),
         '期起': ('=' + dsel(span('开始'), 'DATE(YEAR(P_最后日期),1,1)'), '任意时间段 B3'),
         '期止': ('=' + dsel(span('结束'), 'P_最后日期'), '任意时间段 B4'),
-        '已用行数': (f'=MAX(COUNTA({lrange("日期")}),COUNTA({lrange("账户")}))', '资金台帐 日期或账户有内容的行数'),
+        '已用行数': (f'=MAX({cnta(lrange("日期"))},{cnta(lrange("账户"))})', '资金台帐 日期或账户有内容的行数（不数空串：查询本取数格空着是 ""）'),
         '期初合计': ('=SUM(账户_期初)', ''),
         '待定号': (f'=IFERROR(MATCH("{ITEM_PENDING}",项_名称规,0),0)', ''),
         '内部号': (f'=IFERROR(MATCH({INT9},项_属性号,0),0)', '第一个属性「内部转账」的收费项'),
