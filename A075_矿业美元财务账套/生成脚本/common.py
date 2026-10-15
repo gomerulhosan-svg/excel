@@ -134,8 +134,8 @@ MAT_R0, MAT_R1 = 5, 204
     'X Y Z AA AB AC AD AE AF AG AH'.split()
 
 # ─────────────────────────── 记账规则 ───────────────────────────
-# 收支类别 A:I（60 个）
-RC_R0, RC_R1 = 5, 64
+# 收支类别 A:I（80 个；10/15 起 60→80：加了她自己的 16 个类别，见 ref_a075.RULES_ADD）
+RC_R0, RC_R1 = 5, 84
 (RC_SEQ, RC_NAME, RC_ATTR, RC_IN, RC_OUT, RC_HIST, RC_CFIN, RC_CFOUT, RC_NOTE) = 'A B C D E F G H I'.split()
 # 物料类别 K:O（30 个）
 MC_R0, MC_R1 = 5, 34
@@ -672,3 +672,51 @@ def add_list_dv(ws, sqref, formula, prompt=None, allow_blank=True, stop=True):
     ws.add_data_validation(dv)
     dv.add(sqref)
     return dv
+
+
+# ─────────────────────────── 拆本（split）：录入本＋报表本（split.py 用；改录入表的列一定要同步改这里） ───────────────────────────
+# 用户 10/15：「把手工录入数据的购进、销售、资金台帐单独一个工作簿出来，其他所有的报表在另外一个工作簿设置成联动表」。
+# 一本版照旧生成（内存里），split.py 从它出两本：
+#   录入本：录入表＋基础资料等＋新首页 / 录入检查 / 使用说明，只留「轻」公式（重列清空，占位不动）；
+#   报表本：一本版原样，录入本那些表变成同名、同位置的隐藏取数表（「填」的格子换成取数公式），外部链接指向录入本（相对文件名）。
+WB1_FILE = 'A075-1_录入本.xlsx'
+WB2_FILE = 'A075-2_报表本.xlsx'
+EXT_PREFIX = '录_'                 # MIRROR_MODE='name' 时，报表本里指向录入本区域的名称前缀（录_流水_A＝[1]现金流水总表!$A$6:$A$3965）
+MIRROR_MODE = 'cell'               # 'cell'＝写法①：每格 =IFERROR(IF([1]表!A6="","",[1]表!A6),"")（WPS 一定认）；'name'＝写法③：外部名称＋INDEX（能压共享，WPS 认不认外部名称待实测）
+MIRROR_IFERROR = True              # 取数公式外面套 IFERROR（两本同时开着删行时，被删那格变 #REF!，套上就是空）
+# 录入本的标签顺序（plan.md 一）；_辅助 隐藏，放最后
+WB1_ORDER = [SH_HOME, SH_CASH, SH_BUY, SH_SALE, SH_ISS, SH_PROD, SH_PAY, SH_FA, SH_MAN, '货柜登记',
+             SH_BASE, SH_RULE, SH_RATE, SH_ACC, '录入检查', SH_HELP, SH_AUX]
+# 每张录入表的列：填＝用户手填（报表本换成取数公式）；轻＝录入时要看的公式（录入本留下）；重＝只为记账 / 报表算的（录入本清空，报表本照算）。
+# 有内容的列（表头行起）没归进任何一类，build 就报错（split.check_spec）。列位跟着 common 上面的常数走。
+#   whole=True：整张都是填（报表本里不被引用就不要这张表）；result=True：录入本算的结果表（报表本取 entry.ECHK_MIRROR 那些格子，没有就整张取）；
+#   blocks：基础资料等「按块填」的表，[(列, 起行, 止行)]；文字＝固定文字列（两本一样，不取数）；auto＝表头行以下整块凡不是公式的格子都取数（记账规则：二级明细对照等新块放哪都接得上）
+SPLIT = {
+    SH_CASH: dict(hdr=CASH_HDR, r0=CASH_R0, r1=CASH_R1,
+                  填='A B E G H I J P Q R T V W',
+                  轻='C D F K L M N O S U X Y Z AM AN AO',
+                  重='AA AB AC AD AE AF AG AH AI AJ AK AL AP AQ'),
+    SH_BUY: dict(hdr=MOD_HDR, r0=MOD_R0, r1=BUY_R1, 填='B C D E H I J N O S T', 轻='A F G K L M P Q R U', 重='V W X Y Z AA AB'),
+    SH_SALE: dict(hdr=MOD_HDR, r0=MOD_R0, r1=SALE_R1, 填='B C D E F G I O P', 轻='A H J K L Q', 重='M N R S T U V W X'),
+    SH_ISS: dict(hdr=MOD_HDR, r0=MOD_R0, r1=ISS_R1, 填='B C D G H M N', 轻='A E F K L O', 重='I J P Q R S T U V'),
+    SH_PROD: dict(hdr=MOD_HDR, r0=MOD_R0, r1=PROD_R1, 填='B C D E F G H', 轻='A I', 重=''),
+    SH_PAY: dict(hdr=MOD_HDR, r0=MOD_R0, r1=PAY_R1, 填='B C D E F I', 轻='A G H J', 重='K L M N O P Q'),
+    SH_FA: dict(hdr=MOD_HDR, r0=MOD_R0, r1=FA_R1, 填='A B C E F G H I P', 轻='D J K L Q R S', 重='M N O T U V'),
+    SH_MAN: dict(hdr=MOD_HDR, r0=MOD_R0, r1=MAN_R1, 填='A B C D F G H I J', 轻='E K M N O P T', 重='L Q R S U V W'),
+    '货柜登记': dict(whole=True),
+    SH_BASE: dict(hdr=4, 文字='A', blocks=[('B', 5, 5 + len(PARAMS) - 1)]
+                  + [(c, ACC_R0, ACC_R1) for c in 'E F G H I J M'.split()]
+                  + [(PJ_NAME, PRJ_R0, PRJ_R1)]
+                  + [(c, CP_R0, CP_R1) for c in 'S T U V'.split()]
+                  + [(c, MAT_R0, MAT_R1) for c in 'Y Z AA AB AE AF AH'.split()]),
+    SH_RULE: dict(hdr=4, auto=True, blocks=[(c, RC_R0, RC_R1) for c in 'B C D E F G H I'.split()]
+                  + [(c, MC_R0, MC_R1) for c in 'K L M N O'.split()]
+                  + [(c, US_R0, US_R1) for c in 'Q R S'.split()]
+                  + [(c, DP_R0, DP_R1) for c in 'U V W X'.split()]
+                  + [(c, PT_R0, PT_R1) for c in 'Z AA'.split()]
+                  + [(c, FC_R0, FC_R1) for c in 'AC AD AE AF AG'.split()]
+                  + [(c, CFI_R0, CFI_R1) for c in 'AI AJ AK'.split()]),
+    SH_RATE: dict(hdr=RATE_HDR, blocks=[(c, RATE_HDR, RATE_R1) for c in 'B C D E F G H I'.split()]),
+    SH_ACC: dict(hdr=AC_HDR, blocks=[(c, AC_R0, AC_R1) for c in 'A B C D E F G H I M'.split()]),
+    '录入检查': dict(result=True),
+}

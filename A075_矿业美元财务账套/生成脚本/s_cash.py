@@ -21,6 +21,50 @@ def _rule_at(col, pos):
 K_SLOT, K_ANCHOR = 'AP', 'AQ'                 # wps 隐藏：槽位（第 s 段第 j 行＝(s-1)×100＋j）/ 锚列（空，段名称定位用）
 K_AROW, K_CROW, K_ZROW = 'AM', 'AN', 'AO'     # opt 隐藏：账户在档案第几行 / 类别在记账规则第几行 / 对方科目在科目表第几行（找不到＝0）
 
+# 二级明细对照（【记账规则】里 biz 建的小表；名称在 s_base 定义）：键＝类别&"|"&二级，科目＝记到哪个科目
+SUB_KEY, SUB_ACC = '二级_键', '二级_科目'
+
+
+def _nowild(x):
+    """MATCH 精确查找时把 ~ * ? 当普通字（备注里写了 * ? 也不会被当通配符）"""
+    return f'SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({x},"~","~~"),"*","~*"),"?","~?")'
+
+
+def raw_formula(r):
+    """Y 列「规则科目」：指定对方科目（T）优先；再查「二级明细对照」（类别|二级＝E|R，精确）；查不到（或那一行科目空着）照原来
+    按类别和启用日给的科目。二级名称还没建（#NAME?）、R 空着都走原来的。"""
+    AN = f'${K_CROW}{r}'
+    raw = (f'IFERROR(IF(AND($A{r}<启用日,{_rule_at(RC_HIST, AN)}<>""),{_rule_at(RC_HIST, AN)},'
+           f'IF(N($L{r})>=0,{_rule_at(RC_IN, AN)},{_rule_at(RC_OUT, AN)})),"")')
+    sub = f'INDEX({SUB_ACC},MATCH({_nowild(f"$E{r}&" + chr(34) + "|" + chr(34) + f"&TRIM($R{r})")},{SUB_KEY},0))&""'
+    return (f'=IF(OR($B{r}="",$L{r}=""),"",IF($T{r}<>"",$T{r}&"",IF(N({AN})=0,"",'
+            f'IF(TRIM($R{r})="",{raw},IFERROR(IF({sub}<>"",{sub},{raw}),{raw})))))')
+
+
+def chk_formula(r, head):
+    """S 列「核对」。head＝同一个凭证合并号第一笔的日期（一本版：common.first_val 分段写法；录入本：entry.py 按行号找）"""
+    AM, AN, AO = f'${K_AROW}{r}', f'${K_CROW}{r}', f'${K_ZROW}{r}'
+    capc = f'IFERROR(INDEX({rng(SH_BASE, CP_CAP, CP_R0, CP_R1)},MATCH($Q{r},单位表,0))&"","")'
+    return (
+        f'=IF(AND($A{r}="",$B{r}="",$E{r}="",$H{r}="",$I{r}=""),"",'
+        f'IF($B{r}="","✗ 没选账户名称",IF({AM}=0,"✗ 这个账户不在【基础资料】的账户档案里",'
+        f'IF($A{r}="","✗ 没填日期",IF(NOT(ISNUMBER($A{r})),"✗ 日期不是真日期（要像 2026/9/25 这样填）",'
+        f'IF($A{r}<起始月份,"✗ 日期早于建账起始月份",'
+        f'IF(AND($H{r}<>"",$I{r}<>""),"✗ 收入、支出只能填一个",'
+        f'IF(OR(AND($H{r}<>"",NOT(ISNUMBER($H{r}))),AND($I{r}<>"",NOT(ISNUMBER($I{r})))),"✗ 金额要填数字（不要带文字）",'
+        f'IF(AND($H{r}="",$I{r}=""),IF(ISNUMBER(FIND("【待补】",$R{r})),"⚠ 源数据不全（源表缺金额），请补充","⚠ 没填金额"),'
+        f'IF($E{r}="","✗ 没选收/支类别",IF({AN}=0,"✗ 这个类别不在【记账规则】里",'
+        f'IF($K{r}="","✗ 这个币种没有汇率（去【月度汇率】填）",'
+        f'IF($X{r}="","✗ 这个账户在【基础资料】里没设对应科目",'
+        f'IF(OR($Z{r}="",N({AO})=0),"✗ 对方科目「"&$Z{r}&"」不在科目表里",'
+        f'IF(AND($V{r}<>"",YEAR($A{r})*100+MONTH($A{r})<>IFERROR(YEAR({head})*100+MONTH({head}),0)),'
+        f'"✗ 同一个凭证合并号的几笔要在同一个月",'
+        f'IF(AND($Y{r}="@资本",{capc}=""),"⚠ 投资款没对上股东（往来单位），先记在 3001 实收资本",'
+        f'IF(ISNUMBER(FIND("【待补】",$R{r})),"⚠ 源数据不全（源表缺摘要或用途），请补充",'
+        f'IF(AND($Y{r}<>"@资本",IF(N({AO})=0,"是",IFERROR(INDEX({acc(AC_LEAF)},{AO}),"是"))<>"是"),"⚠ 对方科目不是末级科目，最好记到明细",'
+        f'IF(AND(N($N{r})<0,N($N{r})-N($L{r})>=0),"⚠ 这一笔之后该账户余额变成负数了，核一下（后面继续是负的不再提示）","")))))))))))))))))))')
+
+
 
 def build_cash(wb, ctx):
     ws = wb.create_sheet(SH_CASH)
@@ -112,7 +156,7 @@ def build_cash(wb, ctx):
             # A075：汇率是「1 美元 = X 外币」，直接查【月度汇率】B:I（不是记账汇率区 K:R）；本位币先判，实际成交汇率要是正数
             rt = f"INDEX({q(SH_RATE)}!$B${RATE_R0}:${CL(1 + len(RATE_CURS))}${RATE_R1},0,MATCH($D{r},汇率币种头,0))"
             ws[f'{K_RATE}{r}'] = (f'=IF(OR($A{r}="",$B{r}=""),"",IF($D{r}=本位币,1,IF($J{r}<>"",IF(N($J{r})>0,$J{r},""),'
-                                  f'IFERROR(LOOKUP(2,1/((汇率月份<=$A{r})*({rt}>0)),{rt}),""))))')
+                                  f'IFERROR(LOOKUP(2,1/((汇率月份<=$A{r})*({rt}>0)*ISNUMBER({rt})),{rt}),""))))')
         else:
             ws[f'{K_RATE}{r}'] = (f'=IF(OR($A{r}="",$B{r}=""),"",IF($J{r}<>"",$J{r},IF($D{r}=本位币,1,IFERROR(LOOKUP(2,1/((汇率月份<=$A{r})'
                                   f'*(INDEX(记账汇率区,0,MATCH($D{r},汇率币种头,0))<>"")),INDEX(记账汇率区,0,MATCH($D{r},汇率币种头,0))),""))))')
@@ -135,9 +179,7 @@ def build_cash(wb, ctx):
         ws[f'{K_SLOT}{r}'] = slot_formula(SH_CASH, r)       # wps：槽位（凭证ID 的位置）
         # 记账辅助
         ws[f'{K_ACODE}{r}'] = f'=IF($B{r}="","",IF({AM}=0,"",IFERROR(INDEX(账户科目,{AM})&"","")))'
-        raw = (f'IF(AND($A{r}<启用日,{_rule_at(RC_HIST, AN)}<>""),{_rule_at(RC_HIST, AN)},'
-               f'IF(N($L{r})>=0,{_rule_at(RC_IN, AN)},{_rule_at(RC_OUT, AN)}))')
-        ws[f'{K_RAW}{r}'] = f'=IF(OR($B{r}="",$L{r}=""),"",IF($T{r}<>"",$T{r}&"",IF(N({AN})=0,"",IFERROR({raw},""))))'
+        ws[f'{K_RAW}{r}'] = raw_formula(r)
         capc = f'IFERROR(INDEX({cap},MATCH($Q{r},单位表,0))&"","")'
         ws[f'{K_CCODE}{r}'] = (f'=IF($Y{r}="","",IF($Y{r}="@资本",IF({capc}="","3001",{capc}),{code_of(f"$Y{r}")}))')
         # opt：同一个合并号的第一笔一定在本行或上面——只往上找（原来查整段 3,960 行，改任何一行全表跟着重算）
@@ -145,7 +187,7 @@ def build_cash(wb, ctx):
         # 有效＝核对列里那些 ✗ 都没有（✗ 的行不出凭证）
         ok = (f'AND(ISNUMBER($A{r}),$A{r}>=起始月份,ISNUMBER($M{r}),$M{r}<>0,$X{r}<>"",$Z{r}<>"",'
               f'$E{r}<>"",N({AN})>0,'
-              f'ISNUMBER(MATCH($X{r},{codes},0)),N({AO})>0,NOT(AND($H{r}<>"",$I{r}<>"")),'
+              f'AND($X{r}<>"",ISNUMBER(MATCH($X{r},{codes},0))),N({AO})>0,NOT(AND($H{r}<>"",$I{r}<>"")),'
               f'OR($H{r}="",ISNUMBER($H{r})),OR($I{r}="",ISNUMBER($I{r})),'
               f'IF($V{r}="",TRUE,IFERROR(YEAR($A{r})*100+MONTH($A{r})=YEAR({head})*100+MONTH({head}),FALSE)))')
         ws[f'{K_VALID}{r}'] = f'=IF({ok},1,0)'
@@ -170,24 +212,7 @@ def build_cash(wb, ctx):
         ws[f'{K_CTR}{r}'] = (f'=IF($Z{r}="","",$Z{r}&" "&IF(N({AO})=0,"（科目表里没有）",'
                              f'IFERROR(INDEX({acc_name},{AO}),"（科目表里没有）")))')
         # 核对
-        ws[f'{K_CHK}{r}'] = (
-            f'=IF(AND($A{r}="",$B{r}="",$E{r}="",$H{r}="",$I{r}=""),"",'
-            f'IF($B{r}="","✗ 没选账户名称",IF({AM}=0,"✗ 这个账户不在【基础资料】的账户档案里",'
-            f'IF($A{r}="","✗ 没填日期",IF(NOT(ISNUMBER($A{r})),"✗ 日期不是真日期（要像 2026/9/25 这样填）",'
-            f'IF($A{r}<起始月份,"✗ 日期早于建账起始月份",'
-            f'IF(AND($H{r}<>"",$I{r}<>""),"✗ 收入、支出只能填一个",'
-            f'IF(OR(AND($H{r}<>"",NOT(ISNUMBER($H{r}))),AND($I{r}<>"",NOT(ISNUMBER($I{r})))),"✗ 金额要填数字（不要带文字）",'
-            f'IF(AND($H{r}="",$I{r}=""),IF(ISNUMBER(FIND("【待补】",$R{r})),"⚠ 源数据不全（源表缺金额），请补充","⚠ 没填金额"),'
-            f'IF($E{r}="","✗ 没选收/支类别",IF({AN}=0,"✗ 这个类别不在【记账规则】里",'
-            f'IF($K{r}="","✗ 这个币种没有汇率（去【月度汇率】填）",'
-            f'IF($X{r}="","✗ 这个账户在【基础资料】里没设对应科目",'
-            f'IF(OR($Z{r}="",N({AO})=0),"✗ 对方科目「"&$Z{r}&"」不在科目表里",'
-            f'IF(AND($V{r}<>"",YEAR($A{r})*100+MONTH($A{r})<>IFERROR(YEAR({head})*100+MONTH({head}),0)),'
-            f'"✗ 同一个凭证合并号的几笔要在同一个月",'
-            f'IF(AND($Y{r}="@资本",{capc}=""),"⚠ 投资款没对上股东（往来单位），先记在 3001 实收资本",'
-            f'IF(ISNUMBER(FIND("【待补】",$R{r})),"⚠ 源数据不全（源表缺摘要或用途），请补充",'
-            f'IF(AND($Y{r}<>"@资本",IF(N({AO})=0,"是",IFERROR(INDEX({acc(AC_LEAF)},{AO}),"是"))<>"是"),"⚠ 对方科目不是末级科目，最好记到明细",'
-            f'IF(AND(N($N{r})<0,N($N{r})-N($L{r})>=0),"⚠ 这一笔之后该账户余额变成负数了，核一下（后面继续是负的不再提示）","")))))))))))))))))))')
+        ws[f'{K_CHK}{r}'] = chk_formula(r, head)
     # 样式
     inp = [K_DATE, K_ACC, K_CAT, K_MEMO, K_IN, K_OUT, K_XR, K_PRJ, K_CP, K_NOTE, K_OVR, K_MERGE, K_ATT]
     auto = [K_BANK, K_CUR, K_ATTR, K_RATE, K_NET, K_UZS, K_BAL, K_BBAL, K_CHK, K_CTR]

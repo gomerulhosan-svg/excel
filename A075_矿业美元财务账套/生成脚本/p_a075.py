@@ -6,6 +6,10 @@
   · 【首页】【使用说明】整张从原件照搬——这两张用户（10/05）自己重排过版面，A075 又改了文字，
     生成脚本不再自己排（公式也照搬：首页 10 个 KPI 公式、导航链接）。
   · （现金流水总表 T 列 57 条 A062 鑫盛的旧批注：wps 起不再照搬。）
+  · 10/15（按用户的手工登记表调整，plan.md 第二节）：fix_words 把「苏姆」→「美元」、「原矿 / 吨 / 甲方 / 出矿」→「黄金 / 克 / 买方 / 冶炼」
+    （标题、提示、表头、校验提示、凭证摘要；表名「产量登记」「原矿产销存」不改，只改字）；TEXTS_1015 黄金销售、冶炼登记、二级/备注等表头；
+    往来余额表 M 列外币应付改 ZiG；首页改成报表本用的说法；【使用说明】两份（build_help_report＝报表本 / 一本版，build_help_entry＝录入本）；
+    【货柜登记】（s_base.build_container）。
   · fix_texts：首页 / 使用说明里过时的文字（数据导入、五个账户、1.6 万行、L3 选科目、编号）；基础资料 J5:J7 对应科目先填建议值。
   · TEXTS：A075 改写过的标题、提示、表头文字（A062 是「苏姆」口径，A075 改成「美元」「1 美元 = X 外币」）。
     右边注释是 A062 / 生成脚本原来的文字。改字就改这里。
@@ -31,6 +35,7 @@ TAB_COLORS = {
     '工资计提': 'FF00B050',
     '固定资产': 'FF00B050',
     '手工凭证': 'FF00B050',
+    '货柜登记': 'FF00B050',
     '月末结转': 'FF0070C0',
     '记账分录': 'FF0070C0',
     '凭证汇总': 'FF0070C0',
@@ -150,19 +155,27 @@ CASH_HDR_FILL = {**{c: 'FFFFF2CC' for c in 'ABEGHIJPQR'}, **{c: 'FFF2F2F2' for c
 
 
 def apply(wb, ctx):
+    import s_base
     ref = ctx['ref']
     log = []
     ref_a075.copy_sheet(ref, wb, SH_HOME, drop_rows=(HOME_DROP_ROW,))
-    ref_a075.copy_sheet(ref, wb, SH_HELP)
-    log.append(f'首页、使用说明从原件整张照搬（首页第 {HOME_DROP_ROW} 行【数据导入】去掉，下面的行往上挪）')
-    log += fix_texts(wb)
+    build_help_report(wb, ctx)
+    log.append(f'首页从原件整张照搬（第 {HOME_DROP_ROW} 行【数据导入】去掉，下面的行往上挪）；使用说明按报表本重写（录入本那份 build_help_entry）')
+    log += fix_texts(wb, ctx)
     for (sh, cell), v in TEXTS.items():
         c = wb[sh][cell]
         assert c.value is None or isinstance(c.value, str), (sh, cell, c.value)     # 只改文字格，不碰公式
         c.value = v
     log.append(f'标题、提示、表头文字 {len(TEXTS)} 格改成 A075 的写法')
+    log += fix_words(wb)
+    log += fix_1015(wb, ctx)
+    if s_base.SH_BOX not in wb.sheetnames:
+        s_base.build_container(wb, ctx)
+        log.append(f'新加【{s_base.SH_BOX}】（录入本，纯手填备查，{s_base.BOX_R1 - s_base.BOX_R0 + 1} 行；导入 2026 货柜单号台账 '
+                   f'{len(ctx.get("containers") or [])} 行）')
     for sh, rgb in TAB_COLORS.items():
-        wb[sh].sheet_properties.tabColor = rgb
+        if sh in wb.sheetnames:
+            wb[sh].sheet_properties.tabColor = rgb
     for sh, d in COL_WIDTHS.items():
         for col, (w, hid) in d.items():
             wb[sh].column_dimensions[col].width = w
@@ -203,24 +216,14 @@ def apply(wb, ctx):
     return log
 
 
-# ───── wps：挡使用的文字和默认值（repro 第四节、optchk 第 4 节） ─────
+# ───── wps：挡使用的文字和默认值（repro 第四节、optchk 第 4 节）；10/15 改成报表本的说法 ─────
 HOME_DROP_ROW = 22          # 首页第 22 行：【数据导入】（A075 没有这张表，链接是断的）
-ACC_CODES = [(5, '人民币', '100209'), (6, '美元', '100205'), (7, 'FBC', '100210')]     # 基础资料 J5:J7 对应科目（科目表里用户已建好的结算账户）
-J_NOTE = ('【基础资料】三个资金账户的「对应科目」已先填好：人民币 100209、美元 100205、FBC 100210（都是银行结算账户）；'
-          '如果人民币、美元其实是现金，改成 100106 / 100105。')
 HOME_EDIT = [   # (原文片段, 改成)，在首页里找唯一的一格替换
-    ('平时只录【现金流水总表】和各业务表，外部流水先用【数据导入】对齐；凭证、账、报表全自动。',
-     '平时只录【现金流水总表】和各业务表；凭证、账、报表全自动。' + J_NOTE),
-    ('★ 每一笔收付款（五个账户合一张表），自动出凭证', '★ 每一笔收付款（三个账户合一张表），自动出凭证'),
+    ('★ 每一笔收付款（五个账户合一张表），自动出凭证', '★ 资金台帐：每一笔收付款（美元、人民币、FBC 三个账户一张表），自动出凭证'),
     ('所有凭证的分录总表（1.6 万行）', '所有凭证的分录总表（1.8 万行）'),
     ('选一个科目看每一笔（在表里 L3 选科目）', '选一个科目看每一笔（在表里 B3 选科目）'),
 ]
-HELP_EDIT = [
-    ('各账户对应会计科目在【基础资料·资金账户】设置。',
-     '各账户对应会计科目在【基础资料·资金账户】设置（已先填：人民币 100209、美元 100205、FBC 100210；'
-     '如果人民币、美元其实是现金，改成 100106 / 100105）。'),
-    ('不要插行、删行。', '不要插入、删除整行（删一笔就选中那一行的内容按 Delete 清空；插、删了整行【数据校验】第 41 项会报 ✗，按 Ctrl+Z 撤回）。'),
-]
+HOME_REPORT_MONTH = 6       # 首页报表月份默认 6 月（导进来的资金台帐到 2026-06-30；7 月起 CNY 汇率、流水还没有）
 
 
 def _edit_unique(ws, old, new):
@@ -230,23 +233,254 @@ def _edit_unique(ws, old, new):
     return hit[0].coordinate
 
 
-def fix_texts(wb):
+def fix_texts(wb, ctx):
     log = []
-    hm, hp = wb[SH_HOME], wb[SH_HELP]
+    hm = wb[SH_HOME]
     cells = [_edit_unique(hm, a, b) for a, b in HOME_EDIT]
-    hm.row_dimensions[2].height = 56
-    log.append(f'首页文字 {len(cells)} 处：去掉【数据导入】、五个账户→三个、1.6 万行→1.8 万行、L3→B3 选科目、对应科目提示（{",".join(cells)}）')
-    cells = [_edit_unique(hp, a, b) for a, b in HELP_EDIT]
-    k = 0
-    for r in range(1, hp.max_row + 1):          # 使用说明编号重排（原件 1～5 以后跳到 9）
-        v = hp[f'A{r}'].value
-        if isinstance(v, int):
-            k += 1
-            hp[f'A{r}'].value = k
-    log.append(f'使用说明：对应科目提示、插删整行提示（{",".join(cells)}），编号重排成 1～{k}')
+    log.append(f'首页文字 {len(cells)} 处：五个账户→三个（资金台帐）、1.6 万行→1.8 万行、L3→B3 选科目（{",".join(cells)}）')
     b = wb[SH_BASE]
-    for r, nm, code in ACC_CODES:
-        assert b[f'{A_NAME}{r}'].value == nm and b[f'{A_CODE}{r}'].value is None, (r, b[f'{A_NAME}{r}'].value, b[f'{A_CODE}{r}'].value)
-        b[f'{A_CODE}{r}'] = code
-    log.append('基础资料 J5:J7 对应科目先填：人民币 100209、美元 100205、FBC 100210（不填一张凭证都出不来）')
+    got = [(b[f'{A_NAME}{r}'].value, b[f'{A_CODE}{r}'].value) for r in range(ACC_R0, ACC_R0 + 3)]
+    assert all(c for _, c in got), got          # 10/15：对应科目由 ref_a075.apply_1015 带进来（101202 / 100105 / 100210）
+    log.append('基础资料 J5:J7 对应科目：' + '、'.join(f'{n} {c}' for n, c in got) + '（照她老账，ref_a075.ACC_CODE_1015）')
     return log
+
+
+# ───── 10/15：字样（plan.md 第二节第 1 条）─────
+# 只改「字」：标题、提示、表头、校验提示、凭证摘要里的字；表名（产量登记、原矿产销存）不改，所以「原矿产销存」这几个字原样留着（是表名）。
+# 用户录的数据（流水摘要、备注、物料单位…）一个不碰：录入表只改表头那几行，基础资料只改 A 列参数名，记账规则、科目表、月度汇率不在这里改（数据在 ref_a075）。
+KEEP = ['原矿产销存']                              # 表名，不改
+WORDS = [   # 按顺序替换
+    ('苏姆', '美元'),
+    ('卖原矿给甲方', '卖黄金给买方'), ('卖矿', '卖金'), ('甲方', '买方'),
+    ('吨矿生产成本', '每克生产成本'), ('吨矿销售成本', '每克销售成本'), ('吨矿完全成本', '每克完全成本'), ('吨矿成本', '每克成本'),
+    ('每吨', '每克'), ('出矿', '冶炼'), ('原矿', '黄金'), ('吨', '克'),
+]
+WORDS_SUMU = [('苏姆', '美元')]
+_INPUT = {SH_BUY: MOD_HDR, SH_ISS: MOD_HDR, SH_PROD: MOD_HDR, SH_SALE: MOD_HDR, SH_PAY: MOD_HDR, SH_FA: MOD_HDR, SH_MAN: MOD_HDR}
+_SKIP = {SH_RULE, SH_ACC, SH_RATE, SH_CASH, SH_HELP}   # 数据表（ref_a075 管）、流水（TEXTS 管表头）、使用说明（重写的）
+
+
+def _swap_words(t, words):
+    for i, k in enumerate(KEEP):
+        t = t.replace(k, f'\x00{i}\x00')
+    for a, b in words:
+        t = t.replace(a, b)
+    for i, k in enumerate(KEEP):
+        t = t.replace(f'\x00{i}\x00', k)
+    return t
+
+
+def _swap_formula(f, words):
+    """公式里只换双引号里的字（摘要、提示），不碰引用和函数"""
+    parts = f.split('"')
+    for i in range(1, len(parts), 2):
+        parts[i] = _swap_words(parts[i], words)
+    return '"'.join(parts)
+
+
+def fix_words(wb):
+    n_t = n_f = 0
+    for ws in wb.worksheets:
+        if ws.title in _SKIP:
+            continue
+        words = WORDS_SUMU if ws.title in (SH_BUY, SH_PAY, SH_FA, SH_MAN, SH_ISS) else WORDS
+        top = _INPUT.get(ws.title)
+        if ws.title == SH_BASE:
+            top = None
+        for row in ws.iter_rows():
+            for c in row:
+                v = c.value
+                if not isinstance(v, str):
+                    continue
+                if v.startswith('='):
+                    if ws.title == SH_BASE:
+                        continue
+                    nv = _swap_formula(v, words)
+                    if nv != v:
+                        c.value = nv
+                        n_f += 1
+                    continue
+                if ws.title == SH_BASE and not (c.column_letter == 'A' and c.row <= 5 + len(PARAMS)):
+                    continue
+                if top is not None and c.row > top:
+                    continue
+                nv = _swap_words(v, words)
+                if nv != v:
+                    c.value = nv
+                    n_t += 1
+        for dv in ws.data_validations.dataValidation:
+            for k in ('prompt', 'error', 'promptTitle'):
+                t = getattr(dv, k)
+                if isinstance(t, str):
+                    setattr(dv, k, _swap_words(t, WORDS_SUMU))
+    return [f'字样：苏姆→美元、原矿 / 吨 / 甲方 / 出矿→黄金 / 克 / 买方 / 冶炼：文字 {n_t} 格、公式里的提示和摘要 {n_f} 格（表名不改）']
+
+
+# 10/15 的表头、提示（fix_words 之后写，不再过一遍替换）
+TEXTS_1015 = {
+    (SH_CASH, 'A1'): '资金台帐（现金流水总表）· 每一笔收钱、付钱记一行（美元记账，人民币、ZiG 按汇率折美元）',
+    (SH_CASH, 'A2'): ('💡 每笔一行：填日期、选账户（美元 / 人民币 / FBC），收入、支出只填一个。类别就是你老账的一级科目（原材料、管理费用、生活支出…），'
+                      '「二级/备注」写二级（公关费、PAYE、宽体车…），自动记到明细科目（对照表在【记账规则】最右边「二级明细对照」）。'
+                      '人民币、ZiG 按【月度汇率】（1 美元＝多少原币）自动折美元，有实际成交汇率就填 J 列。漏记的记在最后一行下面，日期写对就行；别插行、删行。'),
+    (SH_CASH, f'{K_NOTE}{CASH_HDR}'): '二级/备注',
+    (SH_ISS, f'{I_NOTE}{MOD_HDR}'): '领取人/备注',
+    (SH_PROD, 'A1'): '冶炼登记（产量登记 · 每次冶炼出多少克金）',
+    (SH_PROD, 'A2'): ('💡 每冶炼一次记一行：日期、批号 / 来源堆号、冶炼纯金量（克）。后面掘进量、品位、贫化率是以前采矿用的，选填，不用管。'
+                      '每月月底自动把当月生产成本结转成黄金库存成本（有冶炼的月份才结转），【原矿产销存】（就是黄金产销存）算出每克成本，卖出去时自动结转销售成本。'),
+    (SH_PROD, f'{PD_FACE}{MOD_HDR}'): '批号/来源堆号',
+    (SH_PROD, f'{PD_TON}{MOD_HDR}'): '冶炼纯金量(克)',
+    (SH_PROD, f'{PD_DEV}{MOD_HDR}'): '掘进量(米)\n（选填）',
+    (SH_PROD, f'{PD_GRADE}{MOD_HDR}'): '品位(%)\n（选填）',
+    (SH_PROD, f'{PD_DIL}{MOD_HDR}'): '贫化率(%)\n（选填）',
+    (SH_SALE, 'A1'): '黄金销售（销售结算 · 按克卖给买方）',
+    (SH_SALE, 'A2'): ('💡 卖一次黄金记一行：日期、买方（私人 / 银行 / 银行代理，也可以直接写名字）、出售纯金量（克）、单价（美元/克），金额自动算；品名空着就是黄金。'
+                      '不交销项税（【基础资料】增值税率 0、单价不含税）。自动凭证：借 应收账款-黄金销售，贷 主营业务收入-黄金销售；月底按每克成本自动结转销售成本。'
+                      '收到钱在资金台帐类别选「主营业务收入」，自动冲应收（业务模块启用日以前的直接记收入）。'),
+    (SH_SALE, f'{S_CUS}{MOD_HDR}'): '买方',
+    (SH_SALE, f'{S_ITEM}{MOD_HDR}'): '品名\n(空着＝黄金)',
+    (SH_SALE, f'{S_TON}{MOD_HDR}'): '出售纯金量\n(克)',
+    (SH_SALE, f'{S_PRICE}{MOD_HDR}'): '单价\n(美元/克)',
+    (SH_SALE, f'{S_UC}{MOD_HDR}'): '每克成本\n(自动)',
+    (SH_SALE, f'{S_COGS}{MOD_HDR}'): '销售成本\n(自动)',
+    (SH_ORE, 'A1'): '黄金产销存（克 · 美元）· 全自动',
+    (SH_OPS, 'E39'): '采矿权、土地使用权',
+    (SH_ARAP, 'M4'): '外币应付\n津币 ZiG(原币)',
+    (SH_ACC, 'A2'): ('💡 编码按 4-2-2-2 分级。末级科目“期初余额”在建账起始日登记（借正贷负）。现在只填了三个资金账户（美元 100105、人民币 101202、FBC 100210），'
+                     '2025 年底其他科目的余额还没有，差额先放在 310499「期初差额待核」（科目余额表、资产负债表才平）；拿到 2025 年底的余额表后补上，再把 310499 清成 0。'
+                     '要加明细科目往下面空行填，灰色列自动计算，不要删除预留公式。'),
+    (SH_HOME, 'A2'): ('💡 这本是报表本：只看不录。数都从同一个文件夹里的「A075-1_录入本」取（先把录入本存盘，再打开这本点「启用内容 / 更新」）。'
+                      '黄格子改报表年度、月份，所有账簿、报表、凭证打印都跟着变。1–6 月的流水是从你的资金台帐导进来的；期初只补了三个资金账户'
+                      '（美元 100105、人民币 101202、FBC 100210），2025 年底其他科目的余额还没填，差额先放在 310499「期初差额待核」。'),
+    (SH_HOME, 'B10'): '本月冶炼（克）',
+    (SH_HOME, 'B16'): '① 设置层 —— 在「A075-1_录入本」里改（这本里是隐藏的取数表）',
+    (SH_HOME, 'B21'): '② 录入层 —— 在「A075-1_录入本」里录（这本里是隐藏的取数表）',
+    (SH_HOME, 'F22'): '★ 资金台帐：每一笔收付款（美元、人民币、FBC 三个账户一张表），自动出凭证',
+    (SH_HOME, 'F23'): '购进：炸药、氰化钠、盐酸、柴油、配件、建材、食材…',
+    (SH_HOME, 'F25'): '冶炼登记：每次冶炼出多少克金（批号 / 来源堆号）',
+    (SH_HOME, 'F26'): '黄金销售：买方、克数、单价（美元/克），自动出凭证、结转成本',
+    (SH_HOME, 'B50'): '① 平时在「A075-1_录入本」里录：资金台帐（现金流水总表）、购进（采购入库）、黄金销售（销售结算）、领用、冶炼登记、工资、设备卡片。',
+    (SH_HOME, 'B51'): '② 看账前：先把录入本存盘，再打开这本点「启用内容」或「更新」；看上面那行「数据来自录入本：流水 N 笔，最后一笔 …」对不对。',
+    (SH_HOME, 'B52'): '③ 月底：在录入本【月度汇率】填当月汇率（1 美元＝多少人民币 / ZiG）；工资、新买的设备也在录入本登记。',
+    (SH_HOME, 'B54'): '⑤ 这本【首页】把报表月份改成这个月 → 看【数据校验】有没有 ✗ → 看【凭证汇总】【科目余额表】→ 打印【记账凭证】和三张报表。',
+    (SH_HOME, 'B55'): '⑥ ✗ 要回录入本去改（这本里改了不算，下次更新会被盖掉）；⚠ 只是提醒。',
+}
+HOME_INPUT_ROWS = (17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29)     # 首页导航里设置层、录入层那几行（E 列「你要填」→「在录入本填」）
+
+
+def fix_1015(wb, ctx):
+    log = []
+    # 表头、提示
+    for (sh, cell), v in TEXTS_1015.items():
+        c = wb[sh][cell]
+        assert c.value is None or (isinstance(c.value, str) and not c.value.startswith('=')), (sh, cell, c.value)
+        c.value = v
+    hm = wb[SH_HOME]
+    for r in HOME_INPUT_ROWS:
+        assert hm[f'E{r}'].value in ('你要填', '每月填'), (r, hm[f'E{r}'].value)
+        hm[f'E{r}'] = '在录入本填'
+    hm.row_dimensions[2].height = 64
+    hm['F4'] = HOME_REPORT_MONTH
+    log.append(f'表头 / 提示 {len(TEXTS_1015)} 格（黄金销售、冶炼登记、二级/备注、领取人/备注、首页报表本说法）；首页报表月份默认 {HOME_REPORT_MONTH} 月')
+    # 往来余额表：外币应付第二列从「美元」改成津币 ZiG（本位币就是美元，美元没有「外币应付」）
+    ws = wb[SH_ARAP]
+    n = 0
+    for row in ws.iter_rows(min_row=5, min_col=CI('M'), max_col=CI('O')):
+        for c in row:
+            if isinstance(c.value, str) and c.value.startswith('=') and '"USD"' in c.value:
+                c.value = c.value.replace('"USD"', '"ZIG"')
+                n += 1
+    assert n > 0
+    log.append(f'往来余额表 M～O 外币应付改按津币 ZiG 算（公式里的 "USD"→"ZIG"，{n} 格）')
+    for sh, cell, a, b in [(SH_ARAP, 'A2', '人民币、美元进货', '人民币、津币 ZiG 进货'),
+                           (SH_BUY, 'A2', '外币（人民币/美元）选币种', '外币（人民币 / 津币 ZiG）选币种'),
+                           (SH_MEND, 'A2', '② 调汇：人民币、美元账户', '② 调汇：人民币、FBC（ZiG）账户')]:
+        v = wb[sh][cell].value
+        assert isinstance(v, str) and v.count(a) == 1, (sh, cell, a)
+        wb[sh][cell] = v.replace(a, b)
+    # 销售结算：品名下拉「黄金」（空着凭证摘要也写黄金）
+    add_list_dv(wb[SH_SALE], f'{S_ITEM}{MOD_R0}:{S_ITEM}{SALE_R1}', '"黄金"', '空着就是黄金', stop=False)
+    return log
+
+
+# ───── 10/15：使用说明两份（大白话、短）─────
+HELP_REPORT = [   # (None, 小标题) 或 (编号自动, 文字)
+    (None, '这本是干什么的'),
+    '这本是「报表本」：只看不录。凭证、账簿、三张报表、经营报表……都从同一个文件夹里的「A075-1_录入本」自动取数。',
+    '这本里只有「看哪个月、哪个科目、哪个账户」这种黄格子（【首页】的报表年度、月份，【明细账】的科目……）。别的格子别填：填了也回不到录入本，下次更新就被盖掉。',
+    (None, '怎么看到最新的数'),
+    '① 先把录入本存盘（存完可以关掉）。② 打开这本，上面出现黄条「安全警告 / 已禁用外部链接」就点「启用内容」（WPS 点「更新」或「启用」）。'
+    '③ 看【首页】那一行「数据来自录入本：流水 N 笔，最后一笔 …」，笔数、日期对得上就是最新的。',
+    '两本放在同一个文件夹里，文件名别改（A075-1_录入本.xlsx、A075-2_报表本.xlsx）。',
+    '改了录入本的名字、挪了地方、从微信另存多出「(1)」：这本还是旧数。点「数据 → 编辑链接 → 更改源」，选现在那本录入本，再点「更新」。',
+    '两本别同时开着录（同时开着，录入本每录一格都要等这本算一遍，又会卡）。',
+    (None, '每个月'),
+    '【首页】黄格子改报表年度、月份 → 先看【数据校验】：✗ 要回录入本去改，⚠ 看一眼就行 → 再看【凭证汇总】【科目余额表】【资产负债表】【利润表】。',
+    '打印凭证：【凭证汇总】看「A4 张数」→【记账凭证】打印，页码 1 到 A4 张数（A4 纵向，一张纸上下两页凭证）。月末结转、年末结转的凭证排在当月最后几号。',
+    '月末结转不用做：折旧、调汇、生产成本转黄金、结转销售成本、结转损益全自动，日期是月末最后一天；12 月 31 日自动把本年利润转进未分配利润。',
+    (None, '要知道的'),
+    '1–6 月的流水是从你的资金台帐导进来的。期初只补了三个资金账户（美元 100105、人民币 101202、FBC 100210），2025 年底其他科目的余额还没填，'
+    '差额先放在【科目表】310499「期初差额待核」，所以科目余额表、资产负债表是平的；拿到 2025 年底的余额表后在录入本【科目表】M 列补上，把 310499 清成 0。',
+    '利润是「按付款记」的：9 月 1 日（业务模块启用日）以前买材料付的钱直接算成本，没有存货、没有折旧；要准，以后走采购入库、领用、设备卡片。',
+    '数字不对先看【数据校验】；WPS 里建议开「自动计算」，打开这本要等它算完。',
+]
+HELP_ENTRY = [
+    (None, '这本是干什么的'),
+    '这本是「录入本」：只用来录账。资金台帐（现金流水总表）、购进（采购入库）、黄金销售（销售结算）、领用、冶炼登记、工资、设备卡片、手工凭证、货柜登记都在这本里录。'
+    '凭证、账簿、报表在另一本「A075-2_报表本」里自动出。',
+    '录的时候只开这一本，别同时开着报表本（同时开着会卡）。',
+    (None, '怎么录'),
+    '淡黄、白色格子手填；灰格子自动算，别往里写。清单里没有的（账户、类别、物资、买方 / 供应商、科目），先去【基础资料】【记账规则】【科目表】往下面空行加一行，再回来录。',
+    '资金台帐：一笔一行。填日期、选账户（美元 / 人民币 / FBC）、选类别（就是你老账的一级科目：原材料、管理费用、生活支出……），收入、支出只填一个。'
+    '「二级/备注」写二级（公关费、PAYE、宽体车……），会自动记到明细科目（对照表在【记账规则】最右边「二级明细对照」，没有的可以往下加）。',
+    '人民币、FBC（ZiG）的钱自动按【月度汇率】折美元：每个月在【月度汇率】填好当月汇率（1 美元＝多少人民币 / ZiG）。',
+    '账户之间调钱、换汇：转出、转入两笔都要记，类别都选「购汇/结汇」（同一种钱转账选「内部转账」）。',
+    '卖黄金：【销售结算】一次一行，填日期、买方、克数、单价（美元/克）；收到钱在资金台帐类别选「主营业务收入」。'
+    '冶炼：【产量登记】每次一行，填日期、批号 / 来源堆号、冶炼纯金量（克）。',
+    '进货：【采购入库】一次一个物资一行；付钱在资金台帐选「原材料」「柴油」「氰化钠」……。领料：【领用出库】选物资、用途（堆淋、氰化厂……），领取人写在最后一列。',
+    (None, '千万别做'),
+    '别插行、删行。漏记的一笔，记在最后一行下面就行，日期写对，报表按日期算，不用排在前面。要删一笔：选中那一行的格子按 Delete 清空。',
+    '别在表头上面插行，别插列、删列，别改表名，别改这本的文件名（报表本靠名字找它）。',
+    (None, '录完'),
+    '看一眼【录入检查】（【首页】也显示）：✗ 一定要改，⚠ 看一眼就行。',
+    '存盘（Ctrl+S）。存好了再去开报表本看账。',
+]
+
+
+def _help(wb, ctx, items, ttl):
+    idx = wb.sheetnames.index(SH_HELP) if SH_HELP in wb.sheetnames else None
+    if idx is not None:
+        del wb[SH_HELP]
+    ws = wb.create_sheet(SH_HELP, idx)
+    widths(ws, {'A': 6, 'B': 112})
+    title(ws, ttl, 'B', C_HOME, h2=8)
+    ws['A2'] = None
+    r, k = 3, 0
+    for x in items:
+        if isinstance(x, tuple):
+            ws.merge_cells(f'A{r}:B{r}')
+            put(ws, f'A{r}', x[1], F_SEC, FILL_SUBH, align=AL)
+            put(ws, f'B{r}', None, fill_=FILL_SUBH)
+            ws.row_dimensions[r].height = 24
+        else:
+            k += 1
+            put(ws, f'A{r}', k, F_TXTB, align=AC)
+            put(ws, f'B{r}', x, F_TXT, align=ALW)
+            ws.row_dimensions[r].height = 18 * max(1, -(-len(x) // 58)) + 6
+        r += 1
+    ws.sheet_view.showGridLines = False
+    ws.page_setup.orientation = 'portrait'
+    ws.page_setup.paperSize = 9
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = 1, 0
+    ws.sheet_properties.tabColor = C_HOME[2:]
+    return ws
+
+
+def build_help_report(wb, ctx=None):
+    """【使用说明】报表本版（一本版里也是这份）：先存录入本、打开报表本点更新 / 启用内容、两本放同一文件夹别改名、改了名用 数据→编辑链接→更改源"""
+    return _help(wb, ctx, HELP_REPORT, '使用说明（报表本：只看不录）')
+
+
+def build_help_entry(wb, ctx=None):
+    """【使用说明】录入本版（split.make_entry 里调，换掉一本版那份）：怎么录、别插行（漏记写在最后）、录的时候只开录入本、存盘"""
+    return _help(wb, ctx, HELP_ENTRY, '使用说明（录入本：平时录账只开这一本）')

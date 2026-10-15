@@ -88,8 +88,83 @@ def _ok_group(sh, col_date, col_no, r):
 
 
 def _in_range(dcol, r):
-    """日期是真日期、不早于建账起始月、在模板 32 个月以内"""
-    return f'AND(ISNUMBER({dcol}{r}),{dcol}{r}>=起始月份,{month_no(f"{dcol}{r}")}<={N_MONTHS})'
+    """日期是真日期、不早于建账起始月、在模板 32 个月以内。
+    拆本 F1：写成 IF(ISNUMBER(d),AND(…),FALSE)——报表本取数表里没填的格子是空串 ""，AND 不短路，YEAR("") 会报 #VALUE!（一本版结果不变）"""
+    return f'IF(ISNUMBER({dcol}{r}),AND({dcol}{r}>=起始月份,{month_no(f"{dcol}{r}")}<={N_MONTHS}),FALSE)'
+
+
+def _in_codes(x):
+    """x 是科目表里的编码。拆本 F2：先判 x<>""——报表本取数表里科目表空行是空串，MATCH("",…) 会对上（一本版结果不变）"""
+    return f'AND({x}<>"",ISNUMBER(MATCH({x},{CODES},0)))'
+
+
+# ───────── 校验列（S 列以外的「核对」）：抽成函数，录入本（entry.py）换「同一单据号第一行」的写法、换两处依赖报表的提示 ─────────
+def buy_blank(r):
+    return f'AND({B_DATE}{r}="",{B_SUP}{r}="",{B_MAT}{r}="",{B_QTY}{r}="",{B_UP}{r}="")'
+
+
+def buy_chk(r, head):
+    """采购入库 U 列「校验」。head＝同一单据号第一行的日期"""
+    return _chain(buy_blank(r), [
+        (f'NOT(ISNUMBER({B_DATE}{r}))', '✗ 日期没填或不是真日期'), (f'{B_DATE}{r}<起始月份', '✗ 日期早于建账起始月份'),
+        (f'{B_MAT}{r}=""', '✗ 没选物料'), (f'ISNA(MATCH({B_MAT}{r},{MATN},0))', '✗ 物料不在【基础资料·物料档案】里'),
+        (f'{B_ACC}{r}=""', '✗ 物料没设类别（入账科目）'),
+        (f'AND(OR({B_QTY}{r}="",{B_UP}{r}=""),NOT(AND({B_QTY}{r}="",{B_UP}{r}="",OR({B_FRT}{r}<>"",{B_VAT}{r}<>""))))',
+         '✗ 没填数量或单价（只补运杂关税的行，数量单价都空着、只填运杂清关关税就行）'),
+        (f'OR(AND({B_QTY}{r}<>"",NOT(ISNUMBER({B_QTY}{r}))),AND({B_UP}{r}<>"",NOT(ISNUMBER({B_UP}{r}))),'
+         f'AND({B_FRT}{r}<>"",NOT(ISNUMBER({B_FRT}{r}))),AND({B_VAT}{r}<>"",NOT(ISNUMBER({B_VAT}{r}))))',
+         '✗ 数量、单价、运杂、进项税要填数字（不要带单位）'),
+        (f'{month_no(f"{B_DATE}{r}")}>{N_MONTHS}', '✗ 超出模板月份范围'),
+        (f'AND({B_AMT0}{r}<>"",{B_RATE}{r}="")', '✗ 这个币种没有汇率（去【月度汇率】填）'),
+        (f'ISNA(MATCH({B_ACC}{r},{CODES},0))', '✗ 入账科目不在科目表里'),
+        (f'AND({B_NO}{r}<>"",NOT(IFERROR({_same_month(B_DATE, r, head)},TRUE)))', '✗ 同一个单据号的几行要在同一个月'),
+        (f'{B_SUP}{r}=""', '⚠ 没填供应商（应付账款挂不到人）')])
+
+
+def iss_blank(r):
+    return f'AND({I_DATE}{r}="",{I_MAT}{r}="",{I_QTY}{r}="")'
+
+
+def iss_stock(r):
+    """这个物料是不是库存管理（物料档案「库存管理」）"""
+    return f'IFERROR(INDEX({MAT(M_STOCK)},MATCH({I_MAT}{r},{MATN},0)),"")'
+
+
+def iss_chk(r, head, zero=None):
+    """领用出库 O 列「校验」。head＝同一领料单号第一行的日期；zero＝「库里没有进货」那一条（录入本里不能用 I 列单价，换写法）"""
+    stock = iss_stock(r)
+    if zero is None:
+        zero = (f'N({I_PRICE}{r})=0', '⚠ 库里没有这个物料的进货（单价为 0），先录采购入库')
+    return _chain(iss_blank(r), [
+        (f'NOT(ISNUMBER({I_DATE}{r}))', '✗ 日期没填或不是真日期'), (f'{I_DATE}{r}<起始月份', '✗ 日期早于建账起始月份'),
+        (f'{month_no(f"{I_DATE}{r}")}>{N_MONTHS}', '✗ 超出模板月份范围'),
+        (f'{I_MAT}{r}=""', '✗ 没选物料'), (f'ISNA(MATCH({I_MAT}{r},{MATN},0))', '✗ 物料不在物料档案里'),
+        (f'{stock}<>"是"', '✗ 这个物料不是库存管理的（买来就直接记账了），不用领用'),
+        (f'{I_QTY}{r}=""', '✗ 没填数量'), (f'NOT(ISNUMBER({I_QTY}{r}))', '✗ 数量要填数字（不要带单位）'),
+        (f'{I_USE}{r}=""', '✗ 没选用途'),
+        (f'{I_DR}{r}=""', '✗ 用途在【记账规则】里没设科目'),
+        (f'OR(ISNA(MATCH({I_DR}{r},{CODES},0)),ISNA(MATCH({I_CR}{r},{CODES},0)))', '✗ 计入科目或存货科目不在科目表里'),
+        zero,
+        (f'AND({I_NO}{r}<>"",NOT(IFERROR({_same_month(I_DATE, r, head)},TRUE)))', '✗ 同一个领料单号的几行要在同一个月')])
+
+
+def sale_blank(r):
+    return f'AND({S_DATE}{r}="",{S_CUS}{r}="",{S_TON}{r}="",{S_PRICE}{r}="")'
+
+
+def sale_chk(r, head, nocost=None):
+    """销售结算 Q 列「校验」。head＝同一结算单号第一行的日期；nocost＝「没有成本」那一条（录入本里不能用 M 列每吨成本，换写法）"""
+    if nocost is None:
+        nocost = (f'N({S_UC}{r})=0', '⚠ 这个月原矿没有成本（没登记产量或没结转），销售成本按 0')
+    return _chain(sale_blank(r), [
+        (f'NOT(ISNUMBER({S_DATE}{r}))', '✗ 日期没填或不是真日期'), (f'{S_DATE}{r}<起始月份', '✗ 日期早于建账起始月份'),
+        (f'{month_no(f"{S_DATE}{r}")}>{N_MONTHS}', '✗ 超出模板月份范围'),
+        (f'OR({S_TON}{r}="",{S_PRICE}{r}="")', '✗ 没填吨数或单价（没定价的先别录，定了价再录）'),
+        (f'OR(NOT(ISNUMBER({S_TON}{r})),NOT(ISNUMBER({S_PRICE}{r})),AND({S_RATE}{r}<>"",NOT(ISNUMBER({S_RATE}{r}))))',
+         '✗ 吨数、单价、税率要填数字（不要带单位）'),
+        (f'AND({S_NO}{r}<>"",NOT(IFERROR({_same_month(S_DATE, r, head)},TRUE)))', '✗ 同一个结算单号的几行要在同一个月'),
+        (f'{S_CUS}{r}=""', '⚠ 没填客户（应收账款挂不到甲方）'),
+        nocost])
 
 
 # ───────────────────────── 采购入库 ─────────────────────────
@@ -111,7 +186,7 @@ def build_buy(wb, ctx):
                          (B_PRJ, '项目'), (B_NOTE, '备注'), (B_CHK, '校验'), (B_VALID, '有效'), (B_GKEY, '分组'),
                          (B_LEGS, '条数'), (B_GPRE, '前面'), (B_VID, '凭证ID')], C_BUY, height=40)
     for r in range(MOD_R0, BUY_R1 + 1):
-        blank = f'AND({B_DATE}{r}="",{B_SUP}{r}="",{B_MAT}{r}="",{B_QTY}{r}="",{B_UP}{r}="")'
+        blank = buy_blank(r)
         _seq(ws, r, blank)
         ws[f'{B_SPEC}{r}'] = f'=IF({B_MAT}{r}="","",IFERROR(INDEX({MAT(M_SPEC)},MATCH({B_MAT}{r},{MATN},0))&"",""))'
         ws[f'{B_UNIT}{r}'] = f'=IF({B_MAT}{r}="","",IFERROR(INDEX({MAT(M_UNIT)},MATCH({B_MAT}{r},{MATN},0))&"",""))'
@@ -126,26 +201,12 @@ def build_buy(wb, ctx):
         extra_ok = f'AND(OR({B_FRT}{r}="",ISNUMBER({B_FRT}{r})),OR({B_VAT}{r}="",ISNUMBER({B_VAT}{r})))'
         ws[f'{B_VALID}{r}'] = (f'=IF(AND({_in_range(B_DATE, r)},N({B_COST}{r})+N({B_VAT}{r})<>0,{B_ACC}{r}<>"",'
                                f'OR({goods_ok},{addon_ok}),{extra_ok},'
-                               f'ISNUMBER(MATCH({B_ACC}{r},{CODES},0)),{_ok_group(SH_BUY, B_DATE, B_NO, r)}),1,0)')
+                               f'{_in_codes(f"{B_ACC}{r}")},{_ok_group(SH_BUY, B_DATE, B_NO, r)}),1,0)')
         _group_cols(ws, r, BUY_R1, B_VALID, B_GKEY, B_LEGS, B_GPRE, B_VID,
                     f'IF({B_NO}{r}<>"","D"&{B_NO}{r},"#"&ROW())',
                     f'(ROUND(N({B_COST}{r}),2)<>0)+(ROUND(N({B_VAT}{r}),2)<>0)+(ROUND(N({B_TOT}{r}),2)<>0)'
                     f'+(ROUND(N({B_FRT}{r}),2)<>0)', '采购')
-        head = _head(SH_BUY, B_DATE, B_NO, r)
-        ws[f'{B_CHK}{r}'] = _chain(blank, [
-            (f'NOT(ISNUMBER({B_DATE}{r}))', '✗ 日期没填或不是真日期'), (f'{B_DATE}{r}<起始月份', '✗ 日期早于建账起始月份'),
-            (f'{B_MAT}{r}=""', '✗ 没选物料'), (f'ISNA(MATCH({B_MAT}{r},{MATN},0))', '✗ 物料不在【基础资料·物料档案】里'),
-            (f'{B_ACC}{r}=""', '✗ 物料没设类别（入账科目）'),
-            (f'AND(OR({B_QTY}{r}="",{B_UP}{r}=""),NOT(AND({B_QTY}{r}="",{B_UP}{r}="",OR({B_FRT}{r}<>"",{B_VAT}{r}<>""))))',
-             '✗ 没填数量或单价（只补运杂关税的行，数量单价都空着、只填运杂清关关税就行）'),
-            (f'OR(AND({B_QTY}{r}<>"",NOT(ISNUMBER({B_QTY}{r}))),AND({B_UP}{r}<>"",NOT(ISNUMBER({B_UP}{r}))),'
-             f'AND({B_FRT}{r}<>"",NOT(ISNUMBER({B_FRT}{r}))),AND({B_VAT}{r}<>"",NOT(ISNUMBER({B_VAT}{r}))))',
-             '✗ 数量、单价、运杂、进项税要填数字（不要带单位）'),
-            (f'{month_no(f"{B_DATE}{r}")}>{N_MONTHS}', '✗ 超出模板月份范围'),
-            (f'AND({B_AMT0}{r}<>"",{B_RATE}{r}="")', '✗ 这个币种没有汇率（去【月度汇率】填）'),
-            (f'ISNA(MATCH({B_ACC}{r},{CODES},0))', '✗ 入账科目不在科目表里'),
-            (f'AND({B_NO}{r}<>"",NOT(IFERROR({_same_month(B_DATE, r, head)},TRUE)))', '✗ 同一个单据号的几行要在同一个月'),
-            (f'{B_SUP}{r}=""', '⚠ 没填供应商（应付账款挂不到人）')])
+        ws[f'{B_CHK}{r}'] = buy_chk(r, _head(SH_BUY, B_DATE, B_NO, r))
     style_rows(ws, MOD_R0, BUY_R1, 'ABCDEFGHIJKLMNOPQRSTU',
                auto=(B_SEQ, B_SPEC, B_UNIT, B_AMT0, B_RATE, B_AMT, B_COST, B_TOT, B_ACC, B_CHK),
                fmts={B_DATE: DATE, B_QTY: QTY, B_UP: PRICE, B_AMT0: MONEY, B_RATE: RATE, B_AMT: MONEY, B_FRT: MONEY,
@@ -184,7 +245,7 @@ def build_issue(wb, ctx):
     mc = lambda col: rng(SH_RULE, col, MC_R0, MC_R1)
     from s_mend import inv_unit_cost
     for r in range(MOD_R0, ISS_R1 + 1):
-        blank = f'AND({I_DATE}{r}="",{I_MAT}{r}="",{I_QTY}{r}="")'
+        blank = iss_blank(r)
         _seq(ws, r, blank)
         ws[f'{I_SPEC}{r}'] = f'=IF({I_MAT}{r}="","",IFERROR(INDEX({MAT(M_SPEC)},MATCH({I_MAT}{r},{MATN},0))&"",""))'
         ws[f'{I_UNIT}{r}'] = f'=IF({I_MAT}{r}="","",IFERROR(INDEX({MAT(M_UNIT)},MATCH({I_MAT}{r},{MATN},0))&"",""))'
@@ -197,24 +258,13 @@ def build_issue(wb, ctx):
         ws[f'{I_DR}{r}'] = (f'=IF(OR({I_USE}{r}="",{I_MAT}{r}=""),"",IFERROR(IF({u}="按物料类别",{prod},'
                             f'{code_of(u)}),""))')
         ws[f'{I_CR}{r}'] = f'=IF({I_MAT}{r}="","",IFERROR(INDEX({MAT(M_ACC)},MATCH({I_MAT}{r},{MATN},0))&"",""))'
-        stock = f'IFERROR(INDEX({MAT(M_STOCK)},MATCH({I_MAT}{r},{MATN},0)),"")'
+        stock = iss_stock(r)
         ws[f'{I_VALID}{r}'] = (f'=IF(AND({_in_range(I_DATE, r)},N({I_AMT}{r})<>0,{I_DR}{r}<>"",{I_CR}{r}<>"",'
-                               f'ISNUMBER(MATCH({I_DR}{r},{CODES},0)),ISNUMBER(MATCH({I_CR}{r},{CODES},0)),{stock}="是",'
+                               f'{_in_codes(f"{I_DR}{r}")},{_in_codes(f"{I_CR}{r}")},{stock}="是",'
                                f'{_ok_group(SH_ISS, I_DATE, I_NO, r)}),1,0)')
         _group_cols(ws, r, ISS_R1, I_VALID, I_GKEY, I_LEGS, I_GPRE, I_VID,
                     f'IF({I_NO}{r}<>"","D"&{I_NO}{r},"#"&ROW())', '2', '领用')
-        head = _head(SH_ISS, I_DATE, I_NO, r)
-        ws[f'{I_CHK}{r}'] = _chain(blank, [
-            (f'NOT(ISNUMBER({I_DATE}{r}))', '✗ 日期没填或不是真日期'), (f'{I_DATE}{r}<起始月份', '✗ 日期早于建账起始月份'),
-            (f'{month_no(f"{I_DATE}{r}")}>{N_MONTHS}', '✗ 超出模板月份范围'),
-            (f'{I_MAT}{r}=""', '✗ 没选物料'), (f'ISNA(MATCH({I_MAT}{r},{MATN},0))', '✗ 物料不在物料档案里'),
-            (f'{stock}<>"是"', '✗ 这个物料不是库存管理的（买来就直接记账了），不用领用'),
-            (f'{I_QTY}{r}=""', '✗ 没填数量'), (f'NOT(ISNUMBER({I_QTY}{r}))', '✗ 数量要填数字（不要带单位）'),
-            (f'{I_USE}{r}=""', '✗ 没选用途'),
-            (f'{I_DR}{r}=""', '✗ 用途在【记账规则】里没设科目'),
-            (f'OR(ISNA(MATCH({I_DR}{r},{CODES},0)),ISNA(MATCH({I_CR}{r},{CODES},0)))', '✗ 计入科目或存货科目不在科目表里'),
-            (f'N({I_PRICE}{r})=0', '⚠ 库里没有这个物料的进货（单价为 0），先录采购入库'),
-            (f'AND({I_NO}{r}<>"",NOT(IFERROR({_same_month(I_DATE, r, head)},TRUE)))', '✗ 同一个领料单号的几行要在同一个月')])
+        ws[f'{I_CHK}{r}'] = iss_chk(r, _head(SH_ISS, I_DATE, I_NO, r))
     style_rows(ws, MOD_R0, ISS_R1, 'ABCDEFGHIJKLMNO', auto=(I_SEQ, I_SPEC, I_UNIT, I_PRICE, I_AMT, I_DR, I_CR, I_CHK),
                fmts={I_DATE: DATE, I_QTY: QTY, I_PRICE: PRICE, I_AMT: MONEY},
                aligns={I_NOTE: AL, I_CHK: AL, I_QTY: AR_, I_PRICE: AR_, I_AMT: AR_})
@@ -275,7 +325,7 @@ def build_sale(wb, ctx):
                          (S_VID, '凭证ID')], C_SALE, height=40)
     from s_mend import ore_unit_cost
     for r in range(MOD_R0, SALE_R1 + 1):
-        blank = f'AND({S_DATE}{r}="",{S_CUS}{r}="",{S_TON}{r}="",{S_PRICE}{r}="")'
+        blank = sale_blank(r)
         _seq(ws, r, blank)
         ws[f'{S_AMT}{r}'] = f'=IF(OR(NOT(ISNUMBER({S_TON}{r})),NOT(ISNUMBER({S_PRICE}{r}))),"",ROUND({S_TON}{r}*{S_PRICE}{r},2))'
         rt = f'IF({S_RATE}{r}="",增值税率,{S_RATE}{r})'
@@ -289,16 +339,7 @@ def build_sale(wb, ctx):
         _group_cols(ws, r, SALE_R1, S_VALID, S_GKEY, S_LEGS, S_GPRE, S_VID,
                     f'IF({S_NO}{r}<>"","D"&{S_NO}{r},"#"&ROW())',
                     f'(ROUND(N({S_NET}{r}),2)<>0)+(ROUND(N({S_TAX}{r}),2)<>0)+(ROUND(N({S_TOT}{r}),2)<>0)', '销售')
-        head = _head(SH_SALE, S_DATE, S_NO, r)
-        ws[f'{S_CHK}{r}'] = _chain(blank, [
-            (f'NOT(ISNUMBER({S_DATE}{r}))', '✗ 日期没填或不是真日期'), (f'{S_DATE}{r}<起始月份', '✗ 日期早于建账起始月份'),
-            (f'{month_no(f"{S_DATE}{r}")}>{N_MONTHS}', '✗ 超出模板月份范围'),
-            (f'OR({S_TON}{r}="",{S_PRICE}{r}="")', '✗ 没填吨数或单价（没定价的先别录，定了价再录）'),
-            (f'OR(NOT(ISNUMBER({S_TON}{r})),NOT(ISNUMBER({S_PRICE}{r})),AND({S_RATE}{r}<>"",NOT(ISNUMBER({S_RATE}{r}))))',
-             '✗ 吨数、单价、税率要填数字（不要带单位）'),
-            (f'AND({S_NO}{r}<>"",NOT(IFERROR({_same_month(S_DATE, r, head)},TRUE)))', '✗ 同一个结算单号的几行要在同一个月'),
-            (f'{S_CUS}{r}=""', '⚠ 没填客户（应收账款挂不到甲方）'),
-            (f'N({S_UC}{r})=0', '⚠ 这个月原矿没有成本（没登记产量或没结转），销售成本按 0')])
+        ws[f'{S_CHK}{r}'] = sale_chk(r, _head(SH_SALE, S_DATE, S_NO, r))
     style_rows(ws, MOD_R0, SALE_R1, 'ABCDEFGHIJKLMNOPQ', auto=(S_SEQ, S_AMT, S_NET, S_TAX, S_TOT, S_UC, S_COGS, S_CHK),
                fmts={S_DATE: DATE, S_TON: '#,##0.00', S_PRICE: MONEY, S_AMT: MONEY, S_RATE: '0%', S_NET: MONEY,
                      S_TAX: MONEY, S_TOT: MONEY, S_UC: MONEY, S_COGS: MONEY},
@@ -334,7 +375,7 @@ def build_pay(wb, ctx):
         ws[f'{W_DR}{r}'] = f'=IF({W_DEPT}{r}="","",IFERROR({code_of(f"INDEX({dp(DP_WAGE)},MATCH({W_DEPT}{r},{dp(DP_NAME)},0))")},""))'
         ws[f'{W_CR}{r}'] = f'=IF({W_TYPE}{r}="","221101",IFERROR({code_of(f"INDEX({pt(PT_ACC)},MATCH({W_TYPE}{r},{pt(PT_NAME)},0))")},""))'
         ws[f'{W_VALID}{r}'] = (f'=IF(AND({_in_range(W_DATE, r)},ISNUMBER({W_AMT}{r}),N({W_AMT}{r})<>0,'
-                               f'ISNUMBER(MATCH({W_DR}{r},{CODES},0)),ISNUMBER(MATCH({W_CR}{r},{CODES},0))),1,0)')
+                               f'{_in_codes(f"{W_DR}{r}")},{_in_codes(f"{W_CR}{r}")}),1,0)')
         _group_cols(ws, r, PAY_R1, W_VALID, W_GKEY, W_LEGS, W_GPRE, W_VID,
                     f'YEAR({W_DATE}{r})*100+MONTH({W_DATE}{r})', '2', '工资')
         ws[f'{W_CHK}{r}'] = _chain(blank, [
@@ -377,8 +418,11 @@ def build_fa(wb, ctx):
     for r in range(MOD_R0, FA_R1 + 1):
         blank = f'AND({F_NAME}{r}="",{F_COST}{r}="")'
         ws[f'{F_ACC}{r}'] = f'=IF({F_CAT}{r}="","",IFERROR({code_of(f"INDEX({fc(FC_ACC)},MATCH({F_CAT}{r},{fc(FC_NAME)},0))")},""))'
-        ws[f'{F_YEFF}{r}'] = f'=IF({F_YEARS}{r}<>"",{F_YEARS}{r},IFERROR(INDEX({fc(FC_YEARS)},MATCH({F_CAT}{r},{fc(FC_NAME)},0)),""))'
-        ws[f'{F_SEFF}{r}'] = f'=IF({F_SALV}{r}<>"",{F_SALV}{r},IFERROR(INDEX({fc(FC_SALV)},MATCH({F_CAT}{r},{fc(FC_NAME)},0)),0))'
+        # 拆本 F6：类别空着直接给默认（报表本里 MATCH("",…) 会对上空行）；INDEX 取到空格子当 0（N()，空串也是 0）——一本版结果不变
+        ws[f'{F_YEFF}{r}'] = (f'=IF({F_YEARS}{r}<>"",{F_YEARS}{r},IF({F_CAT}{r}="","",'
+                              f'IFERROR(N(INDEX({fc(FC_YEARS)},MATCH({F_CAT}{r},{fc(FC_NAME)},0))),"")))')
+        ws[f'{F_SEFF}{r}'] = (f'=IF({F_SALV}{r}<>"",{F_SALV}{r},IF({F_CAT}{r}="",0,'
+                              f'IFERROR(N(INDEX({fc(FC_SALV)},MATCH({F_CAT}{r},{fc(FC_NAME)},0))),0)))')
         ws[f'{F_DACC}{r}'] = f'=IF({F_DEPT}{r}="","",IFERROR({code_of(f"INDEX({dp(DP_DEP)},MATCH({F_DEPT}{r},{dp(DP_NAME)},0))")},""))'
         ok = f'AND(ISNUMBER({F_COST}{r}),ISNUMBER({F_DATE}{r}),N({F_YEFF}{r})>0)'
         ws[f'{F_MDEP}{r}'] = f'=IF({ok},ROUND({F_COST}{r}*(1-N({F_SEFF}{r}))/({F_YEFF}{r}*12),2),"")'
@@ -456,7 +500,7 @@ def build_man(wb, ctx):
         num_ok = (f'AND(OR({MN_DR}{r}="",ISNUMBER({MN_DR}{r})),OR({MN_CR}{r}="",ISNUMBER({MN_CR}{r})))')
         ws[f'{MN_BAD}{r}'] = (f'=IF({MN_HAS}{r}=0,0,IFERROR(IF(AND(ISNUMBER({MN_VDATE}{r}),{MN_VDATE}{r}>=起始月份,'
                               f'{month_no(f"{MN_VDATE}{r}")}<={N_MONTHS},{num_ok},'
-                              f'ISNUMBER(MATCH({MN_CODE2}{r},{CODES},0)),OR(N({MN_DR}{r})=0,N({MN_CR}{r})=0)),0,1),1))')
+                              f'{_in_codes(f"{MN_CODE2}{r}")},OR(N({MN_DR}{r})=0,N({MN_CR}{r})=0)),0,1),1))')
         diff = f'ROUND(SUMIF({GK},{MN_GKEY}{r},{DRr})-SUMIF({GK},{MN_GKEY}{r},{CRr}),2)'
         ws[f'{MN_OK}{r}'] = (f'=IF(OR({MN_HAS}{r}=0,{MN_BAD}{r}=1,{MN_GKEY}{r}=""),0,'
                              f'IF(AND(COUNTIFS({GK},{MN_GKEY}{r},{rg(MN_BAD)},1)=0,{diff}=0),1,0))')

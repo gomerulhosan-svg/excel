@@ -5,6 +5,15 @@ from openpyxl.formatting.rule import FormulaRule
 
 from common import *
 
+# 10/15：【记账规则】最右边「二级明细对照」（类别＋二级 → 科目）。现金流水 Y 列（s_cash.raw_formula）先查它：
+# 键＝类别&"|"&二级（流水 E&"|"&R），对上了就记这里的科目，没对上照收支类别记。名称 二级_键 / 二级_科目（define_names）
+SUB_R0, SUB_R1 = 5, 84             # 80 行
+SB_CAT, SB_SUB, SB_ACC, SB_NOTE, SB_KEY = 'AM AN AO AP AQ'.split()     # 类别 / 二级 / 记到科目 / 说明 / 键（隐藏，公式）
+# 10/15：【货柜登记】（录入本，纯手填备查，不记账）
+SH_BOX = '货柜登记'
+BOX_HDR, BOX_R0, BOX_R1 = 3, 4, 303                                 # 300 行
+BOX_COLS = [('A', '签收日期', 11), ('B', '柜号', 16), ('C', '提单号', 20), ('D', '封条号', 14), ('E', '货物/供应商', 28), ('F', '备注', 36)]
+
 
 def code_of(x):
     """单元格里可能是「160101」也可能是下拉选的「160101 矿用车辆…」：取空格前的编码"""
@@ -149,11 +158,13 @@ def build_rules(wb, ctx):
                 RC_NOTE: 46, 'J': 2, MC_NAME: 12, MC_ACC: 10, MC_STOCK: 7, MC_PROD: 12, MC_NOTE: 22, 'P': 2,
                 US_NAME: 12, US_ACC: 12, US_NOTE: 30, 'T': 2, DP_NAME: 10, DP_WAGE: 11, DP_DEP: 11, DP_NOTE: 22,
                 'Y': 2, PT_NAME: 8, PT_ACC: 10, 'AB': 2, FC_NAME: 12, FC_ACC: 10, FC_YEARS: 7, FC_SALV: 7,
-                FC_NOTE: 14, 'AH': 2, CFI_NO: 5, CFI_NAME: 44, CFI_SIDE: 5})
+                FC_NOTE: 14, 'AH': 2, CFI_NO: 5, CFI_NAME: 44, CFI_SIDE: 5, 'AL': 2, SB_CAT: 14, SB_SUB: 16,
+                SB_ACC: 12, SB_NOTE: 34, SB_KEY: 10})
     title(ws, '记账规则（每类业务记到哪个科目 —— 改这里，凭证和报表跟着变）', CFI_SIDE, C_BASE,
           '💡 科目格子填科目编码（也可以从下拉选「编码 名称」）。现金流水每一笔：选了哪个收支类别，就按这里「收到钱时 / 付出钱时」'
           '的科目记对方科目（本账户那一边按【基础资料·资金账户】的对应科目）；业务模块启用日以前的，「启用日前」一栏有填就用它（按你 8 月报表的口径）。'
-          '「@资本」＝按往来单位找【基础资料·往来单位】里的实收资本明细。现金流量项目填会小企03 表的行次，0＝账户之间转钱，不算现金流。')
+          '「@资本」＝按往来单位找【基础资料·往来单位】里的实收资本明细。现金流量项目填会小企03 表的行次，0＝账户之间转钱，不算现金流。'
+          '最右边「二级明细对照」：流水「二级/备注」写了二级（公关费、PAYE、宽体车…）就按它记到明细科目，对不上的照收支类别记。')
     ws.row_dimensions[3].height = 24
     ws.row_dimensions[4].height = 44
 
@@ -237,8 +248,62 @@ def build_rules(wb, ctx):
         put(ws, f'{CFI_NO}{r}', x[0], F_TXT, FILL_AUTO, '0', AC)
         put(ws, f'{CFI_NAME}{r}', x[1], F_TXT, FILL_AUTO, align=AL)
         put(ws, f'{CFI_SIDE}{r}', x[2], F_TXT, FILL_AUTO, align=AC)
+    build_subs(ws, ctx)
     ws.auto_filter.ref = f'A4:{RC_NOTE}{RC_R1}'      # 用户 10/05 加的筛选（A075 照留）
     ws.freeze_panes = 'C5'
+    return ws
+
+
+def build_subs(ws, ctx):
+    """10/15：「二级明细对照」块（【记账规则】AM:AQ）。数据＝ctx['subs']（ref_a075.SUBS）：[(类别, 二级, 科目, 说明)]"""
+    _block_title(ws, SB_CAT, SB_KEY, '二级明细对照（流水「二级/备注」→ 明细科目）', 'FF2E75B6')
+    header(ws, 4, [(SB_CAT, '收支类别'), (SB_SUB, '二级\n(流水 R 列写的)'), (SB_ACC, '记到科目'), (SB_NOTE, '说明'),
+                   (SB_KEY, '键（自动）')], 'FF2E75B6', height=44)
+    subs = ctx.get('subs') or []
+    assert len(subs) <= SUB_R1 - SUB_R0 + 1
+    for i in range(SUB_R1 - SUB_R0 + 1):
+        r = SUB_R0 + i
+        x = subs[i] if i < len(subs) else (None,) * 4
+        put(ws, f'{SB_CAT}{r}', x[0], F_IN, FILL_IN, align=AL)
+        put(ws, f'{SB_SUB}{r}', x[1], F_IN, FILL_IN, '@', AL)
+        put(ws, f'{SB_ACC}{r}', x[2], F_IN, FILL_IN, '@', AC)
+        put(ws, f'{SB_NOTE}{r}', x[3], F_NOTE, FILL_IN, align=ALW)
+        put(ws, f'{SB_KEY}{r}', f'=IF(OR({SB_CAT}{r}="",{SB_SUB}{r}=""),"",TRIM({SB_CAT}{r})&"|"&TRIM({SB_SUB}{r}))',
+            F_NOTE, FILL_AUTO, align=AL)
+    add_list_dv(ws, f'{SB_CAT}{SUB_R0}:{SB_CAT}{SUB_R1}', '=类别列表')
+    add_list_dv(ws, f'{SB_ACC}{SUB_R0}:{SB_ACC}{SUB_R1}', '=科目选择', '填编码或从下拉选', stop=False)
+    k = f'${SB_KEY}${SUB_R0}:${SB_KEY}${SUB_R1}'
+    ws.conditional_formatting.add(f'{SB_CAT}{SUB_R0}:{SB_SUB}{SUB_R1}',
+                                  FormulaRule(formula=[f'AND(${SB_KEY}{SUB_R0}<>"",COUNTIF({k},${SB_KEY}{SUB_R0})>1)'], fill=FILL_WARN))
+    ws.column_dimensions[SB_KEY].hidden = True
+
+
+# ───────────────────────── 货柜登记（10/15，录入本：纯手填备查，不记账） ─────────────────────────
+def build_container(wb, ctx):
+    """【货柜登记】：签收日期、柜号、提单号、封条号、货物/供应商、备注，300 行，没有公式。数据＝ctx['containers']（导入/u2_货柜.json）。
+    已经有这张表就不再建（p_a075.apply 里调；build 里另调也不会建两张）"""
+    if SH_BOX in wb.sheetnames:
+        return wb[SH_BOX]
+    ws = wb.create_sheet(SH_BOX)
+    widths(ws, {c: w for c, _, w in BOX_COLS})
+    last = BOX_COLS[-1][0]
+    title(ws, '货柜登记（货柜签收备查 · 只登记，不记账）', last, 'FF00B050',
+          '💡 到一个货柜记一行：签收日期、柜号、提单号、封条号、什么货 / 谁家的。只是备查，不出凭证；货的钱在【采购入库】和资金台帐里记。'
+          '往下面空行接着填，别插行删行。')
+    header(ws, BOX_HDR, [(c, t) for c, t, _ in BOX_COLS], 'FF00B050', height=30)
+    rows = ctx.get('containers') or []
+    assert len(rows) <= BOX_R1 - BOX_R0 + 1
+    keys = ['date', 'box', 'bl', 'seal', 'goods', 'note']
+    for i in range(BOX_R1 - BOX_R0 + 1):
+        r = BOX_R0 + i
+        x = rows[i] if i < len(rows) else {}
+        for (c, _, _), k in zip(BOX_COLS, keys):
+            ws[f'{c}{r}'] = x.get(k)
+    style_rows(ws, BOX_R0, BOX_R1, [c for c, _, _ in BOX_COLS], fmts={'A': DATE, 'B': '@', 'C': '@', 'D': '@'},
+               aligns={'E': AL, 'F': AL})
+    add_date_dv(ws, f'A{BOX_R0}:A{BOX_R1}')
+    ws.auto_filter.ref = f'A{BOX_HDR}:{last}{BOX_R1}'
+    ws.freeze_panes = f'A{BOX_R0}'
     return ws
 
 
@@ -378,3 +443,6 @@ def define_names(wb):
     dn('人员类别列表', lst(SH_RULE, PT_NAME, PT_R0, PT_R1))
     dn('资产类别列表', lst(SH_RULE, FC_NAME, FC_R0, FC_R1))
     dn('科目选择', lst(SH_ACC, 'O', AC_R0, AC_R1))
+    # 10/15：二级明细对照（s_cash.raw_formula 用：INDEX(二级_科目,MATCH(E&"|"&R,二级_键,0))）
+    dn('二级_键', rr(SB_KEY, SUB_R0, SUB_R1))
+    dn('二级_科目', rr(SB_ACC, SUB_R0, SUB_R1))

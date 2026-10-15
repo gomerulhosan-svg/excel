@@ -100,7 +100,8 @@ def build_inv_grid(wb, ctx):
                               f'{buy(B_DATE)},"<"&{m1}),0)')
             ws[f'{ai}{r}'] = (f'=IF({live},SUMIFS({buy(B_COST)},{buy(B_MAT)},$A{r},{buy(B_VALID)},1,{buy(B_DATE)},">="&{m0},'
                               f'{buy(B_DATE)},"<"&{m1}),0)')
-            ws[f'{qo}{r}'] = (f'=IF({live},SUMIFS({iss(I_QTY)},{iss(I_MAT)},$A{r},{iss(I_USE)},"<>",{iss(I_DATE)},">="&{m0},'
+            # 拆本 F4：用途「不空」写成 "?*"（"<>" 会把报表本取数表里的空串也算进去；用途是下拉里的文字，一本版结果不变）
+            ws[f'{qo}{r}'] = (f'=IF({live},SUMIFS({iss(I_QTY)},{iss(I_MAT)},$A{r},{iss(I_USE)},"?*",{iss(I_DATE)},">="&{m0},'
                               f'{iss(I_DATE)},"<"&{m1}),0)')
             ws[f'{u}{r}'] = f'=IF({qe_p}+{qi}{r}>0,ROUND(({ae_p}+{ai}{r})/({qe_p}+{qi}{r}),6),{u_p})'
             ws[f'{qe}{r}'] = f'={qe_p}+{qi}{r}-{qo}{r}'

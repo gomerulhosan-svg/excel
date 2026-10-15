@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-"""一条龙（照 A062 修改脚本 build_1008.py 的流程）：
-   生成 → 同一列往下拖的公式压成「共享公式」→ 复制一份、把隐藏列都显示出来 → LibreOffice（关多线程）整本重算、
-   数报错、核对公式个数 → 把算好的值写回成品当缓存。成品本身不经 LibreOffice 存盘。
+"""一条龙（两本联动版）：
+   一本版（内存）→ 存一本版（算数用）、报表本、录入本（build.build_split）→ 三本都压共享公式（含「[」的公式不压）
+   → 两本 WPS 体检（WPS 存后会多出来的 XML 超过 1 MB 就停）→ LibreOffice（关多线程）算一本版（报表本的数从它来）、算录入本
+   → 数报错、核对公式个数 → 算好的值写回两本当缓存 → 报表本的外部链接缓存按录入本重写（refresh_link_cache）。
+   成品不经 LibreOffice 存盘。
 
-    python3 -I make_all.py [输出.xlsx] [--keep]     （--keep 保留 _calc 里的重算副本）
+    python3 -I make_all.py [输出目录] [--keep]     （--keep 保留 _calc 里的一本版和重算副本）
 
-默认输出 ../A075_矿业美元财务账套（提速版）.xlsx（成品；LibreOffice 重算用的副本在 ../_calc/，_calc/ 不进 git）。
+默认输出 ../A075-1_录入本.xlsx 和 ../A075-2_报表本.xlsx（同一个文件夹；报表本的外部链接写的是相对文件名）。
+一本版和 LibreOffice 重算副本在 <输出目录>/_calc/（_calc/ 不进 git）。
 """
 import os
 import shutil
@@ -17,52 +20,82 @@ sys.path.insert(0, HERE)
 
 import build
 import p_wps
+from common import WB1_FILE, WB2_FILE
 from share import share
 from inject_cache import inject
 from lo_recalc import recalc, count, unhide_cols
+from refresh_link_cache import refresh
 
 ROOT = os.path.dirname(HERE)
-CALC = os.path.join(ROOT, '_calc')
-# 原件里本来有 3 处 #VALUE!（资金账户余额表 K6、K7、K25：基础资料 J5:J7「对应科目」空着，J 取到空、K＝空−数）。
-# 提速版把 K 改成「J 是空就空着」（s_ledger.build_acct），重算应该 0 报错；这里不再放行任何报错。
+# 不放行任何报错（提速版起一本版 0 报错）
 KNOWN_ERRORS = set()
-OUT = os.path.join(ROOT, 'A075_矿业美元财务账套（提速版）.xlsx')
 
 
-def main(out=OUT, keep=False, log=print):
-    t0 = time.time()
-    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-    build.build(out, log=log)
-    s = share(out)
-    nf, _, _ = count(out)
-    log(f'① 生成并压共享公式：公式 {nf} 个（共享公式 {sum(s.values())} 格），{os.path.getsize(out) / 1e6:.1f} MB，{time.time() - t0:.0f} 秒')
-    wps_ok, _, _ = p_wps.report(out, log=log)          # WPS 体检：成列的公式里不准有「表名!」、往下撑的区域
-    if not wps_ok:
-        return 3
-    os.makedirs(CALC, exist_ok=True)
-    calc = os.path.join(CALC, os.path.splitext(os.path.basename(out))[0] + '_算数.xlsx')
-    shutil.copy(out, calc)
+def _calc(path, calc_dir, tag, log):
+    """副本显示隐藏列 → LibreOffice 关多线程整本重算 → (副本路径, 状态)"""
+    calc = os.path.join(calc_dir, os.path.splitext(os.path.basename(path))[0] + '_算数.xlsx')
+    shutil.copy(path, calc)
     unhide_cols(calc)
     st = recalc(calc)
     if 'error' in st:
-        log('✗ 重算没跑成：' + st['error'])
-        return 2
-    log(f"② LibreOffice 重算（关多线程）：公式 {st['formulas']} 个，报错 {st['errors']} 处，{st['wall_seconds']} 秒")
+        log(f'✗ {tag}重算没跑成：' + st['error'])
+        return calc, st
+    log(f"   {tag}：LibreOffice 重算公式 {st['formulas']:,} 个，报错 {st['errors']} 处，{st['wall_seconds']} 秒")
     for k, v in st['error_cells'].items():
         log(f'    {k} {v[:15]}')
+    return calc, st
+
+
+def _ok(st, nf, tag, log):
+    if 'error' in st:
+        return False
     errs = {x for v in st['error_cells'].values() for x in v}
-    if errs and errs <= KNOWN_ERRORS and st['errors'] == len(errs):
-        log(f'    （这 {len(errs)} 处是已知的）')
-    ok = (st['errors'] == 0 or (errs <= KNOWN_ERRORS and st['errors'] == len(errs))) and st['formulas'] == nf
+    ok = st['errors'] == 0 or (errs <= KNOWN_ERRORS and st['errors'] == len(errs))
     if st['formulas'] != nf:
-        log(f"✗ 公式个数对不上：成品 {nf}，LibreOffice 存回来 {st['formulas']}")
-    n, _ = inject(out, calc)
-    log(f'③ 写回缓存 {n} 格；{os.path.getsize(out) / 1e6:.1f} MB；共 {time.time() - t0:.0f} 秒')
+        log(f"✗ {tag}公式个数对不上：成品 {nf:,}，LibreOffice 存回来 {st['formulas']:,}")
+        ok = False
+    return ok
+
+
+def main(out_dir=ROOT, keep=False, log=print, tweak=None):
+    t0 = time.time()
+    out_dir = os.path.abspath(out_dir)
+    calc_dir = os.path.join(out_dir, '_calc')
+    os.makedirs(calc_dir, exist_ok=True)
+    one = os.path.join(calc_dir, 'A075_一本版.xlsx')
+    out1, out2, _ = build.build_split(out_dir, log=log, tweak=tweak, onebook=one)
+    nf = {}
+    for p, tag in ((one, '一本版'), (out2, '报表本'), (out1, '录入本')):
+        s = share(p)
+        nf[p], _, _ = count(p)
+        log(f'① {tag}压共享公式：公式 {nf[p]:,} 个（共享公式 {sum(s.values()):,} 格），{os.path.getsize(p) / 1e6:.1f} MB')
+    ok_w = True
+    for p, tag in ((out1, '录入本'), (out2, '报表本')):
+        log(f'   【{tag}】')
+        w, _, _ = p_wps.report(p, log=log)          # WPS 体检：成列的公式里不准有「表名!」、往下撑的区域
+        ok_w = ok_w and w
+    if not ok_w:
+        return 3
+    log('② LibreOffice 重算（关多线程）')
+    calc1, st1 = _calc(one, calc_dir, '一本版（报表本的数从它来）', log)
+    calc2, st2 = _calc(out1, calc_dir, '录入本', log)
+    ok = _ok(st1, nf[one], '一本版', log) and _ok(st2, nf[out1], '录入本', log)
+    if 'error' in st1 or 'error' in st2:
+        return 2
+    n2, _ = inject(out2, calc1)
+    n1, _ = inject(out1, calc2)
+    log(f'③ 写回缓存：报表本 {n2:,} 格、录入本 {n1:,} 格')
+    refresh(out2, {WB1_FILE: out1}, log=log)
+    log(f'④ {WB1_FILE} {os.path.getsize(out1) / 1e6:.1f} MB、{WB2_FILE} {os.path.getsize(out2) / 1e6:.1f} MB；共 {time.time() - t0:.0f} 秒')
     if not keep:
-        os.remove(calc)
+        for p in (one, calc1, calc2):
+            if os.path.exists(p):
+                os.remove(p)
     return 0 if ok else 1
 
 
 if __name__ == '__main__':
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
-    sys.exit(main(args[0] if args else OUT, keep='--keep' in sys.argv))
+    if args and args[0].lower().endswith('.xlsx'):
+        sys.exit('参数是输出目录（两本都放进去），不是 .xlsx 文件名')
+    sys.exit(main(args[0] if args else ROOT, keep='--keep' in sys.argv))

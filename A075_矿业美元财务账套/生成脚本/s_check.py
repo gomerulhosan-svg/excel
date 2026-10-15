@@ -15,9 +15,35 @@ def _cnt(sh, col, pre='✗'):
     return f'COUNTIF({mod_u(sh, col)},"{pre}*")'      # opt：只扫到末行
 
 
+def _nfill(rg):
+    """区域里填了东西的格子数（拆本 F5：不用 COUNTA——报表本取数表里没填的格子是空串，COUNTA 也算）"""
+    return f'SUMPRODUCT(--(LEN({rg})>0))'
+
+
 def _ok0(n, bad, good='√ 没有'):
     """n=0 → good；否则 bad & n"""
     return f'=IF({n}=0,"{good}","{bad}"&{n}&" 行")'
+
+
+def base_items():
+    """数据校验第 32～36 项（基础资料、科目表、录入表公式报错）：报表本【数据校验】和录入本【录入检查】（entry.py）共用"""
+    return [
+        ('基础资料：模块科目都在科目表里', _ok0(f'COUNTIF({q(SH_BASE)}!$C${P_ROW[ACC_PARAMS[0]]}:$C${P_ROW[ACC_PARAMS[-1]]},"✗*")', '✗ ', '√ 都在'),
+         '【基础资料】参数里「…科目」右边显示 ✗ 的，改成科目表里有的末级科目'),
+        ('资金账户：对应科目都在科目表里',
+         _ok0(f'SUMPRODUCT((账户名<>"")*ISNA(MATCH(账户科目,{CODES},0)))', '✗ ', '√ 都在'), '【基础资料·资金账户】「对应科目」'),
+        ('科目表：编码重复', _ok0(f'SUMPRODUCT(({CODES}<>"")*(COUNTIF({CODES},{CODES})>1))', '✗ ', '√ 没有'),
+         '【科目表】编码列标红的是重复的'),
+        ('科目表：编码格式不对', _ok0(f'SUMPRODUCT(({CODES}<>"")*((({acc(AC_KEY)}="")+ISNA(MATCH(LEN({CODES}),{{4,6,8,10}},0)))>0))',
+                                 '✗ ', '√ 没有'),
+         '编码只能是 4、6、8、10 位数字（前后不能有空格、字母）；格式不对的科目不进科目余额表'),
+        ('录入表里有公式报错（＃VALUE！之类）的格子',
+         _ok0('+'.join(f'SUMPRODUCT(--ISERROR({x}))' for x in (cash_u(K_CHK), mod_u(SH_BUY, B_CHK), mod_u(SH_ISS, I_CHK),
+                                                                 mod_u(SH_SALE, S_CHK), mod_u(SH_PAY, W_CHK), mod_u(SH_FA, F_CHK),
+                                                                 mod_u(SH_MAN, MN_CHK), mod_u(SH_PROD, PD_CHK))),
+              '✗ ', '√ 没有'),
+         '多半是数字格子里填了文字（比如「5年」「3000吨」）——到那张表的「核对/校验」列找报错的格子'),
+    ]
 
 
 def build_check(wb, ctx):
@@ -100,28 +126,15 @@ def build_check(wb, ctx):
         ('固定资产：科目原值＝卡片原值',
          f'=IF(ROUND({tbv("1601")}-{fa_cost},2)=0,"√ 一致","⚠ 科目 "&FIXED({tbv("1601")},0)&"，卡片 "&FIXED({fa_cost},0))',
          '买设备的钱记进了 1601，但【固定资产】没建卡片——没卡片就不提折旧。把矿车、铲车、四不像…一台一张卡片补上'),
-        ('基础资料：模块科目都在科目表里', _ok0(f'COUNTIF({q(SH_BASE)}!$C${P_ROW[ACC_PARAMS[0]]}:$C${P_ROW[ACC_PARAMS[-1]]},"✗*")', '✗ ', '√ 都在'),
-         '【基础资料】参数里「…科目」右边显示 ✗ 的，改成科目表里有的末级科目'),
-        ('资金账户：对应科目都在科目表里',
-         _ok0(f'SUMPRODUCT((账户名<>"")*ISNA(MATCH(账户科目,{CODES},0)))', '✗ ', '√ 都在'), '【基础资料·资金账户】「对应科目」'),
-        ('科目表：编码重复', _ok0(f'SUMPRODUCT(({CODES}<>"")*(COUNTIF({CODES},{CODES})>1))', '✗ ', '√ 没有'),
-         '【科目表】编码列标红的是重复的'),
-        ('科目表：编码格式不对', _ok0(f'SUMPRODUCT(({CODES}<>"")*((({acc(AC_KEY)}="")+ISNA(MATCH(LEN({CODES}),{{4,6,8,10}},0)))>0))',
-                                 '✗ ', '√ 没有'),
-         '编码只能是 4、6、8、10 位数字（前后不能有空格、字母）；格式不对的科目不进科目余额表'),
-        ('录入表里有公式报错（＃VALUE！之类）的格子',
-         _ok0('+'.join(f'SUMPRODUCT(--ISERROR({x}))' for x in (cash_u(K_CHK), mod_u(SH_BUY, B_CHK), mod_u(SH_ISS, I_CHK),
-                                                                 mod_u(SH_SALE, S_CHK), mod_u(SH_PAY, W_CHK), mod_u(SH_FA, F_CHK),
-                                                                 mod_u(SH_MAN, MN_CHK), mod_u(SH_PROD, PD_CHK))),
-              '✗ ', '√ 没有'),
-         '多半是数字格子里填了文字（比如「5年」「3000吨」）——到那张表的「核对/校验」列找报错的格子'),
+        *base_items(),                       # 第 32～36 项（录入本【录入检查】也用）
         ('容量：本月凭证张数 / 打印页数',
          f'=IF(OR(COUNTIFS(凭证月份,报表年度*100+报表月份,凭证有,1)>{VL_N},本月总页数>{VP_PAGES}),"✗ 超出容量，找我加",'
          f'"√ "&COUNTIFS(凭证月份,报表年度*100+报表月份,凭证有,1)&" 张 / "&本月总页数&" 页")', f'每月最多 {VL_N} 张凭证、{VP_PAGES} 页'),
         ('容量：现金流水剩余空行',
          # A075 照原样：用户删了 40 行以后这里的「4000」没跟着改（实际 3960 行，多报 40 行余量；优化时改成 CASH_R1-CASH_R0+1）
-         f'=IF({CASH_SLOTS}-COUNTA({cash(K_DATE)})<200,"⚠ 只剩 "&({CASH_SLOTS}-COUNTA({cash(K_DATE)}))&" 行",'
-         f'"√ 还剩 "&({CASH_SLOTS}-COUNTA({cash(K_DATE)}))&" 行")', f'共 {CASH_SLOTS} 行，快满了找我加'),
+         # 拆本 F5：COUNTA 会把报表本取数表里的空串也算进去，改数「长度＞0」的格子（一本版结果不变）
+         f'=IF({CASH_SLOTS}-{_nfill(cash(K_DATE))}<200,"⚠ 只剩 "&({CASH_SLOTS}-{_nfill(cash(K_DATE))})&" 行",'
+         f'"√ 还剩 "&({CASH_SLOTS}-{_nfill(cash(K_DATE))})&" 行")', f'共 {CASH_SLOTS} 行，快满了找我加'),
     ]
     for i, (name, f, how) in enumerate(checks):
         r = R0 + i
@@ -144,6 +157,41 @@ def build_check(wb, ctx):
     ctx['chk_range'] = (R0, R1)
     ws.auto_filter.ref = f'A4:D{R1}'        # 用户 10/05 加的筛选（A075 照留）
     return ws
+
+
+
+# ─────────────────────────── 拆本：报表本这边 ───────────────────────────
+def report_check41(wb):
+    """报表本【数据校验】第 41 项改成「录入本表头没挪」：取录入本【录入检查】的结果。
+    报表本里有一张隐藏取数表【录入检查】（split 建，跟录入本同名同位置，取 entry.ECHK_MIRROR 那些格子）。
+    报表本里的取数表没人动，原来的「录入表没有插入 / 删除整行」（ROWS 查本本）在报表本里永远是 √，换掉。"""
+    import entry
+    ws = wb[SH_CHK]
+    rr = [r for r in range(5, ws.max_row + 1) if ws[f'A{r}'].value == 41]
+    assert len(rr) == 1, '数据校验里没找到第 41 项'
+    r = rr[0]
+    E = entry.ECHK
+    h, d, s = (f'{E}!$C${entry.ECHK_ROWS["hdr"]}', f'{E}!$C${entry.ECHK_ROWS["rows"]}', f'{E}!$C$3')
+    ws[f'B{r}'] = '录入本：表头没挪（取录入本【录入检查】）'
+    ws[f'C{r}'] = (f'=IF({h}="","✗ 取不到录入本的检查结果：这本还没「更新」，或者录入本不在同一个文件夹、改了名字",'
+                   f'IF(LEFT({h},1)="✗","✗ 录入本"&MID({h},2,300),'
+                   f'IF(LEFT({d},1)="⚠","⚠ 录入本"&MID({d},2,300),"√ 录入本表头没挪（录入本自己的检查："&{s}&"）")))')
+    ws[f'D{r}'] = ('报表本按位置从录入本取数：录入本表头上面插删了行、或者插删了列，这里的数就错位了——回录入本按【录入检查】的提示改回来，'
+                   '存盘，再回这本点「更新」。「取不到」：先打开录入本存一下，两本放同一个文件夹、别改文件名，再点「更新」'
+                   '（WPS：启用内容 / 更新链接；还不行就「数据 → 编辑链接 → 更改源」选录入本）')
+    return [f'数据校验第 41 项（第 {r} 行）改成「录入本表头没挪」，取录入本【录入检查】{h}、{d}']
+
+
+def home_link_line(ws, row=12, c0='B', c1='I'):
+    """报表本首页加一行「数据来自录入本：流水 N 笔，最后一笔 yyyy/m/d」（N＝取过来的流水有金额的笔数，最后一笔＝日期最晚的那天）。
+    默认写在第 12 行（KPI 下面、导航上面那一空行），B:I 合并；首页排版改了就传别的行。"""
+    mx = f'MAX({cash_u(K_DATE)})'
+    f = (f'="数据来自录入本：流水 "&COUNT({cash_u(K_NET)})&" 笔，最后一笔 "&IF(COUNT({cash_u(K_DATE)})=0,"（还没有）",'
+         f'YEAR({mx})&"/"&MONTH({mx})&"/"&DAY({mx}))&"　　（跟录入本对不上：先把录入本存盘，再在这本点「更新」）"')
+    ws.merge_cells(f'{c0}{row}:{c1}{row}')
+    put(ws, f'{c0}{row}', f, Font(name=YH, sz=10, bold=True, color='FF1F4E79'), FILL_TIP, align=AL, border=False)
+    ws.row_dimensions[row].height = 22
+    return f'{ws.title}!{c0}{row}'
 
 
 # ─────────────────────────── 首页 ───────────────────────────
