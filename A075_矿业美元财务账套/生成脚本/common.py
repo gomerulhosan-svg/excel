@@ -52,6 +52,13 @@ SH_VIDX  = '_凭证索引'
 SH_AUX   = '_辅助'
 
 SH_CLOSE = '_结转损益'                # 10/08 加的（p1008.py 建）
+# 10/15 新报表（s_extra.py 建，只在报表本；不在 SHEET_ORDER 里，build._final_order 按建的顺序放在【数据校验】前面）
+SH_FSQ   = '发生情况报表'
+SH_DG    = '记账底稿'
+SH_WZ    = '物资出入库台账'
+SH_GOLD  = '黄金总记录'
+SH_SZ    = '收支分类报表'
+EXTRA_SHEETS = [SH_FSQ, SH_DG, SH_WZ, SH_GOLD, SH_SZ]
 
 SHEET_ORDER = [SH_HOME, SH_HELP, SH_BASE, SH_RULE, SH_RATE, SH_ACC,
                SH_CASH, SH_BUY, SH_ISS, SH_PROD, SH_SALE, SH_PAY, SH_FA, SH_MAN,

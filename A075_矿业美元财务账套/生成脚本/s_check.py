@@ -182,6 +182,51 @@ def report_check41(wb):
     return [f'数据校验第 41 项（第 {r} 行）改成「录入本表头没挪」，取录入本【录入检查】{h}、{d}']
 
 
+def append_check(wb, name, f, how):
+    """数据校验最后加一项（样子照上一行；C3 汇总、条件格式、筛选、首页 H11 汇总的范围跟着往下扩一行）。返回日志行"""
+    from copy import copy
+    from openpyxl.formatting.formatting import ConditionalFormattingList
+    ck = wb[SH_CHK]
+    last = max(r for r in range(5, ck.max_row + 1) if isinstance(ck[f'A{r}'].value, int))
+    new = last + 1
+    assert all(ck[f'{c}{new}'].value is None for c in 'ABCD'), new
+    ck.row_dimensions[new].height = ck.row_dimensions[last].height
+    for col, v in zip('ABCD', (ck[f'A{last}'].value + 1, name, f, how)):
+        src, dst = ck[f'{col}{last}'], ck[f'{col}{new}']
+        dst.font, dst.fill, dst.border = copy(src.font), copy(src.fill), copy(src.border)
+        dst.alignment, dst.number_format = copy(src.alignment), src.number_format
+        dst.value = v
+    a, b = f'C5:C{last}', f'C5:C{new}'
+    old = ck['C3'].value
+    assert old.count(a) == 3, old
+    ck['C3'].value = old.replace(a, b)
+    assert ck.auto_filter.ref == f'A4:D{last}', ck.auto_filter.ref
+    ck.auto_filter.ref = f'A4:D{new}'
+    cf_new = ConditionalFormattingList()
+    for rg in ck.conditional_formatting:
+        ref = str(rg.sqref).replace(a, b)
+        for rule in rg.rules:
+            cf_new.add(ref, rule)
+    ck.conditional_formatting = cf_new
+    n = 0
+    for row in wb[SH_HOME].iter_rows():
+        for c in row:
+            if isinstance(c.value, str) and c.value.startswith('=') and f'数据校验!$C$5:$C${last}' in c.value:
+                c.value = c.value.replace(f'数据校验!$C$5:$C${last}', f'数据校验!$C$5:$C${new}')
+                n += 1
+    return [f'数据校验加第 {ck[f"A{new}"].value} 项「{name}」（第 {new} 行；首页汇总 {n} 格范围跟着扩）']
+
+
+def plug_check(wb, code='310499'):
+    """10/15 期初只补了资金账户：310499「期初差额待核」不是 0 就提醒（biz 给的文字）"""
+    v = tbv(code)
+    return append_check(
+        wb, '期初：只补了资金账户',
+        f'=IF(ROUND({v},2)=0,"√ 期初已补齐","⚠ 期初只补了三个资金账户，差额 "&FIXED(-{v},2)&" 先放在 {code} 期初差额待核")',
+        '2025 年底其他科目（资产、负债、实收资本、未分配利润）的余额还没填：拿到 2025-12-31 的余额表后，在录入本【科目表】M 列补上，'
+        f'补平后把 {code} 清成 0')
+
+
 def home_link_line(ws, row=12, c0='B', c1='I'):
     """报表本首页加一行「数据来自录入本：流水 N 笔，最后一笔 yyyy/m/d」（N＝取过来的流水有金额的笔数，最后一笔＝日期最晚的那天）。
     默认写在第 12 行（KPI 下面、导航上面那一空行），B:I 合并；首页排版改了就传别的行。"""

@@ -8,7 +8,8 @@ Excel / WPS 打开报表本时会问要不要更新链接，更新了就是最�
   1. 名称里的外部区域（MIRROR_MODE='name'：录_流水_A＝[1]现金流水总表!$A$6:$A$3965）也展开成格子写缓存；
   2. 空格子不写（缓存只跟有数的格子一样大；LibreOffice 实测缓存里没有的格子当空格，取数公式 IF(x="","",x) 两样都是空）；
   3. 扫报表本的公式不用 openpyxl 整本载入（报表本 90 万个公式，载入要几分钟），直接流式读 sheet XML；
-     公式里的表名带引号的（'[1]表名'!A6）也认。
+     公式里的表名带引号的（'[1]表名'!A6）也认；
+  4. 文字前后有空格的，<v> 加 xml:space="preserve"（不加的话 LibreOffice 读缓存会去掉空格，跟录入本对不上）。
 
 跑法：python3 -I refresh_link_cache.py <报表本.xlsx> <录入本.xlsx>
       源文件按 externalLink1、2… 的顺序给，或者用「文件名=路径」显式指定。
@@ -122,7 +123,9 @@ def build_sheetdata(src_path, sheets_cells):
                 elif isinstance(v, str) and v.startswith('#') and v in ('#N/A', '#VALUE!', '#REF!', '#DIV/0!', '#NUM!', '#NAME?', '#NULL!'):
                     cs.append(f'<cell r="{a}" t="e"><v>{v}</v></cell>')
                 else:
-                    cs.append(f'<cell r="{a}" t="str"><v>{xml_escape(v)}</v></cell>')
+                    v = str(v)          # 前后有空格的要写 xml:space="preserve"，不然 LibreOffice 读缓存时把空格去掉（跟录入本对不上）
+                    sp = ' xml:space="preserve"' if v != v.strip() else ''
+                    cs.append(f'<cell r="{a}" t="str"><v{sp}>{xml_escape(v)}</v></cell>')
             if cs:
                 n += len(cs)
                 rows.append(f'<row r="{r}">{"".join(cs)}</row>')

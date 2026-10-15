@@ -402,6 +402,71 @@ def fix_1015(wb, ctx):
     return log
 
 
+# ───── 10/15：首页导航加 s_extra 的 5 张新报表（build.make_onebook 在 s_extra.build 之后调）─────
+HOME_NAV_EXTRA = [   # (表名, 你要做什么, 做什么用)
+    ('发生情况报表', '自动·选月份', '你月报的样子：资金来源、资金占用、资金结余（美金 / 人民币 / 津币），期初、本期、期末'),
+    ('记账底稿', '自动·选账户月份', '你底稿帐的样子：选账户、月份，逐笔列凭证号、借贷科目、折美金、原币'),
+    ('物资出入库台账', '自动·选物资', '选一种物资看每一笔进、出、结余（进＝采购入库，出＝领用出库）'),
+    ('黄金总记录', '自动·选年份', '每月冶炼、出售克数和差额；逐笔卖金：克数、单价、累计收入、折人民币'),
+    ('收支分类报表', '自动·选年份', '你的收支类别 × 1～12 月（美元），收入、支出分开'),
+]
+HOME_NAV_HDR = '⑤ 手工表样子的报表 —— 全自动（黄格子选月份 / 账户 / 物资 / 年份，空着就跟上面的报表月份）'
+
+
+def home_nav_extra(wb, items=None, at=None):
+    """首页导航④后面加一节「⑤ 手工表样子的报表」（一行表头＋每张表一行，样子照第 36 行 / 第 45 行），下面「每月怎么做」整块往下挪。
+    at＝新一节表头放第几行（默认：导航最后一个链接下面那一行）。只加 wb 里有的表。返回日志行"""
+    from copy import copy
+    from openpyxl.worksheet.hyperlink import Hyperlink
+    items = [x for x in (items or HOME_NAV_EXTRA) if x[0] in wb.sheetnames]
+    if not items:
+        return []
+    ws = wb[SH_HOME]
+    links = sorted(c.row for row in ws.iter_rows() for c in row if c.hyperlink is not None and c.column == 3)
+    at = at or links[-1] + 1
+    sec = next(r for r in range(at - 1, 0, -1) if isinstance(ws[f'B{r}'].value, str) and ws[f'B{r}'].value.startswith('④'))
+    tpl = links[-1] - 2 if links[-1] - 2 > sec else links[-1]        # 普通一行（不是「先看这个」那种加粗行）的样子
+    n = len(items) + 1
+    last = ws.max_row
+    # 下面的块往下挪 n 行：合并格、行高跟着挪（openpyxl move_range 只挪格子）
+    mv = [mr for mr in list(ws.merged_cells.ranges) if mr.min_row >= at]
+    for mr in mv:
+        ws.unmerge_cells(str(mr))
+    hts = {r: ws.row_dimensions[r].height for r in range(at, last + 1)}
+    assert not any(c.hyperlink is not None for row in ws.iter_rows(min_row=at) for c in row), '要挪的行里有链接'
+    ws.move_range(f'A{at}:{CL(ws.max_column)}{last}', rows=n)
+    for mr in mv:
+        ws.merge_cells(start_row=mr.min_row + n, start_column=mr.min_col, end_row=mr.max_row + n, end_column=mr.max_col)
+    for r in range(at, last + n + 1):
+        ws.row_dimensions[r].height = hts.get(r - n)
+
+    def clone(src_r, dst_r):
+        for ci in range(1, ws.max_column + 1):
+            a, b = ws.cell(src_r, ci), ws.cell(dst_r, ci)
+            if a.has_style:
+                b.font, b.fill, b.border = copy(a.font), copy(a.fill), copy(a.border)
+                b.alignment, b.number_format = copy(a.alignment), a.number_format
+        ws.row_dimensions[dst_r].height = ws.row_dimensions[src_r].height
+        for mr in list(ws.merged_cells.ranges):
+            if mr.min_row == mr.max_row == src_r:
+                ws.merge_cells(start_row=dst_r, start_column=mr.min_col, end_row=dst_r, end_column=mr.max_col)
+
+    clone(sec, at)
+    ws[f'B{at}'] = HOME_NAV_HDR
+    for i, (sh, todo, desc) in enumerate(items):
+        r = at + 1 + i
+        clone(tpl, r)
+        ws[f'C{r}'] = sh
+        ws[f'E{r}'] = todo
+        ws[f'F{r}'] = desc
+        h = copy(ws[f'C{tpl}'].hyperlink)
+        h.location, h.ref, h.id, h.target = f"'{sh}'!A1", f'C{r}', None, None
+        h.display = sh if h.display else None
+        h.tooltip = None
+        ws[f'C{r}'].hyperlink = h
+    return [f'首页导航加「⑤ 手工表样子的报表」{len(items)} 张（第 {at}～{at + len(items)} 行），下面「每月怎么做」往下挪 {n} 行']
+
+
 # ───── 10/15：使用说明两份（大白话、短）─────
 HELP_REPORT = [   # (None, 小标题) 或 (编号自动, 文字)
     (None, '这本是干什么的'),
@@ -421,6 +486,8 @@ HELP_REPORT = [   # (None, 小标题) 或 (编号自动, 文字)
     '1–6 月的流水是从你的资金台帐导进来的。期初只补了三个资金账户（美元 100105、人民币 101202、FBC 100210），2025 年底其他科目的余额还没填，'
     '差额先放在【科目表】310499「期初差额待核」，所以科目余额表、资产负债表是平的；拿到 2025 年底的余额表后在录入本【科目表】M 列补上，把 310499 清成 0。',
     '利润是「按付款记」的：9 月 1 日（业务模块启用日）以前买材料付的钱直接算成本，没有存货、没有折旧；要准，以后走采购入库、领用、设备卡片。',
+    '你手工表样子的 5 张：【发生情况报表】（月报）、【记账底稿】、【物资出入库台账】、【黄金总记录】、【收支分类报表】。'
+    '表头黄格子选月份 / 账户 / 物资 / 年份，空着就跟【首页】的报表月份；清单按最多的行数留了位置，打印只印有数的那几页。',
     '数字不对先看【数据校验】；WPS 里建议开「自动计算」，打开这本要等它算完。',
 ]
 HELP_ENTRY = [

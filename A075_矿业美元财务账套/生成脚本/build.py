@@ -130,6 +130,11 @@ def make_onebook(ref_path=ref_a075.REF, log=print, tweak=None):
     if s_extra is not None:             # 10/15 新报表（发生情况报表、记账底稿、物资出入库台账、黄金总记录、收支分类报表）
         for line in (s_extra.build(wb, ctx) or []):
             log('   · 新报表 ' + line)
+        for line in p_a075.home_nav_extra(wb):
+            log('   · 新报表 ' + line)
+    if hasattr(s_check, 'plug_check') and ref_a075.PLUG_CODE in {str(a.get('code')) for a in ctx['chart'] if a}:
+        for line in s_check.plug_check(wb, ref_a075.PLUG_CODE):       # 10/15 期初只补了资金账户（310499 期初差额待核）
+            log('   · A075 ' + line)
     for line in p_wps.apply(wb):
         log('   · WPS ' + line)
     entry = _opt('entry')
@@ -139,7 +144,8 @@ def make_onebook(ref_path=ref_a075.REF, log=print, tweak=None):
             for line in s_check.report_check41(wb):
                 log('   · 拆本 ' + line)
         if hasattr(s_check, 'home_link_line') and not any(
-                isinstance(c.value, str) and '数据来自录入本' in c.value for row in wb[SH_HOME].iter_rows() for c in row):
+                isinstance(c.value, str) and c.value.startswith('=') and '数据来自录入本' in c.value
+                for row in wb[SH_HOME].iter_rows() for c in row):      # 只认公式格（首页说明文字里也提到这句话）
             log('   · 拆本 报表本首页加「数据来自录入本：流水 N 笔，最后一笔…」：' + s_check.home_link_line(wb[SH_HOME]))
     wb[SH_AUX].sheet_state = 'hidden'
     wb[SH_VIDX].sheet_state = 'hidden'

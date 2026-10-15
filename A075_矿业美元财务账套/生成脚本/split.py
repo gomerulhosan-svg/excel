@@ -314,6 +314,22 @@ def make_report(wb, ctx, log=print):
         dvcf.append((ws, ws.data_validations, ws.conditional_formatting))
         ws.data_validations = DataValidationList()
         ws.conditional_formatting = ConditionalFormattingList()
+    # 看得见的表（首页导航）里指向取数表的链接去掉：取数表在报表本里是隐藏的，点了跳不过去
+    hid = {ws.title for ws, _ in states}
+    links = []
+    for ws in wb.worksheets:
+        if ws.title in hid:
+            continue
+        for row in ws.iter_rows():
+            for c in row:
+                h = c.hyperlink
+                if h is not None and h.location:
+                    m = re.match(r"^'?((?:[^']|'')+?)'?!", h.location)
+                    if m and m.group(1).replace("''", "'") in hid:
+                        links.append((c, h))
+                        c.hyperlink = None
+    if links:
+        log(f'   · 报表本：去掉指向隐藏取数表的链接 {len(links)} 个（{"、".join(sorted({c.parent.title for c, _ in links}))}）')
     link = add_external_link(wb, WB1_FILE, list(WB1_ORDER))      # 表名清单以录入本实际的为准（refresh_link_cache 按录入本重写）
     act = wb.active
     log(f'   · 报表本：取数表 {len(n_cell)} 张、取数公式 {sum(n_cell.values()):,} 格（写法 {mode}'
@@ -322,6 +338,8 @@ def make_report(wb, ctx, log=print):
 
     def undo():
         wb._external_links.remove(link)
+        for c, h in links:
+            c.hyperlink = h
         for ws, a, v in reversed(olds):
             ws[a].value = v
         for ws, st in states:
@@ -526,6 +544,9 @@ def make_entry(wb, ctx, log=print):
     else:
         _placeholder(wb, SH_HOME, '录入本 · 首页（待 entry.build_entry_home）')
     hh = _entry_attr('build_entry_help')
+    if hh is None:                                  # 录入本版使用说明 biz 写在 p_a075（HELP_ENTRY）
+        import p_a075
+        hh = getattr(p_a075, 'build_help_entry', None)
     if hh:
         hh(wb, ctx)
     else:

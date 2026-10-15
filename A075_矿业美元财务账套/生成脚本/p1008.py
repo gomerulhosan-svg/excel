@@ -41,7 +41,7 @@ from common import (CASH_R0, CASH_R1, CASH_SLOTS, JE_R0, VX_R0, N_MONTHS, BASE_N
                     SH_CASH, upto_terms, first_val,
                     K_DATE, K_ACC, K_CUR, K_MEMO, K_NET, K_UZS, K_NOTE, K_CP, K_PRJ, K_OVR, K_MERGE, K_ATT,
                     K_CCODE, K_DR, K_CR, K_VALID, K_CFI, K_GSEQ, K_GHEAD, K_VID, K_VMEMO,
-                    K_MKEY, K_GCNT, K_GSUM, K_GMEMO, VP_PAGES)
+                    K_MKEY, K_GCNT, K_GSUM, K_GMEMO, VP_PAGES, RC_R0, RC_R1)
 
 # ---------------- 尺寸（生成脚本的常量；数值跟 A062 10/08 成品、A075 一样） ----------------
 C0, C1 = CASH_R0, CASH_R1   # 现金流水总表 数据行（6..3965）
@@ -123,8 +123,8 @@ def step_deposit(wb, log):
     # 现金流量：122106 归「收到/支付其他与经营活动有关的现金」（2 / 6）
     M, AC, T, Z = K_UZS, K_VALID, K_OVR, K_CCODE
     # opt：类别行号在 AN 列（s_cash 先算好），这里跟着 s_cash 的写法
-    rule = ('IF(N($AN{r})=0,0,IFERROR(IF($' + M + '{r}>0,N(INDEX(记账规则!$G$5:$G$64,$AN{r})),'
-            'N(INDEX(记账规则!$H$5:$H$64,$AN{r}))),0))')
+    rule = ('IF(N($AN{r})=0,0,IFERROR(IF($' + M + '{r}>0,N(INDEX(记账规则!$G$' + str(RC_R0) + ':$G$' + str(RC_R1) + ',$AN{r})),'
+            'N(INDEX(记账规则!$H$' + str(RC_R0) + ':$H$' + str(RC_R1) + ',$AN{r}))),0))')     # 收支类别容量跟 common.RC_R1（10/15 扩到 80 个）
     head = ('=IF($' + AC + '{r}=1,IF($' + T + '{r}="",{R},IF(OR(LEFT($' + Z + '{r},4)="1001",LEFT($' + Z + '{r},4)="1002",'
             'LEFT($' + Z + '{r},4)="1012",$' + Z + '{r}="122104",$' + Z + '{r}="122105"),0,')
     tail = ('IF(OR(LEFT($' + Z + '{r},2)="16",LEFT($' + Z + '{r},2)="17"),IF($' + M + '{r}>0,10,12),IF(AND(LEFT($' + Z + '{r},1)="5",{R}=0),'
