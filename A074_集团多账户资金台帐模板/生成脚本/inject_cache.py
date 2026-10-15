@@ -52,6 +52,12 @@ def inject(target, valsrc, names=None):
                     out.add(c.get('r'))
             c.clear()
         return out
+    def src_links(sheet):
+        """副本里的内部跳转 {格: 地址}"""
+        if sheet not in vparts:
+            return {}
+        return {h.get('ref'): h.get('location') for _, h in etree.iterparse(zv.open(vparts[sheet]), tag=f'{{{NS}}}hyperlink')
+                if h.get('location')}
     tmp = target + '.tmp'
     zin = zipfile.ZipFile(target)
     parts = sheet_parts(zin)
@@ -66,8 +72,11 @@ def inject(target, valsrc, names=None):
             wsv = vals[src]
             empties = empty_str_cells(src)
             root = etree.fromstring(data)
-            # 带内部跳转的公式格算出空串时，LibreOffice 存的「值」是跳转地址（如 首页 J1 横幅 → '资金台帐'!A1）：按空串写回
+            # 带内部跳转的公式格算出空串时，LibreOffice 存的「值」是跳转地址（如 首页 J1 横幅 → '资金台帐'!A1）：按空串写回。
+            # 跳转看成品和副本两边（a74integ：查询本把指向隐藏取数表的跳转去掉了，只看成品就认不出，J1 缓存成了「'资金台帐'!A1」）
             links = {h.get('ref'): h.get('location') for h in root.iter(f'{{{NS}}}hyperlink') if h.get('location')}
+            for k, loc in src_links(src).items():
+                links.setdefault(k, loc)
             for c in root.iter(f'{{{NS}}}c'):
                 f = c.find(f'{{{NS}}}f')
                 if f is None:

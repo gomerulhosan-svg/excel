@@ -252,7 +252,7 @@ def main(out=OUT, only=None, scenario=None, keep=False, timeout=3000, timing=Tru
 
 
 def patch_cache(path, sheet, values):
-    """成品里某张表几个公式格的缓存值改成给定的文字（zip 级；查询本首页 K3 这种一本版里没有的公式，inject 拿不到它的数）"""
+    """成品里某张表几个公式格的缓存值改成给定的文字或数（zip 级；查询本首页 K3、_参 录入本笔数这种一本版里没有的公式，inject 拿不到它的数）"""
     from lxml import etree
     from inject_cache import sheet_parts, NS
     tmp = path + '.tmp'
@@ -269,8 +269,13 @@ def patch_cache(path, sheet, values):
                     v = c.find(f'{{{NS}}}v')
                     if v is None:
                         v = etree.SubElement(c, f'{{{NS}}}v')
-                    c.set('t', 'str')
-                    v.text = str(values[c.get('r')])
+                    x = values[c.get('r')]
+                    if isinstance(x, (int, float)) and not isinstance(x, bool):
+                        c.attrib.pop('t', None)
+                        v.text = repr(float(x)) if isinstance(x, float) else str(x)
+                    else:
+                        c.set('t', 'str')
+                        v.text = str(x)
                     n += 1
             d = etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
         zout.writestr(it, d)
@@ -287,7 +292,7 @@ def main_split(out_dir=ROOT, keep=False, timeout=3000):
        原来那本一本版成品（A074_集团多账户资金台帐模板.xlsx）不动。"""
     import time
     import split
-    from layout import SMALL, WB1_FILE, WB2_FILE, MIRROR_MODE
+    from layout import SMALL, WB1_FILE, WB2_FILE, MIRROR_MODE, H_PAR
     from refresh_link_cache import refresh
     t0 = time.time()
     out_dir = os.path.abspath(out_dir)
@@ -339,7 +344,9 @@ def main_split(out_dir=ROOT, keep=False, timeout=3000):
     n1, _ = inject(out1, calc_e)
     k3 = _k3_text(ctx)
     patch_cache(out2, '首页', {'K3': k3})
-    print(f'④ 写回缓存：查询本 {n2:,} 格（一本版算的；首页 K3＝「{k3}」）、录入本 {n1:,} 格')
+    rc = split.query_count_row()
+    assert patch_cache(out2, H_PAR, {f'B{rc}': _entry_count(ctx)}) == 1
+    print(f'④ 写回缓存：查询本 {n2:,} 格（一本版算的；首页 K3＝「{k3}」，_参 录入本笔数＝{_entry_count(ctx):,}）、录入本 {n1:,} 格')
     refresh(out2, {WB1_FILE: out1})
     print(f'⑤ {WB1_FILE} {os.path.getsize(out1) / 1e6:.1f} MB、{WB2_FILE} {os.path.getsize(out2) / 1e6:.1f} MB（取数写法 {MIRROR_MODE}）；'
           f'共 {time.time() - t0:.0f} 秒')
@@ -350,12 +357,19 @@ def main_split(out_dir=ROOT, keep=False, timeout=3000):
     return 0 if ok else 1
 
 
+def _entry_count(ctx):
+    """P_已用行数 的缓存值（日期或账户有字的行数）：查询本首页 K3、_参 录入本笔数 用"""
+    from layout import N_LEDGER
+    es = [e for e in (ctx.get('entries') or [])[:N_LEDGER] if e]
+    return max(sum(1 for e in es if e.get('日期') not in (None, '')), sum(1 for e in es if e.get('账户') not in (None, '')))
+
+
 def _k3_text(ctx):
     """查询本首页 K3 的缓存值（跟公式 split.home_k3_formula 一样算）：流水笔数＝日期或账户有字的行，最后一笔＝认得出的最晚日期"""
     import datetime as dt
     from layout import N_LEDGER
     es = [e for e in (ctx.get('entries') or [])[:N_LEDGER] if e]
-    n = max(sum(1 for e in es if e.get('日期') not in (None, '')), sum(1 for e in es if e.get('账户') not in (None, '')))
+    n = _entry_count(ctx)
     ds = [e['日期'] for e in es if isinstance(e.get('日期'), (dt.date, dt.datetime))]
     last = max(ds) if ds else None
     return (f'数据来自录入本：流水 {n:,} 笔，最后一笔 ' + (f'{last.year}/{last.month}/{last.day}' if last else '（没有）')

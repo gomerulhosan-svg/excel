@@ -11,6 +11,8 @@
     去掉这两张的有效性、条件格式；
   · _参：P_录入模式 恒为 0；P_锚坏 改成「锚列/段表坏了，或者取过来的录入本表头不是原来的字」（录入本表头上面插删了行、插删了列、基础资料插删了行）；
   · 首页 K3 改成「数据来自录入本：流水 N 笔，最后一笔 yyyy/m/d」；横幅、核对表「台帐分段」里锚坏那句话换成「录入本的表头挪了」；
+    _参 多一行 P_录入本笔数（取录入本的 P_已用行数），跟这本读到的笔数对不上，横幅报（a74integ：两本同时开着时在录入本插删整行，
+    Excel 会把这本的取数格挪走，新行读不到 / 删的那行变 #REF!）；
     指向隐藏取数表的超链接去掉（导航格写「（在录入本）」）；【使用说明】换成查询本版；
   · 外部链接（openpyxl ExternalLink，目标＝相对文件名 WB1_FILE）。
 录入本（make_entry，就地拆）：只留 ENTRY_SHEETS＋ENTRY_HIDDEN；资金台帐显示列、辅助列、第 1/3 行换成 s_entry 的轻公式，锚列 Q 清掉（列位不挪）；
@@ -84,6 +86,16 @@ Q_ANCHOR = ('※ 录入本的表头挪了（资金台帐表头上面、或基础
             '回录入本撤销（Ctrl+Z）；基础资料别在中间插行，在各块下面空行加')
 Q_ANCHOR_CHK = ('"录入本的表头挪了：资金台帐第 4 行、基础资料各块表头不在原来那一行（录入本表头上面、基础资料中间插删了行），或者插删了列。'
                 '这本按位置读，所有数都读错了。回录入本撤销（Ctrl+Z）再存盘；基础资料加东西在各块下面的空行加"')
+Q_COUNT = ('"※ 录入本有 "&TEXT(P_录入本笔数,"#,##0")&" 笔流水，这本读到 "&TEXT(P_已用行数,"#,##0")&" 笔，对不上：多半是两本同时开着时在录入本插删了行'
+           '（这本的取数格被挪了）。这本关掉别存盘，再打开、点更新；已经存过盘了，换一本新的查询本（这本里没有要留的数）"')
+Q_COUNT_KEY = '录入本笔数'      # 查询本 _参 多一行：取录入本 _参 的 P_已用行数（跟这本读到的笔数比，首页横幅报）
+
+
+def query_count_row():
+    """查询本 _参 里「录入本笔数」那一行（接在 PAR_KEYS 后面空一行，跟录入本自己加的键同一行号）"""
+    return len(PAR_KEYS) + 3
+
+
 _CHK_TEXT = [   # 核对表「台帐分段」：一本版说锚列/表头被删的话 → 查询本的说法
     ('"台帐的表头（第 4 行）或右边的 Q 列（勿删）被删了：所有数都没算。马上撤销（Ctrl+Z）；已经存盘了找我们（重出一本模板，把数导过去）"',
      Q_ANCHOR_CHK),
@@ -197,10 +209,26 @@ def make_query(wb, ctx, log=print):
     u.set(par, PAR['锚坏'], query_anchor_formula())
     u.set(par, f'C{PAR["录入模式"][1:]}', '查询本：恒为 0（两本版不用录入模式）')
     u.set(par, f'C{PAR["锚坏"][1:]}', '查询本：1＝段表坏了，或者取过来的录入本表头不是原来的字（录入本插删了表头上面的行、基础资料中间插删了行、插删了列）')
-    # 首页：K3、横幅
+    # 录入本笔数（取录入本 _参 的 P_已用行数）：两本同时开着时在录入本插删整行，Excel 会把这本的取数格跟着挪（'cell' 写法），
+    # 新插的那行读不到 / 删掉的那行变 #REF!，存了盘就一直错。跟这本读到的笔数（P_已用行数）比，对不上首页横幅报
+    rc = query_count_row()
+    assert par[f'A{rc}'].value is None and par[f'B{rc}'].value is None, f'_参 第 {rc} 行已经有东西了'
+    u.set(par, f'A{rc}', Q_COUNT_KEY)
+    u.set(par, f'B{rc}', mirror_formula(H_PAR, 'B', int(PAR['已用行数'][1:])))
+    u.set(par, f'C{rc}', '查询本：录入本 _参 的 P_已用行数（录入本的流水笔数）；跟 P_已用行数 对不上首页横幅报（两本同时开着时在录入本插删了行）')
+    nm_cnt = f'P_{Q_COUNT_KEY}'
+    assert nm_cnt not in wb.defined_names
+    wb.defined_names[nm_cnt] = DefinedName(nm_cnt, attr_text=f'{H_PAR}!$B${rc}')
+    new_names.append(nm_cnt)
+    # 首页：K3、横幅（锚坏那句换成查询本的说法，紧跟着加「录入本笔数对不上」）
     home = wb[SH_HOME]
     u.set(home, 'K3', home_k3_formula())
     _repl_in_formulas(u, home, [(s_home.B_ANCHOR, Q_ANCHOR)])
+    items = s_home.banner_items()
+    assert items[0][0] == 'P_锚坏=1'
+    items[0] = ('P_锚坏=1', f'"{Q_ANCHOR}"')
+    items.insert(1, (f'N(P_{Q_COUNT_KEY})<>P_已用行数', Q_COUNT))
+    u.set(home, s_home.BANNER, s_home.banner_formula(items, Q_ANCHOR))
     _repl_in_formulas(u, wb[SH_CHK], _CHK_TEXT)
     # 指向隐藏取数表的超链接去掉；首页导航格写「（在录入本）」
     hid = {SH_LEDGER, SH_BASE}
@@ -239,7 +267,8 @@ def make_query(wb, ctx, log=print):
         for nm in new_names:
             del wb.defined_names[nm]
     u.call(back_link)
-    log(f'   · 查询本：取数公式 {sum(n_cell.values()):,} 格（写法 {mode}' + (f'，外部名称 {len(new_names)} 个' if new_names else '') + '）：'
+    n_ext = sum(1 for nm in new_names if nm.startswith(EXT_PREFIX))
+    log(f'   · 查询本：取数公式 {sum(n_cell.values()):,} 格（写法 {mode}' + (f'，外部名称 {n_ext} 个' if n_ext else '') + '）：'
         + '、'.join(f'{k} {v:,}' for k, v in n_cell.items()) + f'；去掉指向取数表的链接 {n_link} 个')
     return u
 

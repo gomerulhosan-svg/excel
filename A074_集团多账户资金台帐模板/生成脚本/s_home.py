@@ -123,17 +123,22 @@ TBD_REF = f'{LEDGER_SHOW["属性"]}{HDR}'                     # 「待分类」�
 TBD_TIP = '跳到【资金台帐】M 列（属性）：点表头的筛选箭头，只勾「待分类」，就是这几行；改 C 列收费项，或去基础资料④给收费项定属性'
 
 
-def banner_formula():
-    """首页横幅（J1）：设计 §15.1.5 先后只显示最要紧的一条；只引用 _参 的 P_xx（PAR_SEGCHK 准用）；录入模式也算"""
-    c = chain([
+def banner_items():
+    """首页横幅的 [(条件, 文字)]，先后＝要紧的先（a74split 查询本在 P_锚坏 后面再插一条「录入本笔数对不上」）"""
+    return [
         ('P_锚坏=1', f'"{B_ANCHOR}"'),
         ('OR(P_错位>0,P_笔数差<0)', f'"{B_SHIFT}"'),
         ('P_没算>0', '"※ 台帐有 "&P_没算&" 行没算进来（看核对表「台帐分段」）"'),
         ('P_可录<=0', f'"{B_FULL}"'),
         (f'P_可录<{ALERT_NEAR}', '"△ 台帐还能录约 "&P_可录&" 行：年底开新本；年中满了找我们放大"'),
         (ENTRY, f'"{B_ENTRY}"'),
-    ], '""')
-    return f'=IFERROR({c},"{B_ANCHOR}")'
+    ]
+
+
+def banner_formula(items=None, anchor=B_ANCHOR):
+    """首页横幅（J1）：设计 §15.1.5 先后只显示最要紧的一条；只引用 _参 的 P_xx（PAR_SEGCHK 准用）；录入模式也算"""
+    c = chain(banner_items() if items is None else items, '""')
+    return f'=IFERROR({c},"{anchor}")'
 
 
 def entry_or(text, f):
